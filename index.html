@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elite Timesheet OS Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #09090b;
+            --panel: #18181b;
+            --primary: #6366f1;
+            --primary-h: #4f46e5;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warn: #f59e0b;
+            --text: #fafafa;
+            --muted: #a1a1aa;
+            --border: #27272a;
+            --input-bg: #09090b;
+            --shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+            --tr: all 0.2s cubic-bezier(.4,0,.2,1);
+            --glass-4: rgba(255,255,255,0.04);
+            --glass-8: rgba(255,255,255,0.08);
+        }
+        
+        .light-mode {
+            --bg: #ffffff;
+            --panel: #ffffff;
+            --primary: #4f46e5;
+            --primary-h: #4338ca;
+            --success: #059669;
+            --danger: #dc2626;
+            --warn: #d97706;
+            --text: #000000;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --input-bg: #f8fafc;
+            --shadow: 0 4px 12px rgba(0,0,0,0.08);
+            --glass-4: rgba(0,0,0,0.03);
+            --glass-8: rgba(0,0,0,0.06);
+        }
+
+        * { margin:0; padding:0; box-sizing:border-box; font-family:'Inter', sans-serif; }
+        body { background: var(--bg); color: var(--text); min-height: 100vh; transition: var(--tr); overflow-x: hidden; }
+        
+        .elite-container { width: 100%; max-width: 100%; margin: 0 auto; padding: 0.5rem; }
+        
+        /* Typography */
+        h1 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.03em; }
+        .subtitle { color: var(--muted); font-size: 0.875rem; font-weight: 500; }
+        
+        /* Layout */
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem; }
+        .tabs { display: flex; gap: 0.5rem; background: var(--glass-4); padding: 0.4rem; border-radius: 12px; border: 1px solid var(--border); }
+        .tab-btn { padding: 0.6rem 1.2rem; border-radius: 8px; border: none; background: transparent; color: var(--muted); font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: var(--tr); }
+        .tab-btn.active { background: var(--panel); color: var(--primary); box-shadow: var(--shadow); }
+        .tab-btn:hover:not(.active) { color: var(--text); background: var(--glass-4); }
+
+        /* Panels */
+        .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); position: relative; }
+        
+        /* Buttons */
+        .btn-primary { background: var(--primary); color: #fff; border: none; padding: 0.75rem 1.5rem; border-radius: 10px; font-weight: 700; font-size: 0.9rem; cursor: pointer; transition: var(--tr); display: flex; align-items: center; gap: 0.5rem; justify-content: center; }
+        .btn-primary:hover { background: var(--primary-h); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.4); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        
+        .btn-secondary { background: var(--glass-4); color: var(--text); border: 1px solid var(--border); padding: 0.6rem 1.2rem; border-radius: 10px; font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: var(--tr); }
+        .btn-secondary:hover { background: var(--glass-8); border-color: var(--muted); }
+
+        /* Grid Controls */
+        .grid-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem; background: var(--panel); border-radius: 12px 12px 0 0; }
+        .nav-group { display: flex; align-items: center; gap: 0.5rem; }
+        .date-label { font-size: 0.9rem; font-weight: 800; min-width: 220px; text-align: center; }
+        
+        /* Master Grid Table */
+        .ag-wrap { overflow: auto; border-radius: 0 0 12px 12px; border-top: none; }
+        .ag-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1200px; }
+        .ag-table th { background: var(--panel); padding: 4px; font-size: 0.65rem; font-weight: 700; color: var(--muted); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border); position: sticky; top: 0; z-index: 10; cursor: default; }
+        .ag-table th.name-col { width: 180px; text-align: left; position: sticky; left: 0; z-index: 20; border-right: 2px solid var(--border); }
+        .ag-table td { padding: 2px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--glass-8); vertical-align: top; transition: background 0.1s; }
+        .ag-table td.name-col { position: sticky; left: 0; background: var(--panel); z-index: 15; border-right: 2px solid var(--border); font-weight: 800; font-size: 0.75rem; padding-left: 6px; }
+        .ag-table tr:hover td:not(.empty-cell) { background: var(--glass-4); }
+
+        /* Cell Styling */
+        .gc { cursor: pointer; position: relative; border-radius: 2px; transition: var(--tr); border: 1px solid transparent; vertical-align: top !important; }
+        .gc:hover { border-color: var(--primary); background: var(--glass-4) !important; }
+        .gc.empty-cell { opacity: 0.3; cursor: cell; text-align: center; vertical-align: middle !important; font-size: 0.8rem; font-weight: 400; color: var(--muted); border: 1px dashed var(--border); height: 32px; }
+        
+        .shift-block { padding: 1px 3px; border-radius: 3px; font-size: 0.6rem; font-weight: 800; display: flex; flex-direction: column; line-height: 1.0; position: relative; overflow: hidden; margin-bottom: 0px; }
+        .shift-normal { background: rgba(99,102,241,0.1); color: var(--primary); border-left: 2px solid var(--primary); }
+        .shift-sick { background: rgba(239,68,68,0.1); color: var(--danger); border-left: 2px solid var(--danger); }
+        .shift-annual { background: rgba(16,185,129,0.1); color: var(--success); border-left: 2px solid var(--success); }
+        .shift-til { background: rgba(245,158,11,0.1); color: var(--warn); border-left: 2px solid var(--warn); }
+        
+        .ts-block { margin-top: 1px; border-top: 1px solid var(--glass-8); padding-top: 1px; font-size: 0.55rem; font-weight: 900; color: var(--success); }
+        .ts-pending { color: var(--muted); font-size: 0.55rem; font-style: italic; font-weight: 600; }
+        
+        .var-badge { position: absolute; top: 0; right: 0; font-size: 0.55rem; font-weight: 800; padding: 1px 3px; border-radius: 0 2px 0 2px; }
+        .var-pos { background: var(--success); color: #fff; }
+        .var-neg { background: var(--danger); color: #fff; }
+
+        /* Modals */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+        .modal-overlay.open { display: flex; }
+        .modal-panel { width: 100%; max-width: 600px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); animation: modalIn 0.3s cubic-bezier(.4,0,.2,1); display: flex; flex-direction: column; }
+        #modal-cell .modal-panel { max-width: 95vw; width: 95vw; height: 95vh; overflow: hidden; }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(20px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        
+        .form-group { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.25rem; }
+        label { font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        input, select { background: var(--input-bg); border: 1px solid var(--border); padding: 0.75rem 1rem; border-radius: 10px; color: var(--text); font-weight: 600; transition: var(--tr); outline: none; }
+        input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(99,102,241,0.15); }
+        
+        .locked-banner { background: rgba(239,68,68,0.1); border: 1px solid var(--danger); padding: 0.75rem 1rem; border-radius: 10px; color: var(--danger); font-size: 0.8rem; font-weight: 700; margin-bottom: 1rem; display: flex; align-items: centre; gap: 0.5rem; }
+        .success-banner { background: rgba(16,185,129,0.1); border: 1px solid var(--success); padding: 0.75rem 1rem; border-radius: 10px; color: var(--success); font-size: 0.8rem; font-weight: 700; margin-bottom: 1rem; display: flex; align-items: centre; gap: 0.5rem; }
+
+        /* Lock Status */
+        .lock-btn { padding: 0.5rem 1rem; border-radius: 10px; border: 1px solid var(--border); font-weight: 700; font-size: 0.8rem; cursor: pointer; transition: var(--tr); display: flex; align-items: centre; gap: 0.5rem; }
+        .lock-btn.unlocked { background: var(--glass-4); color: var(--muted); }
+        .lock-btn.locked { background: rgba(239,68,68,0.1); color: var(--danger); border-color: var(--danger); }
+        .lock-btn:hover { background: var(--glass-8); }
+        
+        /* Utility */
+        .auto-log-row { display: flex; gap: 2px; margin-top: 4px; }
+        .btn-mini { flex: 1; padding: 2px; font-size: 0.55rem; font-weight: 800; border-radius: 4px; border: 1px solid var(--border); background: var(--glass-4); cursor: pointer; color: var(--muted); transition: var(--tr); }
+        .btn-mini:hover { background: var(--glass-8); color: var(--text); }
+        
+        .ag-table td.total-col { background: var(--glass-4); font-family: monospace; font-size: 0.7rem; text-align: right; border-left: 1px solid var(--border); font-weight: 800; vertical-align: top; padding: 4px 6px; }
+        .ag-table th.total-col { border-left: 1px solid var(--border); }
+
+        /* Leave Breakdown Chips */
+        .leave-chips { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+        .leave-chip { display: flex; justify-content: space-between; align-items: center; padding: 1px 4px; border-radius: 3px; font-size: 0.55rem; font-weight: 800; }
+        .lc-normal  { background: rgba(99,102,241,0.12); color: var(--primary); }
+        .lc-sick    { background: rgba(239,68,68,0.12); color: var(--danger); }
+        .lc-annual  { background: rgba(16,185,129,0.12); color: var(--success); }
+        .lc-til     { background: rgba(245,158,11,0.12); color: var(--warn); }
+        .lc-unplanned { background: rgba(161,161,170,0.15); color: var(--muted); }
+
+        /* Fortnight Summary Panel */
+        .summary-panel { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .summary-toggle { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; background: var(--glass-4); cursor: pointer; font-size: 0.8rem; font-weight: 800; border: none; width: 100%; color: var(--text); }
+        .summary-toggle:hover { background: var(--glass-8); }
+        .summary-body { display: none; padding: 1rem; background: var(--panel); }
+        .summary-body.open { display: block; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
+        .summary-card { background: var(--glass-4); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; }
+        .summary-card-name { font-size: 0.75rem; font-weight: 800; margin-bottom: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .summary-bar-row { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 3px; font-size: 0.65rem; }
+        .summary-bar-label { width: 60px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+        .summary-bar-track { flex: 1; background: var(--glass-8); border-radius: 4px; height: 6px; overflow: hidden; }
+        .summary-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+        .summary-bar-val { width: 32px; text-align: right; font-weight: 800; font-size: 0.6rem; }
+        .summary-totals-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+        .summary-total-card { text-align: center; padding: 0.75rem 0.5rem; border-radius: 8px; }
+        .stc-normal { background: rgba(99,102,241,0.1); }
+        .stc-sick   { background: rgba(239,68,68,0.1); }
+        .stc-annual { background: rgba(16,185,129,0.1); }
+        .stc-til    { background: rgba(245,158,11,0.1); }
+        .summary-total-val { font-size: 1.1rem; font-weight: 900; }
+        .summary-total-lbl { font-size: 0.6rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+
+        /* Portal Leave Breakdown */
+        .portal-leave-card { background: var(--glass-4); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; }
+        .plc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-top: 1rem; }
+        .plc-item { text-align: center; padding: 0.75rem 0.5rem; border-radius: 8px; }
+        .plc-val { font-size: 1.5rem; font-weight: 900; }
+        .plc-lbl { font-size: 0.6rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+
+        /* Compass Portal Scheduler */
+        .compass-schedule { display: flex; flex-direction: column; gap: 2rem; }
+        .compass-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.5rem; background: var(--glass-4); padding: 0.5rem; border-radius: 12px; }
+        .compass-day { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; min-height: 250px; }
+        .compass-day-head { background: var(--glass-8); padding: 0.5rem; text-align: center; border-bottom: 1px solid var(--border); font-size: 0.8rem; font-weight: 800; border-top: 3px solid var(--primary); }
+        .compass-day-body { padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; flex: 1; }
+        .compass-card { border: 1px solid var(--border); border-radius: 6px; border-left: 4px solid var(--primary); padding: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; background: var(--panel); box-shadow: var(--shadow); position: relative; }
+        .compass-card.sick { border-left-color: var(--danger); background: rgba(239,68,68,0.05); border-top-color: rgba(239,68,68,0.2); }
+        .compass-card.annual { border-left-color: var(--warn); background: rgba(245,158,11,0.05); border-top-color: rgba(245,158,11,0.2); }
+        .compass-time { font-weight: 800; font-size: 0.85rem; color: var(--text); }
+        .compass-type { font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.65rem; }
+        .compass-status { margin-top: 0.25rem; align-self: flex-start; font-size: 0.65rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; }
+        .compass-status.pending { background: var(--glass-8); color: var(--muted); }
+        .compass-status.logged { background: rgba(16,185,129,0.1); color: var(--success); }
+        
+    </style>
+</head>
+<body>
+
+<div class="elite-container">
+    <header>
+        <div>
+            <h1>Elite Timesheet OS <span style="color:var(--primary)">Pro</span></h1>
+            <p class="subtitle">Secure Roster & Timesheet Management System</p>
+        </div>
+        <div class="nav-group">
+            <div class="tabs">
+                <button class="tab-btn active" id="tab-roster" onclick="switchTab('roster')">Roster</button>
+                <button class="tab-btn" id="tab-staff" onclick="switchTab('staff')">Manage Staff</button>
+                <button class="tab-btn" id="tab-portal" onclick="switchTab('portal')">Employee Portal</button>
+            </div>
+            <button class="btn-secondary" onclick="toggleTheme()" id="theme-btn">🌙</button>
+        </div>
+    </header>
+
+    <!-- ROSTER MASTER VIEW -->
+    <div id="view-roster" class="view-content active">
+        <div class="panel">
+            <div class="grid-toolbar">
+                <div class="nav-group">
+                    <button class="btn-primary" onclick="autoRosterAll()" title="Apply default standard templates to all staff for this fortnight" style="background:var(--warn); color:#000;">⚙️ Auto-Roster All</button>
+                    <button class="btn-primary" onclick="batchLogAllPending()" title="Log all rostered shifts as perfectly worked for all employees">⚡ Auto-Log All</button>
+                    <button class="btn-secondary" onclick="injectSeedData()" style="padding:0.4rem 0.8rem; font-size:0.75rem;">💧 Inject Seed Data</button>
+                    <div class="nav-group" style="background:var(--glass-4); padding:0.25rem; border-radius:8px; border:1px solid var(--border);">
+                        <button class="btn-secondary" style="border:none; background:transparent; padding:0.2rem 0.5rem;" onclick="changeFortnight(-1)">←</button>
+                        <span class="date-label" id="grid-range-label">Loading Period...</span>
+                        <input type="date" title="Jump to Date" onchange="jumpToDate(this.value)" style="padding:1px; border-radius:4px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-size:0.7rem; cursor:pointer; width:90px;">
+                        <button class="btn-secondary" style="border:none; background:transparent; padding:0.2rem 0.5rem;" onclick="changeFortnight(1)">→</button>
+                    </div>
+                </div>
+                <div class="nav-group">
+                    <button class="lock-btn" id="btn-lock-roster" onclick="handleLock('roster')">🔓 Roster</button>
+                    <button class="lock-btn" id="btn-lock-timesheet" onclick="handleLock('timesheet')">🔓 Timesheet</button>
+                    <div style="width:1px; height:24px; background:var(--border); margin: 0 0.5rem;"></div>
+                    <button class="btn-primary" onclick="openCreateShiftModal()">+ Add Shift</button>
+                </div>
+            </div>
+            <div id="grid-banners"></div>
+            <div class="ag-wrap">
+                <table class="ag-table">
+                    <thead id="grid-header"></thead>
+                    <tbody id="grid-body"></tbody>
+                </table>
+            </div>
+            <!-- Fortnight Leave Summary -->
+            <div class="summary-panel" id="summary-panel">
+                <button class="summary-toggle" onclick="toggleSummary(this)">
+                    <span>📊 Fortnight Leave Breakdown</span>
+                    <span id="summary-toggle-icon">▼ Show</span>
+                </button>
+                <div class="summary-body" id="summary-body">
+                    <div class="summary-totals-row" id="summary-grand-totals"></div>
+                    <div style="margin-top:1rem; font-size:0.75rem; font-weight:700; color:var(--muted); margin-bottom:0.5rem;">Per-Employee Breakdown</div>
+                    <div class="summary-grid" id="summary-grid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STAFF MANAGEMENT VIEW -->
+    <div id="view-staff" class="view-content" style="display:none;">
+        <div class="panel" style="padding:2rem;">
+            <h2 style="margin-bottom:1.5rem;">Staff Registry</h2>
+            <div class="tbl-wrap">
+                <table class="ag-table" style="min-width:100%">
+                    <thead>
+                        <tr>
+                            <th style="width:200px; text-align:left;">Name</th>
+                            <th>Department</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Contracted (14d)</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="staff-list-body"></tbody>
+                </table>
+            </div>
+            <div style="display:flex; justify-content:flex-start; margin-top:2rem;">
+                <button class="btn-primary" style="width:auto;" onclick="addNewStaff()">+ Register New Employee</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PORTAL VIEW -->
+    <div id="view-portal" class="view-content" style="display:none;">
+        <div class="panel" style="padding:2rem;">
+            <div style="max-width:500px; margin:0 auto 1.5rem;">
+                <label style="font-size:0.75rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:0.5rem;">Employee Portal</label>
+                <select id="portal-emp-select" onchange="renderPortalPersonal()" style="width:100%;"></select>
+            </div>
+            <div id="portal-data"></div>
+        </div>
+    </div>
+
+    <div id="view-staff-editor" class="view-content" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+            <div>
+                <h2 id="editor-emp-name">Employee Name</h2>
+                <p class="subtitle">Default Roster Template (14-Day Cycle)</p>
+            </div>
+            <button class="btn-secondary" onclick="switchTab('staff')">Back to Directory</button>
+        </div>
+        
+        <div class="panel" style="padding:1.5rem;">
+            <div style="display:grid; grid-template-columns: repeat(7, 1fr); gap:1rem; margin-bottom:2rem;" id="template-grid">
+                <!-- Template entries here -->
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.4); padding:0.5rem 1rem; border-radius:8px;">
+                    <span style="font-size:1rem;">⚡</span>
+                    <span style="color:var(--warn); font-size:0.75rem; font-weight:800;">Autosaving — all changes are saved instantly</span>
+                </div>
+                <div style="display:flex; gap:1rem; align-items:center;">
+                    <span class="subtitle">Apply this template to:</span>
+                    <button class="btn-secondary" onclick="applyTemplateToFortnight()">Apply to Active Fortnight</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ENTRY MODAL -->
+<div class="modal-overlay" id="modal-cell">
+    <div class="modal-panel">
+        <div style="padding:1.5rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <h2 id="modal-emp-name" style="font-size:1.15rem; font-weight:800; color:var(--primary);">Alice Johnson</h2>
+                <p class="subtitle" id="modal-date-label">Monday, 14 April 2026</p>
+            </div>
+            <button class="btn-secondary" onclick="closeModal('cell')" style="padding:0.4rem; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center;">✕</button>
+        </div>
+        <div style="padding:1.5rem; overflow-y:auto; flex:1;">
+            <div id="modal-lock-banner"></div>
+            <div id="segment-editor-list" style="display:flex; flex-direction:column; gap:1.25rem;"></div>
+            <button class="btn-secondary" id="btn-add-segment" onclick="addSegmentToActive()" style="width:100%; margin-top:1.25rem; border-style:dashed;">+ Add Another Split / Leave Segment</button>
+        </div>
+        <div style="padding:1.5rem; background:var(--glass-4); border-top:1px solid var(--border); display:flex; gap:0.75rem; border-radius:0 0 16px 16px;">
+            <button class="btn-primary" id="btn-save-entry" style="flex:2;" onclick="saveActiveEntry()">Save Shifts</button>
+            <button class="btn-secondary" id="btn-autofill-day" onclick="autoFillActiveDay()" title="Apply default template for this specific day" style="color:var(--primary); border-color:var(--primary);">⚙️ Default Shift</button>
+            <button class="btn-secondary" id="btn-delete-entry" style="color:var(--danger); border-color:var(--danger);" onclick="deleteActiveEntry()">Delete</button>
+            <button class="btn-secondary" onclick="closeModal('cell')">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- PW MODAL -->
+<div class="modal-overlay" id="modal-pwd">
+    <div class="modal-panel" style="max-width:360px;">
+        <div style="padding:1.5rem;">
+            <h2 id="pwd-title" style="margin-bottom:0.5rem; font-weight:800;">Security Check</h2>
+            <p class="subtitle" id="pwd-sub">Admin credential required.</p>
+            <div class="form-group" style="margin-top:1.5rem;">
+                <label>Access Password</label>
+                <input type="password" id="input-pwd" placeholder="••••" style="text-align:center; font-size:1.5rem; letter-spacing:0.4em;">
+            </div>
+            <div id="pwd-error" style="color:var(--danger); font-size:0.75rem; font-weight:800; margin-bottom:1rem; display:none;">ACCESS DENIED: WRONG PASSWORD</div>
+            <button class="btn-primary" style="width:100%;" onclick="confirmPwdAction()">Authorize</button>
+            <button class="btn-secondary" style="width:100%; margin-top:0.6rem;" onclick="closeModal('pwd')">Abort</button>
+        </div>
+    </div>
+</div>
+
+<!-- CUSTOM DIALOG ENGINE -->
+<div id="dlg-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:99999;align-items:center;justify-content:center;">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:2rem;max-width:420px;width:90%;box-shadow:0 25px 50px rgba(0,0,0,0.5);">
+    <h2 id="dlg-title" style="font-size:1.2rem;font-weight:800;margin-bottom:0.75rem;"></h2>
+    <p id="dlg-msg" style="color:var(--muted);font-size:0.9rem;line-height:1.6;margin-bottom:1.5rem;white-space:pre-line;"></p>
+    <input id="dlg-input" type="text" style="display:none;width:100%;margin-bottom:1.25rem;padding:0.6rem;text-align:center;font-size:1rem;background:var(--glass-4);border:1px solid var(--border);color:var(--text);border-radius:8px;" placeholder="Type here...">
+    <div id="dlg-btns" style="display:flex;gap:0.75rem;justify-content:flex-end;"></div>
+  </div>
+</div>
+
+<!-- EDIT STAFF MODAL -->
+<div class="modal-overlay" id="modal-edit-staff">
+    <div class="modal-panel" style="max-width:480px;">
+        <div style="padding:1.5rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <h2 style="font-size:1.1rem; font-weight:800;">Edit Staff Member</h2>
+                <p class="subtitle" id="edit-staff-subtitle"></p>
+            </div>
+            <button class="btn-secondary" onclick="closeModal('edit-staff')" style="padding:0.4rem; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center;">✕</button>
+        </div>
+        <div style="padding:1.5rem; display:flex; flex-direction:column; gap:1rem;">
+            <div class="form-group">
+                <label>Full Name</label>
+                <input type="text" id="edit-emp-name" placeholder="Employee Name">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Department</label>
+                    <input type="text" id="edit-emp-dept" placeholder="Department">
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Contracted Hours (14d)</label>
+                    <input type="number" id="edit-emp-contracted" placeholder="76">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Email Address</label>
+                <input type="email" id="edit-emp-email" placeholder="employee@company.com">
+            </div>
+            <div class="form-group">
+                <label>Phone Number</label>
+                <input type="text" id="edit-emp-phone" placeholder="+61 400 000 000">
+            </div>
+        </div>
+        <div style="padding:1.5rem; background:var(--glass-4); border-top:1px solid var(--border); display:flex; gap:0.75rem; border-radius:0 0 16px 16px;">
+            <button class="btn-primary" style="flex:1;" onclick="saveEditStaff()">Save Changes</button>
+            <button class="btn-secondary" onclick="closeModal('edit-staff')">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============================================================
+// DIALOG ENGINE
+// ============================================================
+function _dlg(title, msg, type) {
+    return new Promise(resolve => {
+        const ov = document.getElementById('dlg-overlay');
+        document.getElementById('dlg-title').innerText = title;
+        document.getElementById('dlg-msg').innerText = msg;
+        const inp = document.getElementById('dlg-input');
+        const btns = document.getElementById('dlg-btns');
+        inp.style.display = type === 'prompt' ? 'block' : 'none';
+        if (type === 'prompt') { inp.value = ''; setTimeout(() => inp.focus(), 50); }
+        btns.innerHTML = '';
+        const mk = (text, cls, val) => {
+            const b = document.createElement('button');
+            b.className = cls; b.innerText = text;
+            b.style.cssText = 'padding:0.5rem 1.25rem;border-radius:8px;font-weight:700;cursor:pointer;';
+            b.onclick = () => { ov.style.display = 'none'; resolve(val); };
+            btns.appendChild(b);
+        };
+        if (type === 'alert') {
+            mk('OK', 'btn-primary', undefined);
+        } else if (type === 'confirm') {
+            mk('Cancel', 'btn-secondary', false);
+            const ok = document.createElement('button');
+            ok.className = 'btn-primary'; ok.innerText = 'Confirm';
+            ok.style.cssText = 'padding:0.5rem 1.25rem;border-radius:8px;font-weight:700;cursor:pointer;';
+            if (msg.toLowerCase().includes('wipe') || msg.toLowerCase().includes('reset') || msg.toLowerCase().includes('delete') || msg.toLowerCase().includes('remove') || msg.toLowerCase().includes('danger')) {
+                ok.style.background = 'var(--danger)'; ok.style.borderColor = 'var(--danger)';
+            }
+            ok.onclick = () => { ov.style.display = 'none'; resolve(true); };
+            btns.appendChild(ok);
+        } else if (type === 'prompt') {
+            mk('Cancel', 'btn-secondary', null);
+            const ok = document.createElement('button');
+            ok.className = 'btn-primary'; ok.innerText = 'Submit';
+            ok.style.cssText = 'padding:0.5rem 1.25rem;border-radius:8px;font-weight:700;cursor:pointer;';
+            ok.onclick = () => { ov.style.display = 'none'; resolve(inp.value || null); };
+            btns.appendChild(ok);
+        }
+        ov.style.display = 'flex';
+    });
+}
+async function showMsg(msg) { await _dlg('Notice', msg, 'alert'); }
+async function askConfirm(msg) { return _dlg('Confirm', msg, 'confirm'); }
+async function askPrompt(msg) { return _dlg('Input Required', msg, 'prompt'); }
+
+// ============================================================
+// DATA ENGINE
+// ============================================================
+const DEFAULT_CONTRACT = 76;
+const EMPLOYEES = JSON.parse(localStorage.getItem('elite_v2_emps')) || {
+    'Alice Johnson': { dept: 'Sales',   contracted: 76, email: 'alice.j@company.com',   phone: '+61 400 111 001' },
+    'Bob Smith':     { dept: 'Sales',   contracted: 76, email: 'bob.s@company.com',     phone: '+61 400 111 002' },
+    'Charlie Davis': { dept: 'Tech',    contracted: 76, email: 'charlie.d@company.com', phone: '+61 400 111 003' },
+    'Diana Chen':    { dept: 'Tech',    contracted: 76, email: 'diana.c@company.com',   phone: '+61 400 111 004' },
+    'Edward Ross':   { dept: 'Support', contracted: 76, email: 'edward.r@company.com',  phone: '+61 400 111 005' },
+    'Fiona G.':      { dept: 'Kitchen', contracted: 76, email: 'fiona.g@company.com',   phone: '+61 400 111 006' },
+    'George M.':     { dept: 'Kitchen', contracted: 76, email: 'george.m@company.com',  phone: '+61 400 111 007' },
+    'Hannah A.':     { dept: 'Floor',   contracted: 76, email: 'hannah.a@company.com',  phone: '+61 400 111 008' },
+    'Ian W.':        { dept: 'Floor',   contracted: 76, email: 'ian.w@company.com',     phone: '+61 400 111 009' },
+    'Jack T.':       { dept: 'Floor',   contracted: 76, email: 'jack.t@company.com',    phone: '+61 400 111 010' },
+    'Kelly C.':      { dept: 'Admin',   contracted: 38, email: 'kelly.c@company.com',   phone: '+61 400 111 011' },
+    'Liam N.':       { dept: 'Mgt',     contracted: 76, email: 'liam.n@company.com',    phone: '+61 400 111 012' },
+    'Mary P.':       { dept: 'Mgt',     contracted: 76, email: 'mary.p@company.com',    phone: '+61 400 111 013' },
+    'Noah C.':       { dept: 'Tech',    contracted: 76, email: 'noah.c@company.com',    phone: '+61 400 111 014' },
+    'Olivia R.':     { dept: 'Tech',    contracted: 76, email: 'olivia.r@company.com',  phone: '+61 400 111 015' }
+};
+let records = JSON.parse(localStorage.getItem('elite_v2_recs')) || [];
+let lockedRosters = new Set(JSON.parse(localStorage.getItem('elite_v2_lock_r')) || []);
+let lockedTimesheets = new Set(JSON.parse(localStorage.getItem('elite_v2_lock_t')) || []);
+const ADMIN_PWD = '1234';
+
+// ============================================================
+// STATE
+// ============================================================
+let activeFortnightStart = getFortnightStart(new Date());
+let activeEntryState = { emp:null, date:null, segments:[] };
+let pwdCallback = null;
+
+// ============================================================
+// DATE UTILS
+// ============================================================
+function getFortnightStart(d) {
+    const dt = new Date(d); dt.setHours(0,0,0,0);
+    const ref = new Date('2026-03-30'); 
+    const diff = Math.floor((dt - ref) / 86400000);
+    const offset = Math.floor(diff / 14);
+    return new Date(ref.getTime() + offset * 14 * 86400000);
+}
+function addDays(d, n) { let r = new Date(d); r.setDate(r.getDate()+n); return r; }
+function fmtISO(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function fmtPretty(d) { return d.toLocaleDateString('en-AU', { day:'2-digit', month:'short' }); }
+function calcHours(start, end) {
+    if(!start || !end) return 0;
+    const [h1, m1] = start.split(':').map(Number);
+    const [h2, m2] = end.split(':').map(Number);
+    let diff = (h2*60 + m2) - (h1*60 + m1);
+    if(diff < 0) diff += 24*60;
+    let h = diff/60;
+    if(h >= 6) h -= 0.5;
+    return Math.max(0, h);
+}
+
+function parseSmartTime(val) {
+    if(!val) return '';
+    let t = val.toLowerCase().replace(/\s/g, '');
+    let isPM = t.includes('p');
+    let isAM = t.includes('a');
+    t = t.replace(/[^\d:]/g, '');
+    if(!t) return '';
+    
+    let h = 0, m = 0;
+    if(t.includes(':')) {
+        const parts = t.split(':');
+        h = parseInt(parts[0]) || 0;
+        m = parseInt(parts[1]) || 0;
+    } else {
+        if(t.length <= 2) h = parseInt(t);
+        else if(t.length === 3) { h = parseInt(t.substring(0,1)); m = parseInt(t.substring(1)); }
+        else if(t.length >= 4) { h = parseInt(t.substring(0,2)); m = parseInt(t.substring(2,4)); }
+    }
+    
+    if(isPM && h < 12) h += 12;
+    if(isAM && h === 12) h = 0;
+    if(h === 12 && !isPM && !isAM && t.length <= 2) h = 12;
+    if(h > 23) h = 23;
+    if(m > 59) m = 59;
+    
+    return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+}
+
+// ============================================================
+// CORE LOGIC
+// ============================================================
+function saveData() {
+    localStorage.setItem('elite_v2_emps', JSON.stringify(EMPLOYEES));
+    localStorage.setItem('elite_v2_recs', JSON.stringify(records));
+    localStorage.setItem('elite_v2_lock_r', JSON.stringify([...lockedRosters]));
+    localStorage.setItem('elite_v2_lock_t', JSON.stringify([...lockedTimesheets]));
+}
+
+function renderAll() {
+    renderGrid();
+    renderStaffList();
+    renderPortalDropdown();
+}
+
+function renderGrid() {
+    const monday = fmtISO(activeFortnightStart);
+    const isRosLocked = lockedRosters.has(monday);
+    const isTimLocked = lockedTimesheets.has(monday);
+
+    document.getElementById('grid-range-label').innerText = `${fmtPretty(activeFortnightStart)} — ${fmtPretty(addDays(activeFortnightStart, 13))} ${activeFortnightStart.getFullYear()}`;
+    
+    const rBtn = document.getElementById('btn-lock-roster');
+    rBtn.className = 'lock-btn ' + (isRosLocked ? 'locked' : 'unlocked');
+    rBtn.innerHTML = (isRosLocked ? '🔒' : '🔓') + ' Roster';
+    
+    const tBtn = document.getElementById('btn-lock-timesheet');
+    tBtn.className = 'lock-btn ' + (isTimLocked ? 'locked' : 'unlocked');
+    tBtn.innerHTML = (isTimLocked ? '🔒' : '🔓') + ' Timesheet';
+
+    const banners = document.getElementById('grid-banners');
+    banners.innerHTML = '';
+
+    // Header
+    const head = document.getElementById('grid-header');
+    let hHtml = `<tr><th class="name-col">Elite Professional Workspace</th>`;
+    for(let i=0; i<14; i++) {
+        const d = addDays(activeFortnightStart, i);
+        const isSun = (i%7) === 6;
+        let bStyle = i === 7 ? 'border-left: 2px solid var(--primary); ' : '';
+        let bgStyle = isSun ? 'var(--glass-4)' : 'transparent';
+        
+        if(isRosLocked) {
+            bStyle += 'border-top: 3px solid var(--danger); color: var(--danger); padding-top: 1px;';
+            bgStyle = 'rgba(239,68,68,0.05)';
+        }
+        
+        hHtml += `<th style="${bStyle} background:${bgStyle};">${fmtPretty(d).split(' ')[0]}</th>`;
+    }
+    hHtml += `<th class="total-col" style="${isRosLocked?'border-top: 3px solid var(--danger);':''}">Roster</th><th class="total-col" style="${isTimLocked?'border-top: 3px solid var(--danger);':''}">Timesheet</th><th class="total-col">Var</th></tr>`;
+    head.innerHTML = hHtml;
+
+    // Body
+    const body = document.getElementById('grid-body');
+    body.innerHTML = '';
+    const deptMap = {};
+    Object.keys(EMPLOYEES).forEach(e => {
+        const d = EMPLOYEES[e].dept || 'General';
+        if(!deptMap[d]) deptMap[d] = [];
+        deptMap[d].push(e);
+    });
+
+    Object.keys(deptMap).sort().forEach(dept => {
+        const dr = document.createElement('tr');
+        dr.innerHTML = `<td colspan="18" style="background:var(--glass-8); padding:0.4rem 1rem; font-size:0.65rem; font-weight:800; color:var(--primary); text-transform:uppercase; letter-spacing:0.15em;">${dept}</td>`;
+        body.appendChild(dr);
+
+        deptMap[dept].sort().forEach(emp => {
+            const tr = document.createElement('tr');
+            let cols = `<td class="name-col">
+                <div style="font-size:0.85rem; font-weight:700;">${emp}</div>
+                <div class="auto-log-row">
+                    <button class="btn-mini" onclick="batchLogEmp('${emp}')" title="Auto-fill timesheet from roster">⚡ Log All</button>
+                    <button class="btn-mini" onclick="autoRosterEmp('${emp}')" title="Apply Default Template to this Fortnight">⚙️ Roster</button>
+                    <button class="btn-mini" onclick="batchClearEmp('${emp}')" title="Wipe roster for fortnight">🗑 Clear</button>
+                </div>
+            </td>`;
+            let rowRost = 0, rowTime = 0;
+            let rowSplit = { Normal: 0, 'Sick Leave': 0, 'Annual Leave': 0, 'Time in Lieu': 0 };
+            for(let i=0; i<14; i++) {
+                const ds = fmtISO(addDays(activeFortnightStart, i));
+                const rec = records.find(r => r.emp === emp && r.date === ds);
+                const bStyle = i === 7 ? 'border-left: 2px solid var(--primary);' : '';
+                
+                if(!rec) {
+                    cols += `<td class="gc empty-cell" style="${bStyle}" onclick="openEntryModal('${emp}','${ds}')"><div>+</div></td>`;
+                } else {
+                    let segmentsHtml = '';
+                    const dayRost = rec.segments.reduce((acc, s) => acc + (s.scHrs||0), 0);
+                    const dayTime = rec.hasActuals ? rec.segments.reduce((acc, s) => acc + (s.acHrs||0), 0) : 0;
+                    rowRost += dayRost;
+                    rowTime += dayTime;
+                    // Tally leave split — use acHrs for unplanned, else timesheet if logged or roster
+                    rec.segments.forEach(s => {
+                        const key = s.type in rowSplit ? s.type : 'Normal';
+                        const hrs = s.unplanned ? (s.acHrs || 0) : (rec.hasActuals ? (s.acHrs||0) : (s.scHrs||0));
+                        rowSplit[key] += hrs;
+                    });
+
+                    rec.segments.forEach(s => {
+                        const typeCls = 'shift-' + (s.type === 'Normal' ? 'normal' : s.type === 'Sick Leave' ? 'sick' : s.type === 'Annual Leave' ? 'annual' : 'til');
+                        if(s.unplanned) {
+                            segmentsHtml += `<div class="shift-block" style="border:1px dashed var(--muted); color:var(--muted); text-align:center;" title="Unplanned Timesheet Shift">Unplanned Log</div>`;
+                        } else {
+                            segmentsHtml += `<div class="shift-block ${typeCls}" title="${s.type}">${s.scIn} - ${s.scOut}</div>`;
+                        }
+                    });
+                    let tsHtml = `<div class="ts-pending">No Actual</div>`;
+                    if(rec.hasActuals) {
+                        tsHtml = `<div class="ts-block">${dayTime.toFixed(1)}h Logged</div>`;
+                    }
+                    const hasUnplanned = rec.segments.some(s => s.unplanned);
+                    const unplannedStyle = hasUnplanned
+                        ? 'border: 2px solid var(--warn) !important; background: rgba(245,158,11,0.07) !important; box-shadow: inset 0 0 0 1px rgba(245,158,11,0.3);'
+                        : '';
+                    cols += `<td class="gc" style="${bStyle} ${unplannedStyle}" onclick="openEntryModal('${emp}','${ds}')">${hasUnplanned ? '<div style="font-size:0.5rem;font-weight:900;color:var(--warn);letter-spacing:0.05em;margin-bottom:1px;">⚠ UNPLANNED</div>' : ''}${segmentsHtml}${tsHtml}</td>`;
+                }
+            }
+            const rowVar = rowTime - rowRost;
+            cols += `<td class="total-col">${rowRost.toFixed(1)}h</td>`;
+            // Timesheet cell with leave chips underneath
+            let splitHtml = '<div class="leave-chips" style="margin-top:4px;">';
+            if(rowSplit['Normal'] > 0)       splitHtml += `<div class="leave-chip lc-normal"><span>Work</span><span>${rowSplit['Normal'].toFixed(1)}h</span></div>`;
+            if(rowSplit['Sick Leave'] > 0)   splitHtml += `<div class="leave-chip lc-sick"><span>Sick</span><span>${rowSplit['Sick Leave'].toFixed(1)}h</span></div>`;
+            if(rowSplit['Annual Leave'] > 0) splitHtml += `<div class="leave-chip lc-annual"><span>AL</span><span>${rowSplit['Annual Leave'].toFixed(1)}h</span></div>`;
+            if(rowSplit['Time in Lieu'] > 0) splitHtml += `<div class="leave-chip lc-til"><span>TIL</span><span>${rowSplit['Time in Lieu'].toFixed(1)}h</span></div>`;
+            splitHtml += '</div>';
+            cols += `<td class="total-col" style="color:var(--success); min-width:90px;">${rowTime.toFixed(1)}h${splitHtml}</td>`;
+            cols += `<td class="total-col" style="color:${rowVar < -0.1 ? 'var(--danger)' : rowVar > 0.1 ? 'var(--success)' : 'var(--muted)'}">${ (rowVar >= 0 ? '+' : '') + rowVar.toFixed(1)}h</td>`;
+            tr.innerHTML = cols;
+            body.appendChild(tr);
+        });
+    });
+    renderSummaryPanel();
+}
+
+// ============================================================
+// LEAVE SUMMARY PANEL
+// ============================================================
+function toggleSummary(btn) {
+    const body = document.getElementById('summary-body');
+    const icon = document.getElementById('summary-toggle-icon');
+    body.classList.toggle('open');
+    icon.innerText = body.classList.contains('open') ? '▲ Hide' : '▼ Show';
+}
+
+function renderSummaryPanel() {
+    const grandGrid = document.getElementById('summary-grand-totals');
+    const grid = document.getElementById('summary-grid');
+    if (!grandGrid || !grid) return;
+
+    const grand = { Normal: 0, 'Sick Leave': 0, 'Annual Leave': 0, 'Time in Lieu': 0 };
+    const empSplits = {};
+
+    Object.keys(EMPLOYEES).forEach(emp => {
+        const split = { Normal: 0, 'Sick Leave': 0, 'Annual Leave': 0, 'Time in Lieu': 0 };
+        for (let i = 0; i < 14; i++) {
+            const ds = fmtISO(addDays(activeFortnightStart, i));
+            const rec = records.find(r => r.emp === emp && r.date === ds);
+            if (!rec) continue;
+            rec.segments.forEach(s => {
+                const key = s.type in split ? s.type : 'Normal';
+                const hrs = s.unplanned ? (s.acHrs || 0) : (rec.hasActuals ? (s.acHrs || 0) : (s.scHrs || 0));
+                split[key] += hrs;
+                grand[key] += hrs;
+            });
+        }
+        empSplits[emp] = split;
+    });
+
+    // Grand totals
+    const totalHrs = Object.values(grand).reduce((a, b) => a + b, 0);
+    grandGrid.innerHTML = `
+        <div class="summary-total-card stc-normal">
+            <div class="summary-total-val" style="color:var(--primary)">${grand['Normal'].toFixed(1)}h</div>
+            <div class="summary-total-lbl">Normal Work</div>
+        </div>
+        <div class="summary-total-card stc-sick">
+            <div class="summary-total-val" style="color:var(--danger)">${grand['Sick Leave'].toFixed(1)}h</div>
+            <div class="summary-total-lbl">Sick Leave</div>
+        </div>
+        <div class="summary-total-card stc-annual">
+            <div class="summary-total-val" style="color:var(--success)">${grand['Annual Leave'].toFixed(1)}h</div>
+            <div class="summary-total-lbl">Annual Leave</div>
+        </div>
+        <div class="summary-total-card stc-til">
+            <div class="summary-total-val" style="color:var(--warn)">${grand['Time in Lieu'].toFixed(1)}h</div>
+            <div class="summary-total-lbl">Time in Lieu</div>
+        </div>
+    `;
+
+    // Per-employee cards
+    grid.innerHTML = '';
+    Object.keys(EMPLOYEES).sort().forEach(emp => {
+        const sp = empSplits[emp];
+        const empTotal = Object.values(sp).reduce((a, b) => a + b, 0);
+        if (empTotal === 0) return;
+        const maxHrs = Math.max(...Object.values(sp), 1);
+        const bars = [
+            { key: 'Normal',       label: 'Work', val: sp['Normal'],       cls: 'var(--primary)' },
+            { key: 'Sick Leave',   label: 'Sick', val: sp['Sick Leave'],   cls: 'var(--danger)' },
+            { key: 'Annual Leave', label: 'AL',   val: sp['Annual Leave'], cls: 'var(--success)' },
+            { key: 'Time in Lieu', label: 'TIL',  val: sp['Time in Lieu'], cls: 'var(--warn)' },
+        ];
+        let barsHtml = bars.map(b => b.val > 0 ? `
+            <div class="summary-bar-row">
+                <span class="summary-bar-label">${b.label}</span>
+                <div class="summary-bar-track">
+                    <div class="summary-bar-fill" style="width:${Math.round((b.val/maxHrs)*100)}%; background:${b.cls};"></div>
+                </div>
+                <span class="summary-bar-val" style="color:${b.cls};">${b.val.toFixed(1)}h</span>
+            </div>` : '').join('');
+        grid.innerHTML += `
+            <div class="summary-card">
+                <div class="summary-card-name">${emp}</div>
+                <div style="font-size:0.6rem; color:var(--muted); font-weight:700; margin-bottom:0.4rem;">Total: ${empTotal.toFixed(1)}h</div>
+                ${barsHtml}
+            </div>`;
+    });
+    if (!grid.innerHTML.trim()) {
+        grid.innerHTML = `<div style="color:var(--muted); font-size:0.8rem; font-weight:700; padding:1rem;">No shift data for this fortnight.</div>`;
+    }
+}
+
+// ============================================================
+// MODALS
+// ============================================================
+function openModal(id) { document.getElementById('modal-'+id).classList.add('open'); }
+function closeModal(id) { document.getElementById('modal-'+id).classList.remove('open'); }
+
+function openEntryModal(emp, date) {
+    const monday = fmtISO(getFortnightStart(new Date(date)));
+    const isRL = lockedRosters.has(monday);
+    const isTL = lockedTimesheets.has(monday);
+
+    activeEntryState = { emp, date, segments: [] };
+    const rec = records.find(r => r.emp === emp && r.date === date);
+    if(rec) {
+        activeEntryState.segments = JSON.parse(JSON.stringify(rec.segments));
+    } else {
+        activeEntryState.segments = [{ type:'Normal', scIn:'09:00', scOut:'17:00', scHrs:7.5, acIn:'', acOut:'', acHrs:0 }];
+    }
+
+    document.getElementById('modal-emp-name').innerText = emp;
+    
+    const dLbl = document.getElementById('modal-date-label');
+    dLbl.innerText = new Date(date).toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+    if(isRL || isTL) {
+        dLbl.style.color = 'var(--danger)';
+        dLbl.innerText += isRL && isTL ? ' — FULLY LOCKED' : isRL ? ' — ROSTER LOCKED' : ' — TIMESHEET LOCKED';
+    } else {
+        dLbl.style.color = 'var(--text)';
+    }
+    
+    document.getElementById('btn-save-entry').disabled = isTL;
+    document.getElementById('btn-delete-entry').disabled = isRL || isTL;
+    document.getElementById('btn-autofill-day').disabled = isRL;
+
+    const banner = document.getElementById('modal-lock-banner');
+    banner.innerHTML = '';
+
+    renderSegmentEditor(isRL, isTL);
+    openModal('cell');
+}
+
+function renderSegmentEditor(isRL, isTL) {
+    const list = document.getElementById('segment-editor-list');
+    list.innerHTML = '';
+    activeEntryState.segments.forEach((s, idx) => {
+        const div = document.createElement('div');
+        div.className = 'panel';
+        div.style.padding = '1.25rem';
+        div.innerHTML = `
+            <div style="display:flex; justify-content:space-between; margin-bottom:1rem; align-items:center;">
+                <span class="stat-label" style="font-size:0.8rem;">Segment #${idx+1}</span>
+                <div style="display:flex; gap:1rem; align-items:center;">
+                    <label style="display:flex; align-items:center; gap:0.5rem; color:var(--text); font-weight:700; cursor:pointer;"><input type="checkbox" ${s.unplanned?'checked':''} onchange="updateActiveSeg(${idx}, 'unplanned', this.checked)"> Unplanned Shift / Exception</label>
+                    ${(activeEntryState.segments.length > 1 && (!isRL || s.unplanned)) ? `<button class="btn-secondary" style="padding:4px 12px; font-size:0.7rem; border-color:var(--danger); color:var(--danger);" onclick="removeActiveSegment(${idx})">Remove</button>` : ''}
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem;">
+                <!-- Roster -->
+                <div style="border-right: 1px solid var(--border); padding-right:1rem; opacity:${s.unplanned?'0.3':'1'}; pointer-events:${s.unplanned?'none':'auto'};">
+                    <label style="display:block; margin-bottom:0.75rem;">Planned Roster</label>
+                    <div class="form-group" style="${s.unplanned?'display:none':''}">
+                        <select onchange="updateActiveSeg(${idx}, 'type', this.value)" ${isRL?'disabled':''}>
+                            <option value="Normal" ${s.type==='Normal'?'selected':''}>Normal Work</option>
+                            <option value="Sick Leave" ${s.type==='Sick Leave'?'selected':''}>Sick Leave</option>
+                            <option value="Annual Leave" ${s.type==='Annual Leave'?'selected':''}>Annual Leave</option>
+                            <option value="Time in Lieu" ${s.type==='Time in Lieu'?'selected':''}>Time in Lieu</option>
+                        </select>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem;">
+                        <input type="text" placeholder="HH:MM" value="${s.scIn}" onchange="updateActiveSeg(${idx}, 'scIn', this.value)" ${isRL?'disabled':''}>
+                        <input type="text" placeholder="HH:MM" value="${s.scOut}" onchange="updateActiveSeg(${idx}, 'scOut', this.value)" ${isRL?'disabled':''}>
+                    </div>
+                    ${s.unplanned ? `<div style="margin-top:1rem; font-size:0.85rem; font-weight:800; text-align:center; color:var(--muted);">0.0h (Unplanned Override)</div>` : ''}
+                </div>
+                <!-- Timesheet -->
+                <div>
+                    <label style="display:block; margin-bottom:0.75rem; color:var(--success);">Logged Timesheet</label>
+                    <div style="margin-bottom:0.75rem;">
+                        ${!s.unplanned ? 
+                            `<div style="padding:0.75rem; background:var(--glass-4); border-radius:10px; font-size:0.85rem; font-weight:800; text-align:center; color:var(--muted);">${s.type}</div>` 
+                            : 
+                            `<select onchange="updateActiveSeg(${idx}, 'type', this.value)" style="width:100%; border-color:var(--success); color:var(--success); font-weight:800;">
+                                <option value="Normal" ${s.type==='Normal'?'selected':''}>Normal Work</option>
+                                <option value="Sick Leave" ${s.type==='Sick Leave'?'selected':''}>Sick Leave</option>
+                                <option value="Annual Leave" ${s.type==='Annual Leave'?'selected':''}>Annual Leave</option>
+                                <option value="Time in Lieu" ${s.type==='Time in Lieu'?'selected':''}>Time in Lieu</option>
+                            </select>`
+                        }
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem;">
+                        <input type="text" placeholder="HH:MM" value="${s.acIn}" onchange="updateActiveSeg(${idx}, 'acIn', this.value)" ${isTL?'disabled':''} style="border-color:var(--success)">
+                        <input type="text" placeholder="HH:MM" value="${s.acOut}" onchange="updateActiveSeg(${idx}, 'acOut', this.value)" ${isTL?'disabled':''} style="border-color:var(--success)">
+                    </div>
+                </div>
+            </div>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function updateActiveSeg(idx, key, val) {
+    const s = activeEntryState.segments[idx];
+    if(key === 'scIn' || key === 'scOut' || key === 'acIn' || key === 'acOut') {
+        val = parseSmartTime(val);
+    }
+    s[key] = val;
+    if(key === 'unplanned') {
+        if(val) { s.scIn = ''; s.scOut = ''; s.scHrs = 0; }
+        else { s.scIn = '09:00'; s.scOut = '17:00'; }
+    }
+    s.scHrs = calcHours(s.scIn, s.scOut);
+    s.acHrs = calcHours(s.acIn, s.acOut);
+    const m = fmtISO(getFortnightStart(new Date(activeEntryState.date)));
+    renderSegmentEditor(lockedRosters.has(m), lockedTimesheets.has(m));
+}
+
+function addSegmentToActive() {
+    const monday = fmtISO(getFortnightStart(new Date(activeEntryState.date)));
+    const isRL = lockedRosters.has(monday);
+    activeEntryState.segments.push({ 
+        unplanned: isRL, 
+        type: 'Normal', 
+        scIn: isRL ? '' : '09:00', 
+        scOut: isRL ? '' : '17:00', 
+        scHrs: isRL ? 0 : 7.5, 
+        acIn: '', acOut: '', acHrs: 0 
+    });
+    renderSegmentEditor(isRL, lockedTimesheets.has(monday));
+}
+
+function removeActiveSegment(idx) {
+    activeEntryState.segments.splice(idx,1);
+    const m = fmtISO(getFortnightStart(new Date(activeEntryState.date)));
+    renderSegmentEditor(lockedRosters.has(m), lockedTimesheets.has(m));
+}
+
+async function saveActiveEntry() {
+    const toMins = t => { if(!t) return 0; let [h,m] = t.split(':').map(Number); return h*60+m; };
+    
+    // Validate Overlaps
+    for(let i=0; i<activeEntryState.segments.length; i++) {
+        for(let j=i+1; j<activeEntryState.segments.length; j++) {
+            const s1 = activeEntryState.segments[i], s2 = activeEntryState.segments[j];
+            // Roster overlap check
+            if(!s1.unplanned && !s2.unplanned && s1.scIn && s1.scOut && s2.scIn && s2.scOut) {
+                let s1s = toMins(s1.scIn), s1e = toMins(s1.scOut), s2s = toMins(s2.scIn), s2e = toMins(s2.scOut);
+                if(s1s < s1e && s2s < s2e && Math.max(s1s, s2s) < Math.min(s1e, s2e)) {
+                    await showMsg(`OVERLAP ERROR: Roster times for Segment ${i+1} and Segment ${j+1} are overlapping. Please correct the times. Save aborted.`);
+                    return;
+                }
+            }
+            // Timesheet overlap check
+            if(s1.acIn && s1.acOut && s2.acIn && s2.acOut) {
+                let a1s = toMins(s1.acIn), a1e = toMins(s1.acOut), a2s = toMins(s2.acIn), a2e = toMins(s2.acOut);
+                if(a1s < a1e && a2s < a2e && Math.max(a1s, a2s) < Math.min(a1e, a2e)) {
+                    await showMsg(`OVERLAP ERROR: Logged times for Segment ${i+1} and Segment ${j+1} are overlapping. Please correct the times. Save aborted.`);
+                    return;
+                }
+            }
+        }
+    }
+
+    let rec = records.find(r => r.emp === activeEntryState.emp && r.date === activeEntryState.date);
+    if(!rec) {
+        rec = { emp: activeEntryState.emp, date: activeEntryState.date, segments: [] };
+        records.push(rec);
+    }
+    rec.segments = activeEntryState.segments;
+    rec.hasActuals = activeEntryState.segments.some(s => s.acHrs > 0);
+    saveData(); renderAll(); closeModal('cell');
+}
+
+async function deleteActiveEntry() {
+    if(!await askConfirm('Delete this roster record?')) return;
+    records = records.filter(r => !(r.emp === activeEntryState.emp && r.date === activeEntryState.date));
+    saveData(); renderAll(); closeModal('cell');
+}
+
+// ============================================================
+// SECURITY HANDLER
+// ============================================================
+async function handleLock(type) {
+    const monday = fmtISO(activeFortnightStart);
+    const set = type === 'roster' ? lockedRosters : lockedTimesheets;
+    const isL = set.has(monday);
+    
+    // Safeguard: Check Contract Exceedance when locking roster
+    if(type === 'roster' && !isL) {
+        let warnings = [];
+        Object.keys(EMPLOYEES).forEach(emp => {
+            let limit = parseFloat(EMPLOYEES[emp].contracted) || 76;
+            let total = 0;
+            for(let i=0; i<14; i++) {
+                const ds = fmtISO(addDays(activeFortnightStart, i));
+                const rec = records.find(r => r.emp === emp && r.date === ds);
+                if(rec) total += rec.segments.reduce((acc, s) => acc + (s.unplanned ? 0 : (s.scHrs||0)), 0);
+            }
+            if(total > limit) {
+                warnings.push(`- ${emp}: ${total.toFixed(1)}h (Limit: ${limit.toFixed(1)}h)`);
+            }
+        });
+        if(warnings.length > 0) {
+            if(!await askConfirm("CONTRACT VIOLATION WARNING:\nThe following employees have been scheduled for more hours than their contracted fortnight limit:\n\n" + warnings.join("\n") + "\n\nDo you want to FORCE lock the roster anyway?")) return;
+        }
+    }
+
+    pwdCallback = () => {
+        if(isL) set.delete(monday); else set.add(monday);
+        saveData(); renderAll(); closeModal('pwd');
+    };
+    document.getElementById('pwd-title').innerText = (isL ? 'Unlock ' : 'Lock ') + (type==='roster'?'Roster':'Timesheets');
+    document.getElementById('pwd-sub').innerText = isL ? 'Authorized credential required to lift security.' : 'Secure this period for payroll processing.';
+    document.getElementById('input-pwd').value = '';
+    document.getElementById('pwd-error').style.display = 'none';
+    openModal('pwd');
+}
+
+function confirmPwdAction() {
+    if(document.getElementById('input-pwd').value === ADMIN_PWD) pwdCallback();
+    else document.getElementById('pwd-error').style.display = 'block';
+}
+
+// ============================================================
+// BATCH
+// ============================================================
+async function batchLogEmp(emp) {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedTimesheets.has(monday)) { await showMsg('Timesheets are locked for this period.'); return; }
+    if(!await askConfirm(`Auto-log expected roster as worked time for ${emp}?`)) return;
+    for(let i=0; i<14; i++) {
+        const ds = fmtISO(addDays(activeFortnightStart, i));
+        const rec = records.find(r => r.emp === emp && r.date === ds);
+        if(rec && !rec.hasActuals) {
+            rec.hasActuals = true;
+            rec.segments.forEach(s => { s.acIn = s.scIn; s.acOut = s.scOut; s.acHrs = s.scHrs; });
+        }
+    }
+    saveData(); renderAll();
+}
+async function injectSeedData() {
+    if(!await askConfirm('This will wipe your current records and inject comprehensive test data for all employees. Proceed?')) return;
+    const start = getFortnightStart(new Date('2026-04-13'));
+    records = [];
+    const names = Object.keys(EMPLOYEES);
+    names.forEach((name, nIdx) => {
+        // Fill 10 days out of 14
+        for(let i=0; i<14; i++) {
+            if(i === 5 || i === 6 || i === 12 || i === 13) continue; // Weekends off
+            const ds = fmtISO(addDays(start, i));
+            const hasAc = i < 3; // Log first 3 days
+            records.push({
+                emp: name,
+                date: ds,
+                hasActuals: hasAc,
+                segments: [{
+                    type: 'Normal',
+                    scIn: '09:00', scOut: '17:00', scHrs: 7.5,
+                    acIn: hasAc ? '09:00' : '',
+                    acOut: hasAc ? '17:00' : '',
+                    acHrs: hasAc ? 7.5 : 0
+                }]
+            });
+        }
+    });
+    saveData(); renderAll();
+    await showMsg('Full 14-day seed data injected for ' + names.length + ' employees.');
+}
+async function batchClearEmp(emp) {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedRosters.has(monday)) { await showMsg('Roster is locked for this period.'); return; }
+    if(!await askConfirm(`Wipe all rostered shifts for ${emp} this fortnight?`)) return;
+    for(let i=0; i<14; i++) {
+        const ds = fmtISO(addDays(activeFortnightStart, i));
+        records = records.filter(r => !(r.emp === emp && r.date === ds));
+    }
+    saveData(); renderAll();
+}
+
+async function factoryReset() {
+    if(!await askConfirm('DANGER: This will wipe ALL data, rosters, and employees, completely resetting the system to factory defaults. Are you absolutely sure?')) return;
+    localStorage.removeItem('elite_v2_emps');
+    localStorage.removeItem('elite_v2_recs');
+    localStorage.removeItem('elite_v2_lock_r');
+    localStorage.removeItem('elite_v2_lock_t');
+    location.reload();
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function changeFortnight(n) { activeFortnightStart = addDays(activeFortnightStart, n*14); renderAll(); }
+function jumpToDate(val) { if(val) { activeFortnightStart = getFortnightStart(new Date(val)); renderAll(); } }
+function switchTab(id) {
+    document.querySelectorAll('.view-content').forEach(v => v.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('view-'+id).style.display = 'block';
+    document.getElementById('tab-'+id).classList.add('active');
+}
+function toggleTheme() {
+    document.documentElement.classList.toggle('light-mode');
+    const isLight = document.documentElement.classList.contains('light-mode');
+    document.getElementById('theme-btn').innerText = isLight ? '🌙' : '☀️';
+    localStorage.setItem('elite_v2_theme', isLight ? 'light' : 'dark');
+}
+
+// ============================================================
+// STAFF
+// ============================================================
+function renderStaffList() {
+    const body = document.getElementById('staff-list-body');
+    body.innerHTML = '';
+    Object.keys(EMPLOYEES).sort().forEach(emp => {
+        const e = EMPLOYEES[emp];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="name-col" style="background:transparent; font-weight:800; font-size:0.85rem;">${emp}</td>
+            <td style="color:var(--muted); font-weight:600;">${e.dept}</td>
+            <td style="font-size:0.8rem; color:var(--muted);">${e.email || '<span style="opacity:0.4;">—</span>'}</td>
+            <td style="font-size:0.8rem; color:var(--muted);">${e.phone || '<span style="opacity:0.4;">—</span>'}</td>
+            <td><input type="number" value="${e.contracted}" style="width:80px;" onchange="updateContractedHours('${emp}', this.value)"></td>
+            <td style="text-align:right; display:flex; gap:0.5rem; justify-content:flex-end; padding:8px 4px;">
+                <button class="btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.75rem;" onclick="openEditStaff('${emp}')">✏️ Edit</button>
+                <button class="btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.75rem; color:var(--primary); border-color:var(--primary);" onclick="openStaffEditor('${emp}')">📋 Template</button>
+                <button class="btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.75rem; color:var(--danger); border-color:var(--danger);" onclick="deleteStaffMember('${emp}')">🗑 Delete</button>
+            </td>
+        `;
+        body.appendChild(tr);
+    });
+}
+
+function openStaffEditor(emp) {
+    activeStaffEditor = emp;
+    const e = EMPLOYEES[emp];
+    if(!e.template) e.template = Array.from({length:14}, () => ({ scIn:'09:00', scOut:'17:00', off:false }));
+    
+    document.getElementById('editor-emp-name').innerText = emp;
+    renderTemplateGrid();
+    switchTab('staff-editor');
+}
+
+function renderTemplateGrid() {
+    const grid = document.getElementById('template-grid');
+    grid.innerHTML = '';
+    const temp = EMPLOYEES[activeStaffEditor].template;
+    
+    temp.forEach((d, i) => {
+        const div = document.createElement('div');
+        div.className = 'panel';
+        div.style.padding = '0.5rem';
+        const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i%7];
+        const week = i < 7 ? 'W1' : 'W2';
+        div.innerHTML = `
+            <div class="stat-label" style="margin-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center;">
+                <span>${week} ${dow}</span>
+                <input type="checkbox" ${d.off?'checked':''} onchange="updateTemp(${i}, 'off', this.checked)" title="Mark Day Off">
+            </div>
+            <div style="display:${d.off?'none':'flex'}; flex-direction:column; gap:0.2rem;">
+                <input type="text" placeholder="IN" value="${d.scIn}" onchange="updateTemp(${i}, 'scIn', this.value)" style="padding:0.4rem; font-size:0.75rem; font-family:monospace; width:100%; background:var(--glass-4); border:none; text-align:center;">
+                <input type="text" placeholder="OUT" value="${d.scOut}" onchange="updateTemp(${i}, 'scOut', this.value)" style="padding:0.4rem; font-size:0.75rem; font-family:monospace; width:100%; background:var(--glass-4); border:none; text-align:center;">
+            </div>
+            <div style="display:${d.off?'block':'none'}; font-size:0.6rem; font-weight:800; color:var(--muted); text-align:center; padding:0.8rem 0;">DAY OFF</div>
+        `;
+        grid.appendChild(div);
+    });
+}
+
+function updateTemp(idx, key, val) {
+    if(key === 'scIn' || key === 'scOut') { val = parseSmartTime(val); }
+    EMPLOYEES[activeStaffEditor].template[idx][key] = val;
+    saveData();
+    renderTemplateGrid();
+}
+
+async function saveStaffTemplate() { saveData(); }
+
+async function applyTemplateToFortnight() {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedRosters.has(monday)) { await showMsg('Roster is locked for this period.'); return; }
+    if(!await askConfirm(`Overwrite active fortnight roster for ${activeStaffEditor} using their template?`)) return;
+    
+    const temp = EMPLOYEES[activeStaffEditor].template;
+    for(let i=0; i<14; i++) {
+        const ds = fmtISO(addDays(activeFortnightStart, i));
+        const dayTemp = temp[i];
+        
+        // Remove existing
+        records = records.filter(r => !(r.emp === activeStaffEditor && r.date === ds));
+        
+        if(!dayTemp.off) {
+            records.push({
+                emp: activeStaffEditor,
+                date: ds,
+                hasActuals: false,
+                segments: [{
+                    type: 'Normal',
+                    scIn: dayTemp.scIn,
+                    scOut: dayTemp.scOut,
+                    scHrs: calcHours(dayTemp.scIn, dayTemp.scOut),
+                    acIn: '', acOut: '', acHrs: 0
+                }]
+            });
+        }
+    }
+    saveData();
+    renderAll();
+    await showMsg('Template applied to ' + fmtPretty(activeFortnightStart) + ' fortnight.');
+}
+function updateContractedHours(emp, val) { EMPLOYEES[emp].contracted = parseFloat(val)||76; saveData(); }
+
+let editingStaffName = null;
+function openEditStaff(emp) {
+    editingStaffName = emp;
+    const e = EMPLOYEES[emp];
+    document.getElementById('edit-staff-subtitle').innerText = e.dept + ' · ' + (e.email || 'No email');
+    document.getElementById('edit-emp-name').value = emp;
+    document.getElementById('edit-emp-dept').value = e.dept || '';
+    document.getElementById('edit-emp-contracted').value = e.contracted || 76;
+    document.getElementById('edit-emp-email').value = e.email || '';
+    document.getElementById('edit-emp-phone').value = e.phone || '';
+    openModal('edit-staff');
+}
+async function saveEditStaff() {
+    const newName = document.getElementById('edit-emp-name').value.trim();
+    if (!newName) { await showMsg('Name cannot be empty.'); return; }
+    const e = EMPLOYEES[editingStaffName];
+    e.dept = document.getElementById('edit-emp-dept').value.trim() || e.dept;
+    e.contracted = parseFloat(document.getElementById('edit-emp-contracted').value) || 76;
+    e.email = document.getElementById('edit-emp-email').value.trim();
+    e.phone = document.getElementById('edit-emp-phone').value.trim();
+    if (newName !== editingStaffName) {
+        EMPLOYEES[newName] = e;
+        delete EMPLOYEES[editingStaffName];
+        records.forEach(r => { if(r.emp === editingStaffName) r.emp = newName; });
+    }
+    saveData(); renderAll(); closeModal('edit-staff');
+}
+
+async function addNewStaff() {
+    const name = await askPrompt('Full Name:'); if(!name) return;
+    const dept = await askPrompt('Department:'); if(!dept) return;
+    const email = await askPrompt('Email Address (optional):');
+    const phone = await askPrompt('Phone Number (optional):');
+    EMPLOYEES[name] = { dept, contracted: 76, email: email||'', phone: phone||'' };
+    saveData(); renderAll();
+}
+
+async function deleteStaffMember(emp) {
+    if(!await askConfirm(`Remove ${emp} from the system? This cannot be undone.`)) return;
+    pwdCallback = () => { delete EMPLOYEES[emp]; saveData(); renderAll(); closeModal('pwd'); };
+    document.getElementById('pwd-title').innerText = 'Confirm Staff Deletion';
+    document.getElementById('pwd-sub').innerText = `Admin password required to delete ${emp}.`;
+    document.getElementById('input-pwd').value = '';
+    document.getElementById('pwd-error').style.display = 'none';
+    openModal('pwd');
+}
+
+// ============================================================
+// AUTOMATION & BATCH
+// ============================================================
+async function autoRosterAll() {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedRosters.has(monday)) { await showMsg('Roster is locked for this period. To run auto-roster, unlock it first.'); return; }
+    if(!await askConfirm('This will apply Default Templates to all staff for this fortnight. Proceed?')) return;
+    
+    Object.keys(EMPLOYEES).forEach(emp => {
+        let temp = EMPLOYEES[emp].template;
+        if(!temp) temp = Array.from({length:14}, () => ({ scIn:'09:00', scOut:'17:00', off:false }));
+        
+        for(let i=0; i<14; i++) {
+            const ds = fmtISO(addDays(activeFortnightStart, i));
+            const dayTemp = temp[i];
+            records = records.filter(r => !(r.emp === emp && r.date === ds));
+            
+            if(!dayTemp.off) {
+                records.push({
+                    emp: emp,
+                    date: ds,
+                    hasActuals: false,
+                    segments: [{
+                        unplanned: false,
+                        type: 'Normal',
+                        scIn: dayTemp.scIn || '09:00',
+                        scOut: dayTemp.scOut || '17:00',
+                        scHrs: calcHours(dayTemp.scIn || '09:00', dayTemp.scOut || '17:00'),
+                        acIn: '', acOut: '', acHrs: 0
+                    }]
+                });
+            }
+        }
+    });
+    saveData();
+    renderAll();
+    await showMsg('Auto-Roster complete. All staff templates applied.');
+}
+
+async function autoRosterEmp(emp) {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedRosters.has(monday)) { await showMsg('Roster is locked for this period. To run auto-roster, unlock it first.'); return; }
+    if(!await askConfirm(`Apply default template for ${emp} over this fortnight?`)) return;
+    
+    let temp = EMPLOYEES[emp].template;
+    if(!temp) temp = Array.from({length:14}, () => ({ scIn:'09:00', scOut:'17:00', off:false }));
+    
+    for(let i=0; i<14; i++) {
+        const ds = fmtISO(addDays(activeFortnightStart, i));
+        const dayTemp = temp[i];
+        records = records.filter(r => !(r.emp === emp && r.date === ds));
+        
+        if(!dayTemp.off) {
+            records.push({
+                emp: emp,
+                date: ds,
+                hasActuals: false,
+                segments: [{
+                    unplanned: false,
+                    type: 'Normal',
+                    scIn: dayTemp.scIn || '09:00',
+                    scOut: dayTemp.scOut || '17:00',
+                    scHrs: calcHours(dayTemp.scIn || '09:00', dayTemp.scOut || '17:00'),
+                    acIn: '', acOut: '', acHrs: 0
+                }]
+            });
+        }
+    }
+    saveData();
+    renderAll();
+}
+
+async function autoFillActiveDay() {
+    const monday = fmtISO(getFortnightStart(new Date(activeEntryState.date)));
+    if(lockedRosters.has(monday)) { await showMsg('Roster is locked for this period.'); return; }
+    
+    const activeDate = new Date(activeEntryState.date);
+    const startObj = getFortnightStart(activeDate);
+    const diffTime = Math.abs(activeDate - startObj);
+    const dayIdx = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    
+    let temp = EMPLOYEES[activeEntryState.emp].template;
+    if(!temp) temp = Array.from({length:14}, () => ({ scIn:'09:00', scOut:'17:00', off:false }));
+    
+    const dayTemp = temp[dayIdx];
+    if(dayTemp.off) {
+        activeEntryState.segments = []; // Clean slate for day off
+    } else {
+        activeEntryState.segments = [{
+            unplanned: false,
+            type: 'Normal',
+            scIn: dayTemp.scIn || '09:00',
+            scOut: dayTemp.scOut || '17:00',
+            scHrs: calcHours(dayTemp.scIn || '09:00', dayTemp.scOut || '17:00'),
+            acIn: '', acOut: '', acHrs: 0
+        }];
+    }
+    renderSegmentEditor(lockedRosters.has(monday), lockedTimesheets.has(monday));
+}
+
+async function batchLogAllPending() {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedTimesheets.has(monday)) { await showMsg('Timesheets are locked. Cannot batch log.'); return; }
+    if(!await askConfirm('Auto-log all scheduled periods as perfectly matched logged times for ALL employees?')) return;
+    const dates = Array.from({length:14}, (_,i) => fmtISO(addDays(activeFortnightStart, i)));
+    records.filter(r => dates.includes(r.date) && !r.hasActuals).forEach(r => {
+        r.segments.forEach(s => {
+            if(!s.unplanned) { s.acIn = s.scIn; s.acOut = s.scOut; s.acHrs = s.scHrs; }
+        });
+        r.hasActuals = r.segments.some(s => s.acHrs > 0);
+    });
+    saveData(); renderAll();
+}
+
+async function batchLogEmp(emp) {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedTimesheets.has(monday)) { await showMsg('Timesheets are locked.'); return; }
+    if(!await askConfirm(`Auto-log roster as worked time for ${emp}?`)) return;
+    const dates = Array.from({length:14}, (_,i) => fmtISO(addDays(activeFortnightStart, i)));
+    records.filter(r => r.emp === emp && dates.includes(r.date) && !r.hasActuals).forEach(r => {
+        r.segments.forEach(s => {
+            if(!s.unplanned) { s.acIn = s.scIn; s.acOut = s.scOut; s.acHrs = s.scHrs; }
+        });
+        r.hasActuals = r.segments.some(s => s.acHrs > 0);
+    });
+    saveData(); renderAll();
+}
+
+async function batchClearEmp(emp) {
+    const monday = fmtISO(activeFortnightStart);
+    if(lockedRosters.has(monday) || lockedTimesheets.has(monday)) { await showMsg('Period locked.'); return; }
+    if(!await askConfirm('Wipe all records for ' + emp + ' in this period?')) return;
+    const dates = Array.from({length:14}, (_,i) => fmtISO(addDays(activeFortnightStart, i)));
+    records = records.filter(r => !(r.emp === emp && dates.includes(r.date)));
+    saveData(); renderAll();
+}
+
+// ============================================================
+// PORTAL
+// ============================================================
+function renderPortalDropdown() {
+    const sel = document.getElementById('portal-emp-select');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="" disabled selected>Please select your name...</option>';
+    Object.keys(EMPLOYEES).sort().forEach(e => sel.innerHTML += `<option value="${e}">${e}</option>`);
+    if(cur) sel.value = cur;
+}
+// ============================================================
+// PORTAL CALENDAR
+// ============================================================
+let portalCalYear  = new Date().getFullYear();
+let portalCalMonth = new Date().getMonth();
+
+function portalNavMonth(dir) {
+    portalCalMonth += dir;
+    if (portalCalMonth > 11) { portalCalMonth = 0;  portalCalYear++; }
+    if (portalCalMonth < 0)  { portalCalMonth = 11; portalCalYear--; }
+    renderPortalPersonal();
+}
+function portalJumpMonth(val) {
+    if (!val) return;
+    const [y, m] = val.split('-').map(Number);
+    portalCalYear = y; portalCalMonth = m - 1;
+    renderPortalPersonal();
+}
+
+function renderPortalPersonal() {
+    const emp = document.getElementById('portal-emp-select').value;
+    const container = document.getElementById('portal-data');
+    if (!emp) {
+        container.innerHTML = `<p class="subtitle" style="text-align:center; padding:3rem; font-weight:700;">Select your name above to view your calendar.</p>`;
+        return;
+    }
+
+    const y = portalCalYear, m = portalCalMonth;
+    const mLabel = new Date(y, m, 1).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+    const firstDay = new Date(y, m, 1);
+    const startDow = (firstDay.getDay() + 6) % 7; // 0=Mon
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+
+    const typeColor = { 'Normal': 'var(--primary)', 'Sick Leave': 'var(--danger)', 'Annual Leave': 'var(--success)', 'Time in Lieu': 'var(--warn)' };
+    const typeShort = { 'Normal': 'Work', 'Sick Leave': 'Sick', 'Annual Leave': 'AL', 'Time in Lieu': 'TIL' };
+    const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    // Build leave split for the visible month
+    const leaveSplit = { Normal: 0, 'Sick Leave': 0, 'Annual Leave': 0, 'Time in Lieu': 0 };
+    const empRecs = records.filter(r => r.emp === emp);
+    empRecs.forEach(r => {
+        const d = new Date(r.date + 'T00:00:00');
+        if (d.getFullYear() !== y || d.getMonth() !== m) return;
+        r.segments.forEach(s => {
+            const key = s.type in leaveSplit ? s.type : 'Normal';
+            leaveSplit[key] += s.unplanned ? (s.acHrs || 0) : (r.hasActuals ? (s.acHrs || 0) : (s.scHrs || 0));
+        });
+    });
+    const totalHrs = Object.values(leaveSplit).reduce((a, b) => a + b, 0);
+
+    // Leave breakdown card
+    let html = `
+    <div class="portal-leave-card">
+        <div style="font-size:0.85rem; font-weight:800; margin-bottom:0.25rem;">${mLabel} — Leave Breakdown</div>
+        <div style="font-size:0.75rem; color:var(--muted); font-weight:600; margin-bottom:0.75rem;">Hours recorded this month</div>
+        <div class="plc-grid">
+            <div class="plc-item stc-normal"><div class="plc-val" style="color:var(--primary)">${leaveSplit['Normal'].toFixed(1)}h</div><div class="plc-lbl">Normal Work</div></div>
+            <div class="plc-item stc-sick"><div class="plc-val" style="color:var(--danger)">${leaveSplit['Sick Leave'].toFixed(1)}h</div><div class="plc-lbl">Sick Leave</div></div>
+            <div class="plc-item stc-annual"><div class="plc-val" style="color:var(--success)">${leaveSplit['Annual Leave'].toFixed(1)}h</div><div class="plc-lbl">Annual Leave</div></div>
+            <div class="plc-item stc-til"><div class="plc-val" style="color:var(--warn)">${leaveSplit['Time in Lieu'].toFixed(1)}h</div><div class="plc-lbl">Time in Lieu</div></div>
+        </div>
+        ${totalHrs === 0 ? '<div style="text-align:center;color:var(--muted);font-size:0.75rem;font-weight:700;padding:0.25rem;">No shifts recorded this month.</div>' : ''}
+    </div>`;
+
+    // Month nav header
+    const dateVal = `${y}-${String(m+1).padStart(2,'0')}-01`;
+    html += `
+    <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; margin-bottom:1.5rem;">
+        <button class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:1rem;" onclick="portalNavMonth(-1)">←</button>
+        <div style="position:relative; display:flex; align-items:center; gap:0.5rem; background:var(--glass-4); padding:0.4rem 1rem; border-radius:12px; border:1px solid var(--border);">
+            <span style="font-size:1rem; font-weight:800; min-width:140px; text-align:center;">${mLabel}</span>
+            <button class="btn-secondary" style="padding:0.25rem; border:none; background:transparent;" onclick="document.getElementById('portal-month-jump').showPicker()" title="Jump to date">📅</button>
+            <input type="date" id="portal-month-jump" value="${dateVal}" onchange="portalJumpMonth(this.value)" style="position:absolute; opacity:0; width:0; height:0; pointer-events:none;">
+        </div>
+        <button class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:1rem;" onclick="portalNavMonth(1)">→</button>
+    </div>`;
+
+    // Calendar grid
+    html += `<div style="display:grid; grid-template-columns:repeat(7,1fr); gap:4px;">`;
+
+    // Day headers
+    DOW.forEach(d => { html += `<div style="text-align:center; font-size:0.65rem; font-weight:800; color:var(--muted); padding:4px 0;">${d}</div>`; });
+
+    // Leading empty cells
+    for (let e = 0; e < startDow; e++) html += `<div></div>`;
+
+    // Day cells
+    for (let day = 1; day <= daysInMonth; day++) {
+        const cellDate = new Date(y, m, day);
+        const ds = fmtISO(cellDate);
+        const rec = empRecs.find(r => r.date === ds);
+        const isWeekend = cellDate.getDay() === 0 || cellDate.getDay() === 6;
+        const isToday   = ds === fmtISO(new Date());
+
+        let cellBg     = rec ? 'var(--glass-8)' : 'transparent';
+        let cellBorder = rec ? '1px solid var(--border)' : '1px solid var(--glass-4)';
+        if (isToday) { cellBg = 'rgba(99,102,241,0.15)'; cellBorder = '2px solid var(--primary)'; }
+
+        let shiftContent = '';
+        if (rec) {
+            const hasUnplanned = rec.segments.some(s => s.unplanned);
+            if (hasUnplanned) cellBorder = '2px solid var(--warn)';
+            rec.segments.slice(0, 3).forEach(s => {
+                const col = typeColor[s.type] || 'var(--muted)';
+                const lbl = typeShort[s.type] || s.type;
+                const timeLabel = s.unplanned
+                    ? `⚠ ${lbl}`
+                    : `${s.scIn}–${s.scOut.slice(3)}`;
+                shiftContent += `<div style="background:${col}20; color:${col}; font-size:0.5rem; font-weight:800; border-radius:3px; padding:2px 4px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${timeLabel}</div>`;
+            });
+            if (rec.segments.length > 3) shiftContent += `<div style="font-size:0.45rem; color:var(--muted); font-weight:700;">+${rec.segments.length-3} more</div>`;
+            const statusLabel = rec.hasActuals
+                ? `<div style="font-size:0.45rem; color:var(--success); font-weight:800; margin-top:2px;">✓ Logged</div>`
+                : `<div style="font-size:0.45rem; color:var(--muted); font-weight:700; margin-top:2px;">Pending</div>`;
+            shiftContent += statusLabel;
+        }
+
+        html += `<div style="border-radius:8px; border:${cellBorder}; background:${cellBg}; padding:5px; min-height:64px; opacity:${isWeekend && !rec ? '0.35' : '1'}; transition:background 0.15s;">
+            <div style="font-size:0.7rem; font-weight:${isToday?'900':'700'}; color:${isToday?'var(--primary)':isWeekend?'var(--muted)':'var(--text)'}; margin-bottom:1px;">${day}</div>
+            ${shiftContent}
+        </div>`;
+    }
+
+    html += `</div>`;
+    container.innerHTML = html;
+}
+
+// INIT
+if(localStorage.getItem('elite_v2_theme') === 'light') toggleTheme();
+renderAll();
+</script>
+</body>
+</html>
