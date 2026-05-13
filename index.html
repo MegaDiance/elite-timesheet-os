@@ -700,8 +700,7 @@ function renderGrid() {
                         if(s.unplanned) {
                             segmentsHtml += `<div class="shift-block ${typeCls}" style="border-style: dashed;" title="Unplanned Timesheet Shift">${s.type} ${Number(s.acHrs).toFixed(4)}h</div>`;
                         } else {
-                            const badge = (s.scIn && s.scOut && s.scIn > s.scOut) ? ' <span style="font-size:0.5rem;opacity:0.7;">🌙+1</span>' : '';
-                            segmentsHtml += `<div class="shift-block ${typeCls}" title="${s.type}">${s.scIn} - ${s.scOut}${badge}</div>`;
+                            segmentsHtml += `<div class="shift-block ${typeCls}" title="${s.type}">${s.scIn} - ${s.scOut}</div>`;
                         }
                     });
                     let tsHtml = `<div class="ts-pending">No Actual</div>`;
@@ -893,7 +892,6 @@ function renderSegmentEditor(isRL, isTL) {
                         <input type="text" placeholder="HH:MM" value="${s.scIn}" onchange="updateActiveSeg(${idx}, 'scIn', this.value)" ${isRL?'disabled':''}>
                         <input type="text" placeholder="HH:MM" value="${s.scOut}" onchange="updateActiveSeg(${idx}, 'scOut', this.value)" ${isRL?'disabled':''}>
                     </div>
-                    ${s.scIn && s.scOut && s.scIn > s.scOut ? `<div style="font-size:0.6rem; color:var(--primary); font-weight:700; margin-top:4px;">🌙 This shift crosses midnight into the next day.</div>` : ''}
                     ${s.unplanned ? `<div style="margin-top:1rem; font-size:0.85rem; font-weight:800; text-align:center; color:var(--muted);">0.0h (Unplanned Override)</div>` : ''}
                 </div>
                 <!-- Timesheet -->
@@ -915,7 +913,6 @@ function renderSegmentEditor(isRL, isTL) {
                         <input type="text" placeholder="HH:MM" value="${s.acIn}" onchange="updateActiveSeg(${idx}, 'acIn', this.value)" ${isTL?'disabled':''} style="border-color:var(--success)">
                         <input type="text" placeholder="HH:MM" value="${s.acOut}" onchange="updateActiveSeg(${idx}, 'acOut', this.value)" ${isTL?'disabled':''} style="border-color:var(--success)">
                     </div>
-                    ${s.acIn && s.acOut && s.acIn > s.acOut ? `<div style="font-size:0.6rem; color:var(--success); font-weight:700; margin-top:4px;">🌙 This shift crosses midnight into the next day.</div>` : ''}
                 </div>
             </div>
         `;
@@ -990,6 +987,46 @@ async function saveActiveEntry() {
             }
         }
     }
+
+    // Split Midnight Shifts
+    const nextDayDate = fmtISO(addDays(new Date(activeEntryState.date), 1));
+    let nextDayRec = records.find(r => r.emp === activeEntryState.emp && r.date === nextDayDate);
+    
+    activeEntryState.segments.forEach(s => {
+        let scSplit = false, acSplit = false;
+        let nextScOut = '', nextAcOut = '';
+
+        if (!s.unplanned && s.scIn && s.scOut && toMins(s.scIn) > toMins(s.scOut)) {
+            scSplit = true;
+            nextScOut = s.scOut;
+            s.scOut = '00:00';
+            s.scHrs = calcHours(s.scIn, s.scOut);
+        }
+        if (s.acIn && s.acOut && toMins(s.acIn) > toMins(s.acOut)) {
+            acSplit = true;
+            nextAcOut = s.acOut;
+            s.acOut = '00:00';
+            s.acHrs = calcHours(s.acIn, s.acOut);
+        }
+
+        if (scSplit || acSplit) {
+            if (!nextDayRec) {
+                nextDayRec = { emp: activeEntryState.emp, date: nextDayDate, segments: [] };
+                records.push(nextDayRec);
+            }
+            nextDayRec.segments.push({
+                type: s.type,
+                unplanned: s.unplanned,
+                scIn: scSplit ? '00:00' : '',
+                scOut: nextScOut,
+                scHrs: scSplit ? calcHours('00:00', nextScOut) : 0,
+                acIn: acSplit ? '00:00' : '',
+                acOut: nextAcOut,
+                acHrs: acSplit ? calcHours('00:00', nextAcOut) : 0
+            });
+            nextDayRec.hasActuals = nextDayRec.segments.some(ns => ns.acHrs > 0);
+        }
+    });
 
     let rec = records.find(r => r.emp === activeEntryState.emp && r.date === activeEntryState.date);
     if(!rec) {
