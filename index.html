@@ -75,7 +75,7 @@
         
         /* Master Grid Table */
         .ag-wrap { overflow: auto; border-radius: 0 0 12px 12px; border-top: none; }
-        .ag-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1200px; }
+        .ag-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1500px; }
         .ag-table th { background: var(--panel); padding: 4px; font-size: 0.65rem; font-weight: 700; color: var(--muted); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border); position: sticky; top: 0; z-index: 10; cursor: default; }
         .ag-table th.name-col { width: 180px; text-align: left; position: sticky; left: 0; z-index: 20; border-right: 2px solid var(--border); }
         .ag-table td { padding: 2px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--glass-8); vertical-align: top; transition: background 0.1s; }
@@ -93,7 +93,7 @@
         .shift-annual { background: rgba(16,185,129,0.1); color: var(--success); border-left: 2px solid var(--success); }
         .shift-til { background: rgba(245,158,11,0.1); color: var(--warn); border-left: 2px solid var(--warn); }
         
-        .ts-block { margin-top: 1px; border-top: 1px solid var(--glass-8); padding-top: 1px; font-size: 0.55rem; font-weight: 900; color: var(--success); }
+        .ts-block { margin-top: 1px; border-top: 1px solid var(--glass-8); padding-top: 1px; font-size: 0.55rem; font-weight: 900; color: var(--success); white-space: nowrap; }
         .ts-pending { color: var(--muted); font-size: 0.55rem; font-style: italic; font-weight: 600; }
         
         .var-badge { position: absolute; top: 0; right: 0; font-size: 0.55rem; font-weight: 800; padding: 1px 3px; border-radius: 0 2px 0 2px; }
@@ -126,46 +126,38 @@
         .btn-mini { flex: 1; padding: 2px; font-size: 0.55rem; font-weight: 800; border-radius: 4px; border: 1px solid var(--border); background: var(--glass-4); cursor: pointer; color: var(--muted); transition: var(--tr); }
         .btn-mini:hover { background: var(--glass-8); color: var(--text); }
         
-        .ag-table td.total-col { background: var(--glass-4); font-family: monospace; font-size: 0.7rem; text-align: right; border-left: 1px solid var(--border); font-weight: 800; vertical-align: top; padding: 4px 6px; }
+        .ag-table td.total-col { background: var(--glass-4); font-family: monospace; font-size: 0.6rem; text-align: right; border-left: 1px solid var(--border); font-weight: 800; vertical-align: top; padding: 4px 6px; min-width: 100px; }
         .ag-table th.total-col { border-left: 1px solid var(--border); }
 
         /* Leave Breakdown Chips */
         .leave-chips { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
-        .leave-chip { display: flex; justify-content: space-between; align-items: center; padding: 1px 4px; border-radius: 3px; font-size: 0.55rem; font-weight: 800; }
+        .leave-chip { display: flex; justify-content: space-between; align-items: center; padding: 1px 4px; border-radius: 3px; font-size: 0.5rem; font-weight: 800; white-space: nowrap; }
         .lc-normal  { background: rgba(99,102,241,0.12); color: var(--primary); }
         .lc-sick    { background: rgba(239,68,68,0.12); color: var(--danger); }
         .lc-annual  { background: rgba(16,185,129,0.12); color: var(--success); }
         .lc-til     { background: rgba(245,158,11,0.12); color: var(--warn); }
         .lc-unplanned { background: rgba(161,161,170,0.15); color: var(--muted); }
 
-        /* Fortnight Summary Panel */
-        .summary-panel { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-        .summary-toggle { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; background: var(--glass-4); cursor: pointer; font-size: 0.8rem; font-weight: 800; border: none; width: 100%; color: var(--text); }
-        .summary-toggle:hover { background: var(--glass-8); }
-        .summary-body { display: none; padding: 1rem; background: var(--panel); }
-        .summary-body.open { display: block; }
-        .summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
-        .summary-card { background: var(--glass-4); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; }
-        .summary-card-name { font-size: 0.75rem; font-weight: 800; margin-bottom: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .summary-bar-row { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 3px; font-size: 0.65rem; }
-        .summary-bar-label { width: 60px; color: var(--muted); font-weight: 700; white-space: nowrap; }
-        .summary-bar-track { flex: 1; background: var(--glass-8); border-radius: 4px; height: 6px; overflow: hidden; }
-        .summary-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
-        .summary-bar-val { width: 32px; text-align: right; font-weight: 800; font-size: 0.6rem; }
-        .summary-totals-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
-        .summary-total-card { text-align: center; padding: 0.75rem 0.5rem; border-radius: 8px; }
-        .stc-normal { background: rgba(99,102,241,0.1); }
-        .stc-sick   { background: rgba(239,68,68,0.1); }
-        .stc-annual { background: rgba(16,185,129,0.1); }
-        .stc-til    { background: rgba(245,158,11,0.1); }
-        .summary-total-val { font-size: 1.1rem; font-weight: 900; }
-        .summary-total-lbl { font-size: 0.6rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+        /* Audit Log */
+        .audit-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+        .audit-table th { text-align: left; padding: 0.6rem 0.75rem; font-size: 0.65rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid var(--border); }
+        .audit-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+        .audit-table tr:hover td { background: var(--glass-4); }
+        .audit-ts { font-family: monospace; font-size: 0.65rem; color: var(--muted); white-space: nowrap; }
+        .audit-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em; }
+        .audit-badge.added { background: rgba(16,185,129,0.15); color: var(--success); }
+        .audit-badge.deleted { background: rgba(239,68,68,0.15); color: var(--danger); }
+        .audit-badge.edited { background: rgba(99,102,241,0.15); color: var(--primary); }
+        .audit-badge.renamed { background: rgba(245,158,11,0.15); color: var(--warn); }
+        .audit-badge.restored { background: rgba(16,185,129,0.15); color: var(--success); }
+        .btn-restore { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--success); background: rgba(16,185,129,0.1); color: var(--success); font-size: 0.65rem; font-weight: 800; cursor: pointer; transition: var(--tr); }
+        .btn-restore:hover { background: rgba(16,185,129,0.25); }
 
         /* Portal Leave Breakdown */
         .portal-leave-card { background: var(--glass-4); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; }
         .plc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-top: 1rem; }
         .plc-item { text-align: center; padding: 0.75rem 0.5rem; border-radius: 8px; }
-        .plc-val { font-size: 1.5rem; font-weight: 900; }
+        .plc-val { font-size: 1.15rem; font-weight: 900; }
         .plc-lbl { font-size: 0.6rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
 
         /* Compass Portal Scheduler */
@@ -210,7 +202,6 @@
                 <div class="nav-group">
                     <button class="btn-primary" onclick="autoRosterAll()" title="Apply default standard templates to all staff for this fortnight" style="background:var(--warn); color:#000;">⚙️ Auto-Roster All</button>
                     <button class="btn-primary" onclick="batchLogAllPending()" title="Log all rostered shifts as perfectly worked for all employees">⚡ Auto-Log All</button>
-                    <button class="btn-secondary" onclick="injectSeedData()" style="padding:0.4rem 0.8rem; font-size:0.75rem;">💧 Inject Seed Data</button>
                     <div class="nav-group" style="background:var(--glass-4); padding:0.25rem; border-radius:8px; border:1px solid var(--border);">
                         <button class="btn-secondary" style="border:none; background:transparent; padding:0.2rem 0.5rem;" onclick="changeFortnight(-1)">←</button>
                         <span class="date-label" id="grid-range-label">Loading Period...</span>
@@ -221,8 +212,6 @@
                 <div class="nav-group">
                     <button class="lock-btn" id="btn-lock-roster" onclick="handleLock('roster')">🔓 Roster</button>
                     <button class="lock-btn" id="btn-lock-timesheet" onclick="handleLock('timesheet')">🔓 Timesheet</button>
-                    <div style="width:1px; height:24px; background:var(--border); margin: 0 0.5rem;"></div>
-                    <button class="btn-primary" onclick="openCreateShiftModal()">+ Add Shift</button>
                 </div>
             </div>
             <div id="grid-banners"></div>
@@ -233,17 +222,6 @@
                 </table>
             </div>
             <!-- Fortnight Leave Summary -->
-            <div class="summary-panel" id="summary-panel">
-                <button class="summary-toggle" onclick="toggleSummary(this)">
-                    <span>📊 Fortnight Leave Breakdown</span>
-                    <span id="summary-toggle-icon">▼ Show</span>
-                </button>
-                <div class="summary-body" id="summary-body">
-                    <div class="summary-totals-row" id="summary-grand-totals"></div>
-                    <div style="margin-top:1rem; font-size:0.75rem; font-weight:700; color:var(--muted); margin-bottom:0.5rem;">Per-Employee Breakdown</div>
-                    <div class="summary-grid" id="summary-grid"></div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -268,6 +246,14 @@
             </div>
             <div style="display:flex; justify-content:flex-start; margin-top:2rem;">
                 <button class="btn-primary" style="width:auto;" onclick="addNewStaff()">+ Register New Employee</button>
+            </div>
+            <!-- System Audit Log -->
+            <div style="margin-top:2.5rem; border-top:1px solid var(--border); padding-top:1.5rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                    <h3 style="font-size:1rem; font-weight:800;">📋 System Audit Log</h3>
+                    <button class="btn-secondary" onclick="clearAuditLog()" style="font-size:0.7rem; padding:0.4rem 0.8rem;">🗑 Clear Log</button>
+                </div>
+                <div id="audit-log-body" style="max-height:400px; overflow-y:auto; border:1px solid var(--border); border-radius:10px;"></div>
             </div>
         </div>
     </div>
@@ -474,6 +460,7 @@ const EMPLOYEES = JSON.parse(localStorage.getItem('elite_v2_emps')) || {
 let records = JSON.parse(localStorage.getItem('elite_v2_recs')) || [];
 let lockedRosters = new Set(JSON.parse(localStorage.getItem('elite_v2_lock_r')) || []);
 let lockedTimesheets = new Set(JSON.parse(localStorage.getItem('elite_v2_lock_t')) || []);
+let auditLog = JSON.parse(localStorage.getItem('elite_v2_audit_log')) || [];
 const ADMIN_PWD = '1234';
 
 // ============================================================
@@ -543,12 +530,84 @@ function saveData() {
     localStorage.setItem('elite_v2_recs', JSON.stringify(records));
     localStorage.setItem('elite_v2_lock_r', JSON.stringify([...lockedRosters]));
     localStorage.setItem('elite_v2_lock_t', JSON.stringify([...lockedTimesheets]));
+    localStorage.setItem('elite_v2_audit_log', JSON.stringify(auditLog));
 }
 
 function renderAll() {
     renderGrid();
     renderStaffList();
     renderPortalDropdown();
+    renderAuditLog();
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+function logAudit(action, employee, details, snapshot = null) {
+    auditLog.unshift({
+        timestamp: new Date().toISOString(),
+        action,
+        employee,
+        details,
+        snapshot
+    });
+    saveData();
+    renderAuditLog();
+}
+
+function renderAuditLog() {
+    const body = document.getElementById('audit-log-body');
+    if(!body) return;
+    if(auditLog.length === 0) {
+        body.innerHTML = '<div style="padding:1rem; text-align:center; color:var(--muted); font-size:0.8rem; font-weight:700;">No audit logs recorded yet.</div>';
+        return;
+    }
+    let html = '<table class="audit-table"><thead><tr><th>Timestamp</th><th>Action</th><th>Employee</th><th>Details</th><th>Actions</th></tr></thead><tbody>';
+    auditLog.forEach((log, idx) => {
+        const d = new Date(log.timestamp);
+        const ts = d.toLocaleDateString('en-AU', {day:'2-digit', month:'short'}) + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        const badge = `<span class="audit-badge ${log.action.toLowerCase()}">${log.action}</span>`;
+        const restoreBtn = log.action === 'DELETED' ? `<button class="btn-restore" onclick="restoreEmployee(${idx})">🔄 Restore</button>` : '';
+        html += `<tr><td class="audit-ts">${ts}</td><td>${badge}</td><td style="font-weight:800; color:var(--text);">${log.employee}</td><td>${log.details}</td><td>${restoreBtn}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+}
+
+async function restoreEmployee(idx) {
+    const log = auditLog[idx];
+    if(!log || log.action !== 'DELETED' || !log.snapshot) return;
+    if(EMPLOYEES[log.employee]) {
+        await showMsg(`Cannot restore: an employee named ${log.employee} already exists.`);
+        return;
+    }
+    
+    pwdCallback = () => {
+        EMPLOYEES[log.employee] = log.snapshot;
+        logAudit('RESTORED', log.employee, 'Restored from deletion snapshot', null);
+        renderAll();
+        closeModal('pwd');
+    };
+    document.getElementById('pwd-title').innerText = 'Confirm Employee Restore';
+    document.getElementById('pwd-sub').innerText = `Admin password required to restore ${log.employee}.`;
+    document.getElementById('input-pwd').value = '';
+    document.getElementById('pwd-error').style.display = 'none';
+    openModal('pwd');
+}
+
+async function clearAuditLog() {
+    if(!await askConfirm('Are you sure you want to clear the entire audit log? This cannot be undone.')) return;
+    pwdCallback = () => {
+        auditLog = [];
+        saveData();
+        renderAuditLog();
+        closeModal('pwd');
+    };
+    document.getElementById('pwd-title').innerText = 'Confirm Audit Log Wipe';
+    document.getElementById('pwd-sub').innerText = `Admin password required to clear the system audit log.`;
+    document.getElementById('input-pwd').value = '';
+    document.getElementById('pwd-error').style.display = 'none';
+    openModal('pwd');
 }
 
 function renderGrid() {
@@ -583,7 +642,8 @@ function renderGrid() {
             bgStyle = 'rgba(239,68,68,0.05)';
         }
         
-        hHtml += `<th style="${bStyle} background:${bgStyle};">${fmtPretty(d).split(' ')[0]}</th>`;
+        const dayName = d.toLocaleDateString('en-AU', { weekday:'short' });
+        hHtml += `<th style="${bStyle} background:${bgStyle};">${fmtPretty(d).split(' ')[0]}<br><span style="font-size:0.55rem; font-weight:600; opacity:0.7;">${dayName}</span></th>`;
     }
     hHtml += `<th class="total-col" style="${isRosLocked?'border-top: 3px solid var(--danger);':''}">Roster</th><th class="total-col" style="${isTimLocked?'border-top: 3px solid var(--danger);':''}">Timesheet</th><th class="total-col">Var</th></tr>`;
     head.innerHTML = hHtml;
@@ -638,14 +698,15 @@ function renderGrid() {
                     rec.segments.forEach(s => {
                         const typeCls = 'shift-' + (s.type === 'Normal' ? 'normal' : s.type === 'Sick Leave' ? 'sick' : s.type === 'Annual Leave' ? 'annual' : 'til');
                         if(s.unplanned) {
-                            segmentsHtml += `<div class="shift-block" style="border:1px dashed var(--muted); color:var(--muted); text-align:center;" title="Unplanned Timesheet Shift">Unplanned Log</div>`;
+                            segmentsHtml += `<div class="shift-block ${typeCls}" style="border:1px dashed currentColor; text-align:center;" title="Unplanned Timesheet Shift">${s.type} ${Number(s.acHrs).toFixed(4)}h</div>`;
                         } else {
-                            segmentsHtml += `<div class="shift-block ${typeCls}" title="${s.type}">${s.scIn} - ${s.scOut}</div>`;
+                            const badge = (s.scIn && s.scOut && s.scIn > s.scOut) ? ' <span style="font-size:0.5rem;opacity:0.7;">🌙+1</span>' : '';
+                            segmentsHtml += `<div class="shift-block ${typeCls}" title="${s.type}">${s.scIn} - ${s.scOut}${badge}</div>`;
                         }
                     });
                     let tsHtml = `<div class="ts-pending">No Actual</div>`;
                     if(rec.hasActuals) {
-                        tsHtml = `<div class="ts-block">${dayTime.toFixed(1)}h Logged</div>`;
+                        tsHtml = `<div class="ts-block">${dayTime.toFixed(4)}h Logged</div>`;
                     }
                     const hasUnplanned = rec.segments.some(s => s.unplanned);
                     const unplannedStyle = hasUnplanned
@@ -655,16 +716,16 @@ function renderGrid() {
                 }
             }
             const rowVar = rowTime - rowRost;
-            cols += `<td class="total-col">${rowRost.toFixed(1)}h</td>`;
+            cols += `<td class="total-col">${rowRost.toFixed(4)}h</td>`;
             // Timesheet cell with leave chips underneath
             let splitHtml = '<div class="leave-chips" style="margin-top:4px;">';
-            if(rowSplit['Normal'] > 0)       splitHtml += `<div class="leave-chip lc-normal"><span>Work</span><span>${rowSplit['Normal'].toFixed(1)}h</span></div>`;
-            if(rowSplit['Sick Leave'] > 0)   splitHtml += `<div class="leave-chip lc-sick"><span>Sick</span><span>${rowSplit['Sick Leave'].toFixed(1)}h</span></div>`;
-            if(rowSplit['Annual Leave'] > 0) splitHtml += `<div class="leave-chip lc-annual"><span>AL</span><span>${rowSplit['Annual Leave'].toFixed(1)}h</span></div>`;
-            if(rowSplit['Time in Lieu'] > 0) splitHtml += `<div class="leave-chip lc-til"><span>TIL</span><span>${rowSplit['Time in Lieu'].toFixed(1)}h</span></div>`;
+            if(rowSplit['Normal'] > 0)       splitHtml += `<div class="leave-chip lc-normal"><span>Work</span><span>${rowSplit['Normal'].toFixed(4)}h</span></div>`;
+            if(rowSplit['Sick Leave'] > 0)   splitHtml += `<div class="leave-chip lc-sick"><span>Sick</span><span>${rowSplit['Sick Leave'].toFixed(4)}h</span></div>`;
+            if(rowSplit['Annual Leave'] > 0) splitHtml += `<div class="leave-chip lc-annual"><span>AL</span><span>${rowSplit['Annual Leave'].toFixed(4)}h</span></div>`;
+            if(rowSplit['Time in Lieu'] > 0) splitHtml += `<div class="leave-chip lc-til"><span>TIL</span><span>${rowSplit['Time in Lieu'].toFixed(4)}h</span></div>`;
             splitHtml += '</div>';
-            cols += `<td class="total-col" style="color:var(--success); min-width:90px;">${rowTime.toFixed(1)}h${splitHtml}</td>`;
-            cols += `<td class="total-col" style="color:${rowVar < -0.1 ? 'var(--danger)' : rowVar > 0.1 ? 'var(--success)' : 'var(--muted)'}">${ (rowVar >= 0 ? '+' : '') + rowVar.toFixed(1)}h</td>`;
+            cols += `<td class="total-col" style="color:var(--success); min-width:90px;">${rowTime.toFixed(4)}h${splitHtml}</td>`;
+            cols += `<td class="total-col" style="color:${rowVar < -0.1 ? 'var(--danger)' : rowVar > 0.1 ? 'var(--success)' : 'var(--muted)'}">${ (rowVar >= 0 ? '+' : '') + rowVar.toFixed(4)}h</td>`;
             tr.innerHTML = cols;
             body.appendChild(tr);
         });
@@ -710,19 +771,19 @@ function renderSummaryPanel() {
     const totalHrs = Object.values(grand).reduce((a, b) => a + b, 0);
     grandGrid.innerHTML = `
         <div class="summary-total-card stc-normal">
-            <div class="summary-total-val" style="color:var(--primary)">${grand['Normal'].toFixed(1)}h</div>
+            <div class="summary-total-val" style="color:var(--primary)">${grand['Normal'].toFixed(4)}h</div>
             <div class="summary-total-lbl">Normal Work</div>
         </div>
         <div class="summary-total-card stc-sick">
-            <div class="summary-total-val" style="color:var(--danger)">${grand['Sick Leave'].toFixed(1)}h</div>
+            <div class="summary-total-val" style="color:var(--danger)">${grand['Sick Leave'].toFixed(4)}h</div>
             <div class="summary-total-lbl">Sick Leave</div>
         </div>
         <div class="summary-total-card stc-annual">
-            <div class="summary-total-val" style="color:var(--success)">${grand['Annual Leave'].toFixed(1)}h</div>
+            <div class="summary-total-val" style="color:var(--success)">${grand['Annual Leave'].toFixed(4)}h</div>
             <div class="summary-total-lbl">Annual Leave</div>
         </div>
         <div class="summary-total-card stc-til">
-            <div class="summary-total-val" style="color:var(--warn)">${grand['Time in Lieu'].toFixed(1)}h</div>
+            <div class="summary-total-val" style="color:var(--warn)">${grand['Time in Lieu'].toFixed(4)}h</div>
             <div class="summary-total-lbl">Time in Lieu</div>
         </div>
     `;
@@ -746,12 +807,12 @@ function renderSummaryPanel() {
                 <div class="summary-bar-track">
                     <div class="summary-bar-fill" style="width:${Math.round((b.val/maxHrs)*100)}%; background:${b.cls};"></div>
                 </div>
-                <span class="summary-bar-val" style="color:${b.cls};">${b.val.toFixed(1)}h</span>
+                <span class="summary-bar-val" style="color:${b.cls};">${b.val.toFixed(4)}h</span>
             </div>` : '').join('');
         grid.innerHTML += `
             <div class="summary-card">
                 <div class="summary-card-name">${emp}</div>
-                <div style="font-size:0.6rem; color:var(--muted); font-weight:700; margin-bottom:0.4rem;">Total: ${empTotal.toFixed(1)}h</div>
+                <div style="font-size:0.6rem; color:var(--muted); font-weight:700; margin-bottom:0.4rem;">Total: ${empTotal.toFixed(4)}h</div>
                 ${barsHtml}
             </div>`;
     });
@@ -832,6 +893,7 @@ function renderSegmentEditor(isRL, isTL) {
                         <input type="text" placeholder="HH:MM" value="${s.scIn}" onchange="updateActiveSeg(${idx}, 'scIn', this.value)" ${isRL?'disabled':''}>
                         <input type="text" placeholder="HH:MM" value="${s.scOut}" onchange="updateActiveSeg(${idx}, 'scOut', this.value)" ${isRL?'disabled':''}>
                     </div>
+                    ${s.scIn && s.scOut && s.scIn > s.scOut ? `<div style="font-size:0.6rem; color:var(--primary); font-weight:700; margin-top:4px;">🌙 This shift crosses midnight into the next day.</div>` : ''}
                     ${s.unplanned ? `<div style="margin-top:1rem; font-size:0.85rem; font-weight:800; text-align:center; color:var(--muted);">0.0h (Unplanned Override)</div>` : ''}
                 </div>
                 <!-- Timesheet -->
@@ -853,6 +915,7 @@ function renderSegmentEditor(isRL, isTL) {
                         <input type="text" placeholder="HH:MM" value="${s.acIn}" onchange="updateActiveSeg(${idx}, 'acIn', this.value)" ${isTL?'disabled':''} style="border-color:var(--success)">
                         <input type="text" placeholder="HH:MM" value="${s.acOut}" onchange="updateActiveSeg(${idx}, 'acOut', this.value)" ${isTL?'disabled':''} style="border-color:var(--success)">
                     </div>
+                    ${s.acIn && s.acOut && s.acIn > s.acOut ? `<div style="font-size:0.6rem; color:var(--success); font-weight:700; margin-top:4px;">🌙 This shift crosses midnight into the next day.</div>` : ''}
                 </div>
             </div>
         `;
@@ -896,6 +959,12 @@ function removeActiveSegment(idx) {
     renderSegmentEditor(lockedRosters.has(m), lockedTimesheets.has(m));
 }
 
+function rangesOverlap(s1, e1, s2, e2) {
+    if (e1 <= s1) e1 += 24 * 60;
+    if (e2 <= s2) e2 += 24 * 60;
+    return Math.max(s1, s2) < Math.min(e1, e2);
+}
+
 async function saveActiveEntry() {
     const toMins = t => { if(!t) return 0; let [h,m] = t.split(':').map(Number); return h*60+m; };
     
@@ -906,7 +975,7 @@ async function saveActiveEntry() {
             // Roster overlap check
             if(!s1.unplanned && !s2.unplanned && s1.scIn && s1.scOut && s2.scIn && s2.scOut) {
                 let s1s = toMins(s1.scIn), s1e = toMins(s1.scOut), s2s = toMins(s2.scIn), s2e = toMins(s2.scOut);
-                if(s1s < s1e && s2s < s2e && Math.max(s1s, s2s) < Math.min(s1e, s2e)) {
+                if(rangesOverlap(s1s, s1e, s2s, s2e)) {
                     await showMsg(`OVERLAP ERROR: Roster times for Segment ${i+1} and Segment ${j+1} are overlapping. Please correct the times. Save aborted.`);
                     return;
                 }
@@ -914,7 +983,7 @@ async function saveActiveEntry() {
             // Timesheet overlap check
             if(s1.acIn && s1.acOut && s2.acIn && s2.acOut) {
                 let a1s = toMins(s1.acIn), a1e = toMins(s1.acOut), a2s = toMins(s2.acIn), a2e = toMins(s2.acOut);
-                if(a1s < a1e && a2s < a2e && Math.max(a1s, a2s) < Math.min(a1e, a2e)) {
+                if(rangesOverlap(a1s, a1e, a2s, a2e)) {
                     await showMsg(`OVERLAP ERROR: Logged times for Segment ${i+1} and Segment ${j+1} are overlapping. Please correct the times. Save aborted.`);
                     return;
                 }
@@ -958,7 +1027,7 @@ async function handleLock(type) {
                 if(rec) total += rec.segments.reduce((acc, s) => acc + (s.unplanned ? 0 : (s.scHrs||0)), 0);
             }
             if(total > limit) {
-                warnings.push(`- ${emp}: ${total.toFixed(1)}h (Limit: ${limit.toFixed(1)}h)`);
+                warnings.push(`- ${emp}: ${total.toFixed(4)}h (Limit: ${limit.toFixed(4)}h)`);
             }
         });
         if(warnings.length > 0) {
@@ -1185,6 +1254,7 @@ async function saveEditStaff() {
     const newName = document.getElementById('edit-emp-name').value.trim();
     if (!newName) { await showMsg('Name cannot be empty.'); return; }
     const e = EMPLOYEES[editingStaffName];
+    const oldDept = e.dept, oldContracted = e.contracted;
     e.dept = document.getElementById('edit-emp-dept').value.trim() || e.dept;
     e.contracted = parseFloat(document.getElementById('edit-emp-contracted').value) || 76;
     e.email = document.getElementById('edit-emp-email').value.trim();
@@ -1193,6 +1263,9 @@ async function saveEditStaff() {
         EMPLOYEES[newName] = e;
         delete EMPLOYEES[editingStaffName];
         records.forEach(r => { if(r.emp === editingStaffName) r.emp = newName; });
+        logAudit('RENAMED', newName, `Renamed from ${editingStaffName}`);
+    } else {
+        logAudit('EDITED', editingStaffName, `Contracted: ${oldContracted}→${e.contracted}, Dept: ${oldDept}→${e.dept}`);
     }
     saveData(); renderAll(); closeModal('edit-staff');
 }
@@ -1203,12 +1276,14 @@ async function addNewStaff() {
     const email = await askPrompt('Email Address (optional):');
     const phone = await askPrompt('Phone Number (optional):');
     EMPLOYEES[name] = { dept, contracted: 76, email: email||'', phone: phone||'' };
+    logAudit('ADDED', name, `Dept: ${dept}, Contracted: 76h`);
     saveData(); renderAll();
 }
 
 async function deleteStaffMember(emp) {
     if(!await askConfirm(`Remove ${emp} from the system? This cannot be undone.`)) return;
-    pwdCallback = () => { delete EMPLOYEES[emp]; saveData(); renderAll(); closeModal('pwd'); };
+    const snapshot = JSON.parse(JSON.stringify(EMPLOYEES[emp]));
+    pwdCallback = () => { delete EMPLOYEES[emp]; logAudit('DELETED', emp, `Dept: ${snapshot.dept}, Contracted: ${snapshot.contracted}h`, snapshot); saveData(); renderAll(); closeModal('pwd'); };
     document.getElementById('pwd-title').innerText = 'Confirm Staff Deletion';
     document.getElementById('pwd-sub').innerText = `Admin password required to delete ${emp}.`;
     document.getElementById('input-pwd').value = '';
@@ -1419,10 +1494,10 @@ function renderPortalPersonal() {
         <div style="font-size:0.85rem; font-weight:800; margin-bottom:0.25rem;">${mLabel} — Leave Breakdown</div>
         <div style="font-size:0.75rem; color:var(--muted); font-weight:600; margin-bottom:0.75rem;">Hours recorded this month</div>
         <div class="plc-grid">
-            <div class="plc-item stc-normal"><div class="plc-val" style="color:var(--primary)">${leaveSplit['Normal'].toFixed(1)}h</div><div class="plc-lbl">Normal Work</div></div>
-            <div class="plc-item stc-sick"><div class="plc-val" style="color:var(--danger)">${leaveSplit['Sick Leave'].toFixed(1)}h</div><div class="plc-lbl">Sick Leave</div></div>
-            <div class="plc-item stc-annual"><div class="plc-val" style="color:var(--success)">${leaveSplit['Annual Leave'].toFixed(1)}h</div><div class="plc-lbl">Annual Leave</div></div>
-            <div class="plc-item stc-til"><div class="plc-val" style="color:var(--warn)">${leaveSplit['Time in Lieu'].toFixed(1)}h</div><div class="plc-lbl">Time in Lieu</div></div>
+            <div class="plc-item stc-normal"><div class="plc-val" style="color:var(--primary)">${leaveSplit['Normal'].toFixed(4)}h</div><div class="plc-lbl">Normal Work</div></div>
+            <div class="plc-item stc-sick"><div class="plc-val" style="color:var(--danger)">${leaveSplit['Sick Leave'].toFixed(4)}h</div><div class="plc-lbl">Sick Leave</div></div>
+            <div class="plc-item stc-annual"><div class="plc-val" style="color:var(--success)">${leaveSplit['Annual Leave'].toFixed(4)}h</div><div class="plc-lbl">Annual Leave</div></div>
+            <div class="plc-item stc-til"><div class="plc-val" style="color:var(--warn)">${leaveSplit['Time in Lieu'].toFixed(4)}h</div><div class="plc-lbl">Time in Lieu</div></div>
         </div>
         ${totalHrs === 0 ? '<div style="text-align:center;color:var(--muted);font-size:0.75rem;font-weight:700;padding:0.25rem;">No shifts recorded this month.</div>' : ''}
     </div>`;
