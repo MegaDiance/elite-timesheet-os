@@ -87,11 +87,11 @@
         .gc:hover { border-color: var(--primary); background: var(--glass-4) !important; }
         .gc.empty-cell { opacity: 0.3; cursor: cell; text-align: center; vertical-align: middle !important; font-size: 0.8rem; font-weight: 400; color: var(--muted); border: 1px dashed var(--border); height: 32px; }
         
-        .shift-block { padding: 1px 3px; border-radius: 3px; font-size: 0.6rem; font-weight: 800; display: flex; flex-direction: column; line-height: 1.0; position: relative; overflow: hidden; margin-bottom: 0px; }
-        .shift-normal { background: rgba(99,102,241,0.1); color: var(--primary); border-left: 2px solid var(--primary); }
-        .shift-sick { background: rgba(239,68,68,0.1); color: var(--danger); border-left: 2px solid var(--danger); }
-        .shift-annual { background: rgba(16,185,129,0.1); color: var(--success); border-left: 2px solid var(--success); }
-        .shift-til { background: rgba(245,158,11,0.1); color: var(--warn); border-left: 2px solid var(--warn); }
+        .shift-block { padding: 2px 4px; border-radius: 4px; font-size: 0.6rem; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; position: relative; overflow: hidden; margin-bottom: 2px; text-align: center; }
+        .shift-normal { background: rgba(99,102,241,0.1); color: var(--primary); border: 1px solid rgba(99,102,241,0.3); }
+        .shift-sick { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+        .shift-annual { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
+        .shift-til { background: rgba(245,158,11,0.1); color: var(--warn); border: 1px solid rgba(245,158,11,0.3); }
         
         .ts-block { margin-top: 1px; border-top: 1px solid var(--glass-8); padding-top: 1px; font-size: 0.55rem; font-weight: 900; color: var(--success); white-space: nowrap; }
         .ts-pending { color: var(--muted); font-size: 0.55rem; font-style: italic; font-weight: 600; }
@@ -131,7 +131,7 @@
 
         /* Leave Breakdown Chips */
         .leave-chips { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
-        .leave-chip { display: flex; justify-content: space-between; align-items: center; padding: 1px 4px; border-radius: 3px; font-size: 0.5rem; font-weight: 800; white-space: nowrap; }
+        .leave-chip { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; border-radius: 4px; font-size: 0.5rem; font-weight: 800; white-space: nowrap; gap: 4px; }
         .lc-normal  { background: rgba(99,102,241,0.12); color: var(--primary); }
         .lc-sick    { background: rgba(239,68,68,0.12); color: var(--danger); }
         .lc-annual  { background: rgba(16,185,129,0.12); color: var(--success); }
@@ -698,7 +698,7 @@ function renderGrid() {
                     rec.segments.forEach(s => {
                         const typeCls = 'shift-' + (s.type === 'Normal' ? 'normal' : s.type === 'Sick Leave' ? 'sick' : s.type === 'Annual Leave' ? 'annual' : 'til');
                         if(s.unplanned) {
-                            segmentsHtml += `<div class="shift-block ${typeCls}" style="border:1px dashed currentColor; text-align:center;" title="Unplanned Timesheet Shift">${s.type} ${Number(s.acHrs).toFixed(4)}h</div>`;
+                            segmentsHtml += `<div class="shift-block ${typeCls}" style="border-style: dashed;" title="Unplanned Timesheet Shift">${s.type} ${Number(s.acHrs).toFixed(4)}h</div>`;
                         } else {
                             const badge = (s.scIn && s.scOut && s.scIn > s.scOut) ? ' <span style="font-size:0.5rem;opacity:0.7;">🌙+1</span>' : '';
                             segmentsHtml += `<div class="shift-block ${typeCls}" title="${s.type}">${s.scIn} - ${s.scOut}${badge}</div>`;
