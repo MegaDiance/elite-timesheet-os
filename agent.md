@@ -1,36 +1,54 @@
-# Elite Timesheet OS Pro - Agent Guide
+# Elite Timesheet OS Pro - Agent Guidelines & Engineering Protocol
 
-Welcome to the **Elite Timesheet OS Pro** project. This file serves as a guide for future AI agents working on this codebase to ensure consistency, stability, and high performance.
+This document outlines the architecture, engineering standards, and mandatory verification protocols for any AI agent or developer working on **Elite Timesheet OS Pro**.
 
-## 🚀 Project Overview
-Elite Timesheet OS Pro is a Secure Roster & Timesheet Management System. It handles employee management, shift scheduling, timesheet logging, and tracks variations between rostered and actual hours. Features include:
-- Roster Master View
-- Staff Management
-- Employee Portal
-- Timesheet auto-logging and locking mechanisms
+---
 
-## 🛠 Tech Stack
-The project is built entirely with a pure, lightweight, vanilla stack:
-- **HTML5**: For semantic structure.
-- **CSS3 (Vanilla)**: For styling, including native CSS variables for theming (light/dark mode), modern design aesthetics (glassmorphism), and responsiveness.
-- **JavaScript (Vanilla)**: For core logic, DOM manipulation, custom dialog engines, state management (using `localStorage`), and dynamic interactions. No heavy frameworks (like React, Angular, or Vue) are used currently.
+## 🛠 Tech Stack & Architecture
 
-## 🧪 Development Protocol
-To improve efficiency and maintain stability, we strictly adhere to a **PLAN -> EXECUTE -> TEST** protocol. All agents must follow this workflow:
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7.
+  - Theming: Full CSS theme variable support (`var(--bg)`, `var(--panel)`, `var(--text)`, `var(--border)`, `var(--input-bg)`). Both Dark and Light modes must look clean and high-contrast.
+- **Backend**: Node.js, Express, TypeScript, JWT auth with bcrypt password hashing.
+- **Database**: PostgreSQL (with in-memory `pg-mem` mock database enabled for development via `DATABASE_URL=memory`).
+- **Core Services**:
+  - `timeParser.ts`: Smart flexible time input parsing (`9` -> `09:00`, `9a` -> `09:00`, `1700` -> `17:00`) and break deduction calculations.
+  - `periodUtils.ts`: Fortnight boundary anchor calculations.
+  - `rosterService.ts`: Auto-Roster, Auto-Log, Variance, and Leave stats calculations.
 
-1. **PLAN**: 
-   - Analyze the user request and review the existing codebase (`index.html` and other related files).
-   - Outline the intended changes, identifying the specific HTML elements, CSS styles, and JavaScript functions impacted.
-   - Consider the impact on existing data models.
+---
 
-2. **EXECUTE**: 
-   - Implement the planned changes systematically.
-   - Ensure backwards compatibility with existing `localStorage` data structures.
-   - Prioritize clean, well-commented, and robust code. Avoid adding unnecessary dependencies.
+## ⚠️ MANDATORY VERIFICATION PROTOCOL (MUST RUN BEFORE FINISHING)
 
-3. **TEST**: 
-   - Ensure your code changes work as intended.
-   - Verify edge cases (e.g., parsing varying time formats, switching between fortnights, data persistence) are handled without breaking existing features.
-   - Confirm UI responsiveness and verify no console errors are introduced.
+Before completing any task or user request, you **MUST** run the TypeScript debugging check:
 
-By adhering strictly to this protocol, you help maintain a stable, efficient, and robust codebase.
+```bash
+# 1. Run TypeScript Typecheck & Build across both backend and frontend workspaces
+npm run typecheck
+
+# 2. Run backend unit tests (using bypass sandbox if needed for loopback sockets)
+npm test
+```
+
+### Requirements:
+1. **Zero TypeScript Errors**: Both `backend` (`tsc`) and `frontend` (`tsc -b && vite build`) must exit with code 0.
+2. **Zero Unused Imports/Variables**: Strict TS mode forbids unused imports/variables.
+3. **Preserve Existing Functionality**:
+   - Rostering shifts must NEVER overwrite or delete existing timesheet actuals (`actual_in`, `actual_out`, `actual_hours`).
+   - Default roster templates must autosave instantly without requiring a separate manual save click.
+   - Shift overlaps must be prevented with a clear user alert.
+   - Color coding must reflect timesheet actuals and highlight unplanned shifts/exceptions.
+   - Date range selector must open the calendar picker (`showPicker()`).
+   - All interactive buttons must trigger their full end-to-end API workflows.
+4. **Mandatory Automated End-to-End & Regression Test Suite**:
+   - Every API flow, database modification, and invitation/auth lifecycle MUST have automated integration tests executed (`npm test`) covering happy paths, edge cases (invalid tokens, reuse, unauthorized calls), and schema consistency.
+   - Any background dev server running old in-memory code must be cleanly restarted and verified against real HTTP endpoints before handing work back to the user.
+
+---
+
+## 🤖 SUBAGENT WORKFLOW PROTOCOL
+
+When working on features or complex tasks:
+1. **Subagent Delegation for Research & Coding**: Use subagents for research to explore codebase patterns, trace backend/frontend implementations, and gather technical requirements. Use dedicated subagents for implementation steps when applicable.
+2. **Research First, Plan Second**: Always conduct thorough subagent research before generating or presenting implementation plans.
+3. **Formal Planning Phase**: Present a clear implementation plan for review prior to executing multi-step functional code changes.
+
