@@ -257,34 +257,7 @@ export default function Layout() {
                   </Link>
                 )}
               </>
-            ) : (
-              /* Employee Portal Nav */
-              <>
-                <Link
-                  to="/portal"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/portal')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Portal</span>
-                </Link>
-
-                <Link
-                  to="/announcements"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/announcements')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Team Chat</span>
-                </Link>
-              </>
-            )}
+            ) : null}
           </nav>
 
           {/* Right: User Profile Menu */}

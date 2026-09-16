@@ -37,6 +37,7 @@ describe('Calculations Accuracy, Team Chat & Multi-Tenant Safety Integration Tes
                 break_threshold_hours NUMERIC DEFAULT 6,
                 roster_lock_password_hash TEXT,
                 timesheet_lock_password_hash TEXT,
+                allow_employee_chat BOOLEAN DEFAULT true,
                 is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );

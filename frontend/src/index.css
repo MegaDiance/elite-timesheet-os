@@ -64,7 +64,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-.ag-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 1500px; }
+.ag-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 1200px; }
 .ag-table th { background: var(--table-header); padding: 6px 4px; font-size: 0.68rem; font-weight: 700; color: var(--muted); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border); position: sticky; top: 0; z-index: 10; cursor: default; }
 .ag-table th.name-col { width: 230px; text-align: left; position: sticky; left: 0; z-index: 20; border-right: 2px solid var(--border); padding-left: 12px; }
 .ag-table td { padding: 4px 3px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); vertical-align: top; transition: background 0.15s; }

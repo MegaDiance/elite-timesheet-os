@@ -31,6 +31,7 @@ export async function initDB(dbUrl: string) {
                 break_threshold_hours NUMERIC DEFAULT 6,
                 roster_lock_password_hash TEXT,
                 timesheet_lock_password_hash TEXT,
+                allow_employee_chat BOOLEAN DEFAULT true,
                 is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
@@ -217,6 +218,28 @@ export async function initDB(dbUrl: string) {
                 announcement_type TEXT DEFAULT 'general',
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
+
+            CREATE TABLE IF NOT EXISTS announcement_reactions (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                announcement_id UUID NOT NULL,
+                org_id UUID NOT NULL,
+                user_id UUID NOT NULL,
+                user_name TEXT NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(announcement_id, user_id, emoji)
+            );
+
+            CREATE TABLE IF NOT EXISTS announcement_replies (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                announcement_id UUID NOT NULL,
+                org_id UUID NOT NULL,
+                author_id UUID NOT NULL,
+                author_name TEXT NOT NULL,
+                author_role TEXT,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
         `);
 
         // Seed initial admin & organisation
@@ -248,25 +271,22 @@ export async function initDB(dbUrl: string) {
             try {
                 const snapshotData = JSON.parse(fs.readFileSync(dbDumpFile, 'utf8'));
                 if (snapshotData.tables) {
-                    for (const [tableName, rows] of Object.entries(snapshotData.tables)) {
-                        if (Array.isArray(rows)) {
+                    for (const [table, rows] of Object.entries(snapshotData.tables as Record<string, any[]>)) {
+                        if (rows && rows.length > 0) {
                             for (const row of rows) {
                                 const keys = Object.keys(row);
-                                if (keys.length === 0) continue;
-                                const cols = keys.join(', ');
-                                const vals = keys.map(k => {
-                                    const val = (row as any)[k];
-                                    if (val === null || val === undefined) return 'NULL';
-                                    if (typeof val === 'boolean' || typeof val === 'number') return String(val);
-                                    return `'${String(val).replace(/'/g, "''")}'`;
-                                }).join(', ');
-                                db.public.none(`INSERT INTO ${tableName} (${cols}) VALUES (${vals}) ON CONFLICT DO NOTHING;`);
+                                const values = Object.values(row).map(v => {
+                                    if (v === null) return 'NULL';
+                                    if (typeof v === 'boolean' || typeof v === 'number') return v;
+                                    return `'${String(v).replace(/'/g, "''")}'`;
+                                });
+                                db.public.none(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${values.join(',')}) ON CONFLICT DO NOTHING`);
                             }
                         }
                     }
                 }
             } catch (err) {
-                console.warn('[DB] Failed to restore database snapshot:', err);
+                console.warn('Failed to restore db snapshot:', err);
             }
         }
 
@@ -279,7 +299,7 @@ export async function initDB(dbUrl: string) {
                         'fortnight_locks', 'daily_records', 'shift_segments', 'roster_templates',
                         'audit_logs', 'invitation_tokens', 'org_invitation_tokens', 'reset_tokens',
                         'two_factor_codes', 'public_holidays', 'timesheet_submissions', 'leave_requests', 'xero_connections',
-                        'organisation_announcements'
+                        'organisation_announcements', 'announcement_reactions', 'announcement_replies'
                     ];
                     const dump: Record<string, any[]> = {};
                     for (const t of tables) {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { jwtDecode } from 'jwt-decode';
+import { MessageSquare, Smile, Trash2, Send, ShieldAlert } from 'lucide-react';
 import api from '../services/apiClient';
 
 interface DaySummary {
@@ -24,6 +25,24 @@ interface LeaveRequest {
   rejection_reason?: string;
 }
 
+interface ReactionSummary {
+  emoji: string;
+  count: number;
+  user_reacted: boolean;
+  users: string[];
+}
+
+interface AnnouncementReply {
+  id: string;
+  announcement_id: string;
+  org_id: string;
+  author_id: string;
+  author_name: string;
+  author_role: string;
+  content: string;
+  created_at: string;
+}
+
 interface Announcement {
   id: string;
   org_id: string;
@@ -34,6 +53,9 @@ interface Announcement {
   content: string;
   is_system: boolean;
   announcement_type: string;
+  reactions?: ReactionSummary[];
+  replies?: AnnouncementReply[];
+  reply_count?: number;
   created_at: string;
 }
 
@@ -62,6 +84,8 @@ interface TeamMemberRoster {
 type TabType = 'schedule' | 'leave' | 'announcements';
 type CalendarViewMode = 'day' | 'week' | 'fortnight';
 type ScheduleScope = 'my_schedule' | 'team_roster';
+
+const COMMON_EMOJIS = ['👍', '❤️', '🎉', '👏', '🚀', '👀'];
 
 export default function Portal() {
   const [loading, setLoading] = useState(true);
@@ -96,9 +120,14 @@ export default function Portal() {
   // Announcements / Team Chat State
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
+  const [allowEmployeeChat, setAllowEmployeeChat] = useState(true);
   const [chatContent, setChatContent] = useState('');
   const [chatSubmitting, setChatSubmitting] = useState(false);
   const [submittingTimesheet, setSubmittingTimesheet] = useState(false);
+  const [expandedThreads, setExpandedThreads] = useState<Record<string, boolean>>({});
+  const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
+  const [submittingReplies, setSubmittingReplies] = useState<Record<string, boolean>>({});
+  const [activePickerId, setActivePickerId] = useState<string | null>(null);
 
   // User auth context
   const token = localStorage.getItem('token');
@@ -198,10 +227,84 @@ export default function Portal() {
           markAnnouncementsAsSeen(res.data.data);
         }
       }
+      if (res.data?.permissions) {
+        setAllowEmployeeChat(res.data.permissions.allow_employee_chat !== false);
+      }
     } catch (err) {
       console.warn('Failed to fetch announcements', err);
     } finally {
       setLoadingAnnouncements(false);
+    }
+  };
+
+  const handleToggleReaction = async (announcementId: string, emoji: string) => {
+    try {
+      const res = await api.post(`/announcements/${announcementId}/reactions`, { emoji });
+      if (res.data?.data?.reactions) {
+        const updatedReactions = res.data.data.reactions;
+        setAnnouncements(prev => prev.map(a => a.id === announcementId ? { ...a, reactions: updatedReactions } : a));
+      }
+    } catch (err) {
+      console.error('Failed to toggle reaction', err);
+    } finally {
+      setActivePickerId(null);
+    }
+  };
+
+  const handleToggleThread = (announcementId: string) => {
+    setExpandedThreads(prev => ({ ...prev, [announcementId]: !prev[announcementId] }));
+  };
+
+  const handlePostReply = async (announcementId: string, e: React.FormEvent) => {
+    e.preventDefault();
+    const replyText = replyInputs[announcementId]?.trim();
+    if (!replyText) return;
+
+    setSubmittingReplies(prev => ({ ...prev, [announcementId]: true }));
+    try {
+      const res = await api.post(`/announcements/${announcementId}/replies`, { content: replyText });
+      if (res.data?.data) {
+        const newReply = res.data.data;
+        setAnnouncements(prev => prev.map(a => {
+          if (a.id === announcementId) {
+            const currentReplies = a.replies || [];
+            return {
+              ...a,
+              replies: [...currentReplies, newReply],
+              reply_count: (a.reply_count || currentReplies.length) + 1
+            };
+          }
+          return a;
+        }));
+        setReplyInputs(prev => ({ ...prev, [announcementId]: '' }));
+        showToast('Reply added');
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to post reply');
+    } finally {
+      setSubmittingReplies(prev => ({ ...prev, [announcementId]: false }));
+    }
+  };
+
+  const handleDeleteReply = async (announcementId: string, replyId: string) => {
+    if (!window.confirm('Delete this reply?')) return;
+    try {
+      await api.delete(`/announcements/${announcementId}/replies/${replyId}`);
+      setAnnouncements(prev => prev.map(a => {
+        if (a.id === announcementId) {
+          const currentReplies = a.replies || [];
+          const updated = currentReplies.filter(r => r.id !== replyId);
+          return {
+            ...a,
+            replies: updated,
+            reply_count: Math.max(0, (a.reply_count || 1) - 1)
+          };
+        }
+        return a;
+      }));
+      showToast('Reply removed');
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to delete reply');
     }
   };
 
@@ -379,8 +482,12 @@ export default function Portal() {
     return true;
   });
 
+  const isTeamRosterView = activeTab === 'schedule' && scheduleScope === 'team_roster';
+
   return (
-    <div className="flex flex-col h-full max-w-6xl mx-auto gap-6 mt-4 pb-16 px-2">
+    <div className={`flex flex-col h-full mx-auto gap-6 mt-4 pb-16 transition-all duration-200 ${
+      isTeamRosterView ? 'w-full max-w-[98vw] xl:max-w-[1680px] px-2 sm:px-4' : 'max-w-6xl px-2'
+    }`}>
       {/* Toast */}
       {toastMsg && (
         <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
@@ -907,15 +1014,15 @@ export default function Portal() {
                   Loading team roster...
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full text-left text-xs border-collapse table-fixed">
                     <thead>
                       <tr className="border-b border-[var(--border)] text-[var(--muted)] font-bold uppercase tracking-wider text-[10px]">
-                        <th className="py-3 px-3 min-w-[160px] sticky left-0 bg-[var(--panel)] z-10">Colleague</th>
-                        <th className="py-3 px-2 text-center min-w-[60px]">Rostered</th>
+                        <th className="py-2.5 px-2.5 w-[130px] sm:w-[150px] sticky left-0 bg-[var(--panel)] z-10">Colleague</th>
+                        <th className="py-2.5 px-1 text-center w-[48px]">Rostered</th>
                         {displayDays.map(day => (
-                          <th key={day.date} className="py-3 px-2 text-center min-w-[100px]">
-                            <div className="font-bold text-[var(--text)]">{day.dayOfWeek}</div>
+                          <th key={day.date} className="py-2.5 px-0.5 text-center min-w-[62px] w-[5.8%]">
+                            <div className="font-bold text-[var(--text)] text-[10px] leading-tight">{day.dayOfWeek.slice(0, 3)}</div>
                             <div className="text-[9px] text-[var(--muted)] font-normal">{day.date.split('-').slice(1).join('/')}</div>
                             {day.isPublicHoliday && (
                               <span className="text-[8px] bg-[#ec4899]/20 text-[#ec4899] px-1 py-0.2 rounded font-black block mt-0.5 truncate">
@@ -931,39 +1038,40 @@ export default function Portal() {
                         const isMe = member.id === portalData?.employee?.id;
                         return (
                           <tr key={member.id} className={isMe ? 'bg-[var(--primary-light)]/20' : 'hover:bg-[var(--glass-2)]'}>
-                            <td className="py-3 px-3 sticky left-0 bg-[var(--panel)] z-10">
+                            <td className="py-2 px-2.5 sticky left-0 bg-[var(--panel)] z-10 w-[130px] sm:w-[150px]">
                               <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-[var(--text)] text-xs">{member.full_name}</span>
+                                <span className="font-bold text-[var(--text)] text-xs truncate max-w-[110px]">{member.full_name}</span>
                                 {isMe && (
-                                  <span className="text-[9px] font-black bg-[var(--primary)] text-white px-1.5 py-0.2 rounded uppercase">
+                                  <span className="text-[8px] font-black bg-[var(--primary)] text-white px-1 py-0.2 rounded uppercase shrink-0">
                                     You
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[10px] text-[var(--muted)] font-medium">{member.department}</div>
+                              <div className="text-[9px] text-[var(--muted)] font-medium truncate max-w-[110px]">{member.department}</div>
                             </td>
-                            <td className="py-3 px-2 text-center font-black text-[var(--text)]">
+                            <td className="py-2 px-1 text-center font-black text-[var(--text)] text-xs">
                               {member.total_rostered_hours}h
                             </td>
                             {displayDays.map(day => {
                               const dayInfo = member.days.find(d => d.date === day.date);
                               const segments = dayInfo?.segments || [];
                               return (
-                                <td key={day.date} className="py-2 px-1 text-center align-middle">
+                                <td key={day.date} className="py-1.5 px-0.5 text-center align-middle">
                                   {segments.length === 0 ? (
-                                    <span className="text-[10px] text-[var(--muted)] opacity-40 font-semibold">OFF</span>
+                                    <span className="text-[9px] text-[var(--muted)] opacity-35 font-bold">-</span>
                                   ) : (
-                                    <div className="space-y-1">
+                                    <div className="space-y-0.5">
                                       {segments.map((seg, sIdx) => (
                                         <div
                                           key={sIdx}
-                                          className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-1 text-[10px] shadow-xs"
+                                          className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-md px-1 py-0.5 text-[9px] shadow-xs"
+                                          title={`${seg.segment_type}: ${seg.roster_in} - ${seg.roster_out} (${seg.roster_hours}h)`}
                                         >
-                                          <div className="font-bold text-[var(--text)] whitespace-nowrap">
-                                            {seg.roster_in} - {seg.roster_out}
+                                          <div className="font-bold text-[var(--text)] whitespace-nowrap text-[9px] leading-tight">
+                                            {seg.roster_in.replace(/^0/, '')}-{seg.roster_out.replace(/^0/, '')}
                                           </div>
-                                          <div className="text-[9px] text-[var(--muted)] font-medium">
-                                            {seg.segment_type} ({seg.roster_hours}h)
+                                          <div className="text-[8px] text-indigo-400 font-semibold leading-tight truncate">
+                                            {seg.roster_hours}h
                                           </div>
                                         </div>
                                       ))}
@@ -1088,32 +1196,37 @@ export default function Portal() {
             </button>
           </div>
 
-          {/* Quick Team Chat Composer */}
-          <div className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl p-4 shadow-inner">
-            <form onSubmit={handleSendChatMessage} className="space-y-3">
-              <textarea
-                rows={2}
-                value={chatContent}
-                onChange={e => setChatContent(e.target.value)}
-                placeholder="Write a message to your team (e.g. Can someone cover Friday morning?)..."
-                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)] resize-none"
-              />
-              <div className="flex justify-between items-center">
-                <span className="text-[11px] text-[var(--muted)] font-medium">Visible to all active team members</span>
-                <button
-                  type="submit"
-                  disabled={chatSubmitting || !chatContent.trim()}
-                  className="px-4 py-2 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-sm disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                  </svg>
-                  <span>{chatSubmitting ? 'Posting...' : 'Post Message'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
+          {/* Restriction Notice or Composer */}
+          {!isMgmt && !allowEmployeeChat ? (
+            <div className="p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl text-xs text-amber-300 font-medium flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Team chat is currently set to read-only by management. You can review all notices and updates below.</span>
+            </div>
+          ) : (
+            /* Quick Team Chat Composer */
+            <div className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl p-4 shadow-inner">
+              <form onSubmit={handleSendChatMessage} className="space-y-3">
+                <textarea
+                  rows={2}
+                  value={chatContent}
+                  onChange={e => setChatContent(e.target.value)}
+                  placeholder="Write a message to your team (e.g. Can someone cover Friday morning?)..."
+                  className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)] resize-none"
+                />
+                <div className="flex justify-between items-center">
+                  <span className="text-[11px] text-[var(--muted)] font-medium">Visible to all active team members</span>
+                  <button
+                    type="submit"
+                    disabled={chatSubmitting || !chatContent.trim()}
+                    className="px-4 py-2 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-sm disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{chatSubmitting ? 'Posting...' : 'Post Message'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
           {loadingAnnouncements ? (
             <div className="flex items-center justify-center py-12 text-[var(--muted)] font-bold text-xs gap-2">
@@ -1123,9 +1236,7 @@ export default function Portal() {
           ) : announcements.length === 0 ? (
             <div className="text-center py-14 text-[var(--muted)]">
               <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-[var(--panel-subtle)] text-[var(--muted)] flex items-center justify-center">
-                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
+                <MessageSquare className="w-6 h-6" />
               </div>
               <div className="font-bold text-sm text-[var(--text)]">No messages yet</div>
               <div className="text-xs mt-1">Start the conversation by posting a message above!</div>
@@ -1135,11 +1246,15 @@ export default function Portal() {
               {announcements.map((item) => {
                 const isRosterAlert = item.is_system || item.announcement_type === 'roster_publish';
                 const canDelete = (isMgmt || item.author_id === currentUserId) && !isRosterAlert;
+                const isThreadExpanded = Boolean(expandedThreads[item.id]);
+                const reactions = item.reactions || [];
+                const replies = item.replies || [];
+                const replyCount = item.reply_count !== undefined ? item.reply_count : replies.length;
 
                 return (
                   <div 
                     key={item.id} 
-                    className={`p-5 rounded-2xl border transition-all ${
+                    className={`p-5 rounded-2xl border transition-all space-y-3 ${
                       isRosterAlert
                         ? 'bg-[var(--primary-light)]/40 border-[var(--primary)]/30'
                         : 'bg-[var(--panel-subtle)] border-[var(--border)]'
@@ -1190,6 +1305,139 @@ export default function Portal() {
                     <p className="text-xs text-[var(--text)] whitespace-pre-wrap leading-relaxed">
                       {item.content}
                     </p>
+
+                    {/* Action Bar: Reactions & Replies */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--border)]/60 text-xs">
+                      {/* Reactions */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {reactions.map((r) => (
+                          <button
+                            key={r.emoji}
+                            type="button"
+                            onClick={() => handleToggleReaction(item.id, r.emoji)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
+                              r.user_reacted
+                                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 shadow-xs'
+                                : 'bg-[var(--panel)] text-[var(--text)] border-[var(--border)] hover:bg-[var(--glass-4)]'
+                            }`}
+                            title={`Reacted by: ${r.users.join(', ')}`}
+                          >
+                            <span>{r.emoji}</span>
+                            <span className="text-[10px] font-bold">{r.count}</span>
+                          </button>
+                        ))}
+
+                        {/* Quick Reaction Button */}
+                        <div className="relative inline-block">
+                          <button
+                            type="button"
+                            onClick={() => setActivePickerId(activePickerId === item.id ? null : item.id)}
+                            className="p-1 px-2 text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel)] rounded-full border border-dashed border-[var(--border)] transition-colors cursor-pointer text-xs flex items-center gap-1"
+                            title="Add emoji reaction"
+                          >
+                            <Smile className="w-3.5 h-3.5" />
+                            <span className="text-[10px]">+</span>
+                          </button>
+
+                          {activePickerId === item.id && (
+                            <div className="absolute left-0 bottom-full mb-1 z-20 flex items-center gap-1 p-1.5 bg-[var(--panel)] border border-[var(--border)] rounded-full shadow-xl animate-in fade-in zoom-in-95">
+                              {COMMON_EMOJIS.map(emoji => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => handleToggleReaction(item.id, emoji)}
+                                  className="w-7 h-7 hover:bg-[var(--panel-subtle)] rounded-full flex items-center justify-center text-sm cursor-pointer transition-transform hover:scale-125"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Reply Toggle Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleThread(item.id)}
+                        className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] font-semibold px-2 py-1 rounded-lg hover:bg-[var(--panel)] transition-colors cursor-pointer"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'Reply' : 'Replies'}` : 'Reply'}</span>
+                      </button>
+                    </div>
+
+                    {/* Thread Drawer */}
+                    {isThreadExpanded && (
+                      <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-2.5 animate-in fade-in">
+                        {replies.length > 0 ? (
+                          <div className="space-y-2 pl-3 border-l-2 border-indigo-500/20">
+                            {replies.map((reply) => {
+                              const canDeleteReply = isMgmt || reply.author_id === currentUserId;
+                              return (
+                                <div key={reply.id} className="bg-[var(--panel)] p-2.5 rounded-xl border border-[var(--border)] text-xs space-y-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-bold text-[var(--text)]">{reply.author_name}</span>
+                                      <span className="text-[8px] uppercase font-semibold px-1 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                        {reply.author_role}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] text-[var(--muted)]">
+                                        {new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                      {canDeleteReply && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteReply(item.id, reply.id)}
+                                          className="text-rose-400 hover:text-rose-300 transition-colors cursor-pointer"
+                                          title="Delete reply"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <p className="text-[var(--text)] text-xs whitespace-pre-wrap leading-relaxed">
+                                    {reply.content}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-[var(--muted)] italic pl-3">
+                            No replies yet. Be the first to start the thread.
+                          </p>
+                        )}
+
+                        {/* Inline Reply Composer */}
+                        {(isMgmt || allowEmployeeChat) ? (
+                          <form onSubmit={(e) => handlePostReply(item.id, e)} className="flex items-center gap-2 pt-1 pl-3">
+                            <input
+                              type="text"
+                              placeholder="Write a reply..."
+                              value={replyInputs[item.id] || ''}
+                              onChange={(e) => setReplyInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="flex-1 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
+                            />
+                            <button
+                              type="submit"
+                              disabled={submittingReplies[item.id] || !replyInputs[item.id]?.trim()}
+                              className="px-3 py-1.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-xs disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
+                            >
+                              <Send className="w-3 h-3" />
+                              <span>Reply</span>
+                            </button>
+                          </form>
+                        ) : (
+                          <div className="pl-3 text-[11px] text-[var(--muted)] italic">
+                            Replies are currently restricted by management.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

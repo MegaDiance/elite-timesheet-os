@@ -103,6 +103,7 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
                         COALESCE(break_mins_weekday, 30) as break_mins_weekday, 
                         COALESCE(break_mins_weekend, 0) as break_mins_weekend, 
                         COALESCE(break_threshold_hours, 6) as break_threshold_hours,
+                        COALESCE(allow_employee_chat, true) as allow_employee_chat,
                         roster_lock_password_hash,
                         timesheet_lock_password_hash
                  FROM organisations WHERE id = $1`, 
@@ -114,6 +115,7 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
                 result.rows[0].break_mins_weekday = 30;
                 result.rows[0].break_mins_weekend = 0;
                 result.rows[0].break_threshold_hours = 6;
+                result.rows[0].allow_employee_chat = true;
             }
         }
         const org = result.rows[0];
@@ -133,6 +135,7 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
                 break_mins_weekday: Number(org.break_mins_weekday ?? 30),
                 break_mins_weekend: Number(org.break_mins_weekend ?? 0),
                 break_threshold_hours: Number(org.break_threshold_hours ?? 6),
+                allow_employee_chat: Boolean(org.allow_employee_chat ?? true),
                 has_roster_lock_password: Boolean(org.roster_lock_password_hash),
                 has_timesheet_lock_password: Boolean(org.timesheet_lock_password_hash)
             }
@@ -146,16 +149,20 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
 router.put('/settings', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
-        const { break_mins_weekday, break_mins_weekend, break_threshold_hours } = req.body;
+        const { break_mins_weekday, break_mins_weekend, break_threshold_hours, allow_employee_chat } = req.body;
 
         await query(
             `UPDATE organisations 
-             SET break_mins_weekday = $1, break_mins_weekend = $2, break_threshold_hours = $3 
-             WHERE id = $4`,
+             SET break_mins_weekday = $1, 
+                 break_mins_weekend = $2, 
+                 break_threshold_hours = $3,
+                 allow_employee_chat = COALESCE($4, allow_employee_chat)
+             WHERE id = $5`,
             [
                 break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
                 break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
                 break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
+                allow_employee_chat !== undefined ? Boolean(allow_employee_chat) : null,
                 orgId
             ]
         );

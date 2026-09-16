@@ -17,6 +17,7 @@ import { Badge } from '../../components/ui/Badge';
 
 export const Home: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeScreenshot, setActiveScreenshot] = useState<'roster' | 'portal'>('roster');
   const navigate = useNavigate();
 
   const handleQuickSearch = (e: React.FormEvent) => {
@@ -116,92 +117,97 @@ export const Home: React.FC = () => {
           </form>
         </div>
 
-        {/* Live UI Mock / Architecture Preview */}
-        <div className="mt-16 relative max-w-5xl mx-auto">
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
-            {/* Window header */}
+        {/* Realistic Product Showcase / Screenshot Gallery */}
+        <div className="mt-16 relative max-w-6xl mx-auto">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-1.5 p-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg">
+              <button
+                type="button"
+                onClick={() => setActiveScreenshot('roster')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  activeScreenshot === 'roster'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-[var(--muted)] hover:text-[var(--text)]'
+                }`}
+              >
+                14-Day Master Roster
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveScreenshot('portal')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  activeScreenshot === 'portal'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-[var(--muted)] hover:text-[var(--text)]'
+                }`}
+              >
+                Employee Portal & Approvals
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Production UI Screenshots</span>
+            </div>
+          </div>
+
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden group">
+            {/* macOS-style Window Header */}
             <div className="px-4 py-3 bg-[var(--panel-subtle)] border-b border-[var(--border)] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-rose-500/80" />
                 <span className="w-3 h-3 rounded-full bg-amber-500/80" />
                 <span className="w-3 h-3 rounded-full bg-emerald-500/80" />
-                <span className="ml-2 text-xs font-mono text-[var(--muted)]">fortnight-view / 2026-03-30 → 2026-04-12</span>
+                <div className="ml-3 hidden sm:flex items-center px-2.5 py-0.5 rounded bg-[var(--panel)] border border-[var(--border)] text-[11px] font-mono text-[var(--muted)]">
+                  {activeScreenshot === 'roster' 
+                    ? 'https://app.timesheetos.com/app/roster?fortnight=2026-03-30'
+                    : 'https://app.timesheetos.com/app/portal?view=shifts'}
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="success" size="sm">Roster Locked</Badge>
-                <Badge variant="purple" size="sm">Published to Staff</Badge>
+                {activeScreenshot === 'roster' ? (
+                  <>
+                    <Badge variant="success" size="sm">Dual-Locked</Badge>
+                    <Badge variant="purple" size="sm">14-Day Fit</Badge>
+                  </>
+                ) : (
+                  <>
+                    <Badge variant="success" size="sm">Timesheet Approved</Badge>
+                    <Badge variant="info" size="sm">One-Click Submit</Badge>
+                  </>
+                )}
               </div>
             </div>
 
-            {/* Mock Roster Grid */}
-            <div className="p-6 space-y-4 overflow-x-auto font-sans">
-              <div className="grid grid-cols-12 gap-3 pb-3 border-b border-[var(--border)] text-xs font-semibold text-[var(--muted)]">
-                <div className="col-span-3">STAFF MEMBER</div>
-                <div className="col-span-2 text-center">MON 30 MAR</div>
-                <div className="col-span-2 text-center">TUE 31 MAR</div>
-                <div className="col-span-2 text-center">WED 01 APR</div>
-                <div className="col-span-3 text-right">TOTAL RECORDED</div>
-              </div>
+            {/* Screenshot Display */}
+            <div className="relative bg-black/40 overflow-hidden flex items-center justify-center min-h-[380px] sm:min-h-[500px]">
+              <img
+                src={activeScreenshot === 'roster' ? '/screenshots/roster_overview.jpg' : '/screenshots/employee_portal.jpg'}
+                alt={activeScreenshot === 'roster' ? '14-Day Master Fortnight Roster View' : 'Employee Self-Service Timesheet Portal'}
+                className="w-full h-auto object-cover object-top border-b border-[var(--border)] transition-transform duration-300 group-hover:scale-[1.008]"
+                loading="eager"
+              />
+            </div>
 
-              {/* Row 1 */}
-              <div className="grid grid-cols-12 gap-3 items-center text-xs py-2 border-b border-[var(--border)]/50">
-                <div className="col-span-3">
-                  <div className="font-semibold text-[var(--text)]">Alice Springs</div>
-                  <div className="text-[11px] text-[var(--muted)]">Logistics • Transport</div>
+            {/* Caption & Quick Insights */}
+            <div className="p-4 sm:p-5 bg-[var(--panel)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-[var(--border)]">
+              <div className="space-y-0.5">
+                <div className="font-semibold text-[var(--text)]">
+                  {activeScreenshot === 'roster'
+                    ? 'Full 14-Day Fortnight Grid without Horizontal Scrolling'
+                    : 'Streamlined Employee Submission & Approval Workflow'}
                 </div>
-                <div className="col-span-2 text-center">
-                  <span className="inline-block px-2 py-1 rounded bg-[var(--panel-subtle)] border border-[var(--border)] font-mono text-[11px]">
-                    07:00 - 15:30
-                  </span>
-                  <div className="text-[10px] text-emerald-400 mt-0.5">8.0 hrs (-30m break)</div>
-                </div>
-                <div className="col-span-2 text-center">
-                  <span className="inline-block px-2 py-1 rounded bg-[var(--panel-subtle)] border border-[var(--border)] font-mono text-[11px]">
-                    07:00 - 15:30
-                  </span>
-                  <div className="text-[10px] text-emerald-400 mt-0.5">8.0 hrs (-30m break)</div>
-                </div>
-                <div className="col-span-2 text-center">
-                  <span className="inline-block px-2 py-1 rounded bg-[var(--panel-subtle)] border border-[var(--border)] font-mono text-[11px]">
-                    06:30 - 15:00
-                  </span>
-                  <div className="text-[10px] text-emerald-400 mt-0.5">8.0 hrs (-30m break)</div>
-                </div>
-                <div className="col-span-3 text-right">
-                  <div className="font-mono font-semibold text-[var(--text)]">76.0 hrs</div>
-                  <div className="text-[10px] text-indigo-400">Normal: 76.0h • Overtime: 0.0h</div>
+                <div className="text-[var(--muted)]">
+                  {activeScreenshot === 'roster'
+                    ? 'Automated break deductions, overtime breakdowns, shift publishing, and dual-password protection.'
+                    : 'Real-time shift summary, leave requests, announcements with emoji reactions, and instant lock compliance.'}
                 </div>
               </div>
-
-              {/* Row 2 */}
-              <div className="grid grid-cols-12 gap-3 items-center text-xs py-2">
-                <div className="col-span-3">
-                  <div className="font-semibold text-[var(--text)]">Bob Vance</div>
-                  <div className="text-[11px] text-[var(--muted)]">Warehouse Ops</div>
-                </div>
-                <div className="col-span-2 text-center">
-                  <span className="inline-block px-2 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 font-mono text-[11px]">
-                    Annual Leave
-                  </span>
-                  <div className="text-[10px] text-[var(--muted)] mt-0.5">Approved</div>
-                </div>
-                <div className="col-span-2 text-center">
-                  <span className="inline-block px-2 py-1 rounded bg-[var(--panel-subtle)] border border-[var(--border)] font-mono text-[11px]">
-                    08:00 - 16:30
-                  </span>
-                  <div className="text-[10px] text-emerald-400 mt-0.5">8.0 hrs (-30m break)</div>
-                </div>
-                <div className="col-span-2 text-center">
-                  <span className="inline-block px-2 py-1 rounded bg-[var(--panel-subtle)] border border-[var(--border)] font-mono text-[11px]">
-                    08:00 - 16:30
-                  </span>
-                  <div className="text-[10px] text-emerald-400 mt-0.5">8.0 hrs (-30m break)</div>
-                </div>
-                <div className="col-span-3 text-right">
-                  <div className="font-mono font-semibold text-[var(--text)]">76.0 hrs</div>
-                  <div className="text-[10px] text-amber-400">Leave: 7.6h • Worked: 68.4h</div>
-                </div>
-              </div>
+              <Link to="/features" className="shrink-0">
+                <Button variant="secondary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
+                  Explore Full Tech Specs
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
