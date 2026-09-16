@@ -1,13 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../services/apiClient';
-import { jwtDecode } from 'jwt-decode';
+import { 
+  Lock, 
+  Mail, 
+  ArrowRight, 
+  KeyRound, 
+  AlertCircle, 
+  CheckCircle2, 
+  Clock, 
+  ArrowLeft,
+  Briefcase
+} from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { Card } from '../components/ui/Card';
+import { Badge } from '../components/ui/Badge';
+
+interface UserOrg {
+  id: string;
+  name: string;
+  slug?: string;
+  role: string;
+  logo_url?: string | null;
+}
 
 export default function Login() {
-  const [step, setStep] = useState<'credentials' | '2fa'>('credentials');
+  const [step, setStep] = useState<'credentials' | '2fa' | 'select_org'>('credentials');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [tempToken, setTempToken] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
@@ -16,12 +37,18 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
+  // Authenticated user data and organisations list
+  const [authToken, setAuthToken] = useState<string>('');
+  const [authUser, setAuthUser] = useState<any>(null);
+  const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
+  const [selectingOrgId, setSelectingOrgId] = useState<string | null>(null);
+
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isResetSuccess = searchParams.get('reset') === 'success';
   const isSetupSuccess = searchParams.get('setup') === 'success';
 
-  // Cooldown countdown timer for resend
+  // Resend cooldown timer
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const timer = setInterval(() => {
@@ -30,19 +57,32 @@ export default function Login() {
     return () => clearInterval(timer);
   }, [resendCooldown]);
 
-  const handleAuthSuccess = (token: string) => {
+  // Navigate to appropriate role page once organization context is finalized
+  const finalizeLoginToOrg = (token: string, orgId: string, role: string) => {
     localStorage.setItem('token', token);
+    localStorage.setItem('current_org_id', orgId);
     window.dispatchEvent(new Event('auth-change'));
-    try {
-      const decoded: any = jwtDecode(token);
-      if (decoded.role === 'Platform Admin') {
-        navigate('/platform');
-        return;
-      }
-    } catch {
-      // fallback
+
+    if (role === 'Employee') {
+      navigate('/portal');
+    } else if (role === 'Platform Admin') {
+      navigate('/platform');
+    } else {
+      navigate('/roster');
     }
-    navigate('/');
+  };
+
+  // Called when credentials or 2FA are validated
+  const handleAuthenticationSuccess = (token: string, user: any) => {
+    setAuthToken(token);
+    setAuthUser(user);
+    localStorage.setItem('user', JSON.stringify(user));
+
+    const orgs: UserOrg[] = Array.isArray(user.organisations) ? user.organisations : [];
+    setUserOrgs(orgs);
+
+    // Transition to the "Select Your Organisation" step
+    setStep('select_org');
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -52,8 +92,11 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const response = await api.post('/auth/login', { email, password });
-      
+      const response = await api.post('/auth/login', { 
+        email: email.trim(), 
+        password 
+      });
+
       if (response.data.require_2fa) {
         setTempToken(response.data.temp_token);
         setMaskedEmail(response.data.masked_email || email);
@@ -67,13 +110,15 @@ export default function Login() {
       }
 
       if (response.data.success && response.data.data?.token) {
-        handleAuthSuccess(response.data.data.token);
+        handleAuthenticationSuccess(response.data.data.token, response.data.data.user);
+      } else {
+        setError(response.data?.error?.message || response.data?.error || 'Invalid credentials');
       }
     } catch (err: any) {
       if (err.response?.status === 429) {
         setError(err.response.data.error?.message || 'Too many failed attempts. Try again in 15 minutes.');
       } else {
-        setError(err.response?.data?.error || 'Invalid credentials');
+        setError(err.response?.data?.error?.message || err.response?.data?.error || 'Invalid email or password.');
       }
     } finally {
       setIsLoading(false);
@@ -82,8 +127,8 @@ export default function Login() {
 
   const handleVerify2FASubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!twoFactorCode.trim()) {
-      setError('Please enter the 6-digit verification code.');
+    if (!twoFactorCode.trim() || twoFactorCode.trim().length !== 6) {
+      setError('Please enter the complete 6-digit verification code.');
       return;
     }
 
@@ -98,10 +143,12 @@ export default function Login() {
       });
 
       if (response.data.success && response.data.data?.token) {
-        handleAuthSuccess(response.data.data.token);
+        handleAuthenticationSuccess(response.data.data.token, response.data.data.user);
+      } else {
+        setError(response.data?.error?.message || 'Failed to verify authentication code.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to verify authentication code.');
+      setError(err.response?.data?.error?.message || 'Invalid or expired verification code.');
     } finally {
       setIsLoading(false);
     }
@@ -124,176 +171,300 @@ export default function Login() {
     }
   };
 
+  // Called when user selects an organisation from the list
+  const handleSelectOrganisation = async (org: UserOrg) => {
+    setSelectingOrgId(org.id);
+    setError('');
+
+    // Save remembered org info
+    localStorage.setItem('last_org_slug', org.slug || org.id);
+    localStorage.setItem('last_org_name', org.name);
+
+    try {
+      // If the current token is already scoped to this organisation, enter directly
+      const currentOrgId = authUser?.organisation_id;
+      if (currentOrgId === org.id) {
+        finalizeLoginToOrg(authToken, org.id, org.role);
+        return;
+      }
+
+      // Otherwise, request a token scoped to the selected organisation
+      const res = await api.post(
+        '/auth/switch-organisation',
+        { organisation_id: org.id },
+        { headers: { Authorization: `Bearer ${authToken}` } }
+      );
+
+      if (res.data?.success && res.data?.data?.token) {
+        finalizeLoginToOrg(res.data.data.token, org.id, res.data.data.user?.role || org.role);
+      } else {
+        // Fallback: enter with active token
+        finalizeLoginToOrg(authToken, org.id, org.role);
+      }
+    } catch (err: any) {
+      console.warn('Switch organisation error:', err);
+      // Fallback
+      finalizeLoginToOrg(authToken, org.id, org.role);
+    } finally {
+      setSelectingOrgId(null);
+    }
+  };
+
+  const handleSignOutAndReset = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setAuthToken('');
+    setAuthUser(null);
+    setUserOrgs([]);
+    setStep('credentials');
+    setEmail('');
+    setPassword('');
+    setError('');
+    setSuccessMsg('');
+  };
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[var(--bg)] text-[var(--text)] font-['Inter',sans-serif] p-4">
-      <div className="w-full max-w-md p-8 bg-[var(--panel)] rounded-2xl border border-[var(--border)] shadow-2xl">
-        
-        {step === 'credentials' ? (
-          <>
-            <div className="text-center mb-8">
-              <div className="inline-flex items-center justify-center w-14 h-14 bg-[var(--primary-light)] text-[var(--primary)] rounded-2xl mb-4 border border-[var(--primary)]/20">
-                <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                </svg>
-              </div>
-              <h1 className="text-2xl font-black tracking-tight text-[var(--text)] flex items-center justify-center gap-2">
-                Elite Timesheet OS <span className="text-[var(--primary)]">Pro</span>
-              </h1>
-              <p className="text-xs font-medium text-[var(--muted)] mt-2">Sign in to your business account</p>
+    <div className="min-h-screen flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 bg-[var(--bg)] text-[var(--text)]">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md space-y-6">
+        {/* Brand Header */}
+        <div className="text-center space-y-2">
+          <Link to="/" className="inline-flex items-center gap-2 group">
+            <div className="w-10 h-10 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm group-hover:bg-indigo-500 transition-colors">
+              <Clock className="w-5 h-5" />
             </div>
+          </Link>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
+            Elite Timesheet OS <span className="text-indigo-400 font-mono text-xs uppercase px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20">Pro</span>
+          </h1>
+          <p className="text-xs text-[var(--muted)]">
+            {step === 'select_org'
+              ? 'Choose your organisation to continue'
+              : 'Sign in to access your organisation portal'}
+          </p>
+        </div>
 
-            {(isResetSuccess || isSetupSuccess) && (
-              <div className="mb-6 bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/20 p-4 rounded-xl text-center text-sm font-medium">
-                {isResetSuccess ? 'Password reset successfully. You can now sign in.' : 'Account setup complete. You can now sign in.'}
-              </div>
-            )}
-
-            <form onSubmit={handleLoginSubmit} className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Email Address</label>
-                <input 
-                  type="email" 
-                  required 
-                  placeholder="admin@elite.local"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  autoComplete="username"
-                  className="w-full px-4 py-3 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl focus:ring-2 focus:ring-[var(--primary)] focus:border-[var(--primary)] text-[var(--text)] outline-none transition-all placeholder:text-[var(--muted)] text-sm"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Password</label>
-                  <div className="flex items-center gap-3">
-                    <button 
-                      type="button" 
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="text-xs font-semibold text-[var(--primary)] hover:underline focus:outline-none"
-                    >
-                      {showPassword ? 'Hide' : 'Show'}
-                    </button>
-                    <a 
-                      href="/forgot-password"
-                      className="text-xs font-semibold text-[var(--muted)] hover:text-[var(--text)] hover:underline"
-                    >
-                      Forgot?
-                    </a>
-                  </div>
-                </div>
-                <input 
-                  type={showPassword ? 'text' : 'password'} 
-                  required 
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  className="w-full px-4 py-3 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl focus:ring-2 focus:ring-[var(--primary)] focus:border-[var(--primary)] text-[var(--text)] outline-none transition-all placeholder:text-[var(--muted)] text-sm"
-                />
-              </div>
-
-              {error && (
-                <div className="bg-[var(--danger-light)] border border-[var(--danger)]/20 text-[var(--danger)] p-3 rounded-xl text-sm font-semibold">
-                  {error}
-                </div>
-              )}
-
-              <button 
-                type="submit" 
-                disabled={isLoading}
-                className="w-full bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-[var(--primary-light)] disabled:opacity-50 text-sm cursor-pointer mt-2"
-              >
-                {isLoading ? 'Verifying...' : 'Sign In'}
-              </button>
-            </form>
-          </>
-        ) : (
-          /* Step 2: Two-Step Verification Screen */
-          <div>
-            <div className="text-center mb-6">
-              <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-500/10 text-indigo-400 rounded-2xl mb-4 border border-indigo-500/20">
-                <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                  <path d="m9 12 2 2 4-4"></path>
-                </svg>
-              </div>
-              <div className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-indigo-500/10 text-indigo-400 mb-2">
-                2-Step Verification
-              </div>
-              <h2 className="text-xl font-black tracking-tight text-[var(--text)]">
-                Check Your Email
-              </h2>
-              <p className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
-                We sent a 6-digit verification code to <strong className="text-[var(--text)] font-semibold">{maskedEmail}</strong>. Enter it below to complete sign in.
-              </p>
-            </div>
-
-            {error && (
-              <div className="mb-4 bg-[var(--danger-light)] border border-[var(--danger)]/20 text-[var(--danger)] p-3 rounded-xl text-sm font-semibold">
-                {error}
-              </div>
-            )}
-
-            {successMsg && (
-              <div className="mb-4 bg-[var(--success-light)] border border-[var(--success)]/20 text-[var(--success)] p-3 rounded-xl text-sm font-semibold">
-                {successMsg}
-              </div>
-            )}
-
-            <form onSubmit={handleVerify2FASubmit} className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider block text-center">
-                  6-Digit Verification Code
-                </label>
-                <input 
-                  type="text" 
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  autoFocus
-                  required 
-                  placeholder="123456"
-                  value={twoFactorCode}
-                  onChange={e => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
-                  className="w-full text-center text-2xl font-mono font-bold tracking-[0.4em] py-3 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl focus:ring-2 focus:ring-[var(--primary)] focus:border-[var(--primary)] text-[var(--text)] outline-none transition-all placeholder:text-[var(--muted)]/40"
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={isLoading || twoFactorCode.length < 6}
-                className="w-full bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-[var(--primary-light)] disabled:opacity-50 text-sm cursor-pointer"
-              >
-                {isLoading ? 'Verifying Code...' : 'Verify & Continue'}
-              </button>
-
-              <div className="flex items-center justify-between text-xs pt-2">
-                <button
-                  type="button"
-                  disabled={resendCooldown > 0 || isLoading}
-                  onClick={handleResend2FA}
-                  className="font-semibold text-[var(--primary)] hover:underline disabled:opacity-50 disabled:no-underline cursor-pointer"
-                >
-                  {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStep('credentials');
-                    setError('');
-                    setSuccessMsg('');
-                    setTwoFactorCode('');
-                  }}
-                  className="font-semibold text-[var(--muted)] hover:text-[var(--text)] hover:underline cursor-pointer"
-                >
-                  Use a different email
-                </button>
-              </div>
-            </form>
+        {/* Notices */}
+        {(isResetSuccess || isSetupSuccess) && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 p-3 rounded-md text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>
+              {isResetSuccess
+                ? 'Password reset successfully. You can now sign in with your new password.'
+                : 'Account setup complete. Please sign in below.'}
+            </span>
           </div>
         )}
 
+        {error && (
+          <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 p-3 rounded-md text-xs flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {successMsg && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 p-3 rounded-md text-xs flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{successMsg}</span>
+          </div>
+        )}
+
+        {/* Card Container */}
+        <Card className="p-8 shadow-sm">
+          {/* ============================================================ */}
+          {/* STEP 1: CREDENTIALS                                          */}
+          {/* ============================================================ */}
+          {step === 'credentials' && (
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
+              <Input
+                label="Work Email Address"
+                type="email"
+                required
+                placeholder="you@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                autoFocus
+                leftIcon={<Mail className="w-4 h-4" />}
+              />
+
+              <div>
+                <Input
+                  label="Password"
+                  type="password"
+                  required
+                  placeholder="••••••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  leftIcon={<Lock className="w-4 h-4" />}
+                />
+                <div className="flex justify-end mt-1.5">
+                  <Link to="/forgot-password" className="text-xs text-indigo-400 hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                variant="primary"
+                size="md"
+                className="w-full"
+                loading={isLoading}
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+              >
+                Sign In to Continue
+              </Button>
+            </form>
+          )}
+
+          {/* ============================================================ */}
+          {/* STEP 2: 2FA VERIFICATION                                     */}
+          {/* ============================================================ */}
+          {step === '2fa' && (
+            <form onSubmit={handleVerify2FASubmit} className="space-y-5">
+              <div className="text-center space-y-1">
+                <div className="w-10 h-10 rounded-full bg-indigo-600/10 text-indigo-400 flex items-center justify-center mx-auto">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-semibold text-[var(--text)]">Two-Step Verification</h3>
+                <p className="text-xs text-[var(--muted)]">
+                  Enter the 6-digit verification code dispatched to <strong className="text-[var(--text)]">{maskedEmail}</strong>.
+                </p>
+              </div>
+
+              <Input
+                type="text"
+                placeholder="123456"
+                value={twoFactorCode}
+                onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                maxLength={6}
+                required
+                autoFocus
+                className="text-center text-lg tracking-widest font-mono py-2.5"
+              />
+
+              <div className="space-y-2">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  className="w-full"
+                  loading={isLoading}
+                >
+                  Verify & Select Organisation
+                </Button>
+
+                <div className="flex items-center justify-between pt-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => { setStep('credentials'); setError(''); }}
+                    className="text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
+                  >
+                    ← Back to credentials
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResend2FA}
+                    disabled={resendCooldown > 0 || isLoading}
+                    className="text-indigo-400 hover:underline disabled:opacity-50 cursor-pointer"
+                  >
+                    {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : 'Resend Code'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {/* ============================================================ */}
+          {/* STEP 3: SELECT YOUR ORGANISATION                             */}
+          {/* ============================================================ */}
+          {step === 'select_org' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--text)]">Select Your Organisation</h3>
+                  <p className="text-xs text-[var(--muted)]">
+                    Signed in as <span className="font-semibold text-[var(--text)]">{authUser?.email}</span>
+                  </p>
+                </div>
+                <Badge variant="purple" size="sm">
+                  {userOrgs.length} {userOrgs.length === 1 ? 'Workplace' : 'Workplaces'}
+                </Badge>
+              </div>
+
+              {userOrgs.length > 0 ? (
+                <div className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-lg overflow-hidden">
+                  {userOrgs.map((org) => {
+                    const isSelected = selectingOrgId === org.id;
+                    return (
+                      <div
+                        key={org.id}
+                        onClick={() => !isSelected && handleSelectOrganisation(org)}
+                        className="p-4 hover:bg-[var(--hover-row)] flex items-center justify-between cursor-pointer transition-colors group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-md bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center font-bold text-sm">
+                            {org.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-sm text-[var(--text)] group-hover:text-indigo-400 transition-colors">
+                              {org.name}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <Badge variant={org.role === 'Employee' ? 'default' : 'purple'} size="sm">
+                                {org.role}
+                              </Badge>
+                              {org.slug && (
+                                <span className="text-[11px] text-[var(--muted)] font-mono">
+                                  @{org.slug}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          loading={isSelected}
+                          rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+                        >
+                          Enter
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-6 text-center space-y-2 border border-dashed border-[var(--border)] rounded-lg">
+                  <Briefcase className="w-8 h-8 text-[var(--muted)] mx-auto" />
+                  <div className="text-xs font-semibold text-[var(--text)]">No Active Workplaces Found</div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    Your account ({authUser?.email}) has not been assigned to any organisation yet. Please ask your administrator for an invite.
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={handleSignOutAndReset}
+                  className="text-[var(--muted)] hover:text-[var(--text)] inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Sign in with different account</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* Footer info */}
+        <p className="text-center text-xs text-[var(--muted)]">
+          Need an invitation to join your workplace? Contact your supervisor or company administrator.
+        </p>
       </div>
     </div>
   );

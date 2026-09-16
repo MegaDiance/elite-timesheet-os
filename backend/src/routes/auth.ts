@@ -66,14 +66,39 @@ function maskEmail(email: string): string {
 
 async function getUserOrganisations(userId: string, userOrgId?: string, defaultRole?: string) {
     try {
-        const orgsRes = await query(`
-            SELECT DISTINCT o.id, o.name, COALESCE(om.role, u.role) as role
-            FROM organisations o
-            LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
-            LEFT JOIN users u ON u.id = $1
-            WHERE om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id)
-        `, [userId]);
-        return orgsRes.rows;
+        if (defaultRole === 'Platform Admin') {
+            try {
+                const allOrgs = await query(`
+                    SELECT id, name, COALESCE(slug, id) as slug, logo_url, 'Platform Admin' as role
+                    FROM organisations
+                    ORDER BY name ASC
+                `);
+                return allOrgs.rows;
+            } catch {
+                const fallback = await query(`SELECT id, name, 'Platform Admin' as role FROM organisations ORDER BY name ASC`);
+                return fallback.rows;
+            }
+        }
+
+        try {
+            const orgsRes = await query(`
+                SELECT DISTINCT o.id, o.name, COALESCE(o.slug, o.id) as slug, o.logo_url, COALESCE(om.role, u.role) as role
+                FROM organisations o
+                LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
+                LEFT JOIN users u ON u.id = $1
+                WHERE om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id)
+            `, [userId]);
+            return orgsRes.rows;
+        } catch {
+            const orgsResFallback = await query(`
+                SELECT DISTINCT o.id, o.name, COALESCE(om.role, u.role) as role
+                FROM organisations o
+                LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
+                LEFT JOIN users u ON u.id = $1
+                WHERE om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id)
+            `, [userId]);
+            return orgsResFallback.rows;
+        }
     } catch (err) {
         return [];
     }
@@ -520,14 +545,21 @@ router.post('/switch-organisation', requireAuth, async (req: AuthRequest, res: R
         }
 
         let membershipRes: any = { rows: [] };
+        const isPlatformAdmin = req.user?.role === 'Platform Admin';
+
         try {
-            membershipRes = await query(`
-                SELECT o.id, o.name, COALESCE(om.role, u.role) as role
-                FROM organisations o
-                LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
-                LEFT JOIN users u ON u.id = $1
-                WHERE o.id = $2 AND (om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id))
-            `, [userId, organisation_id]);
+            if (isPlatformAdmin) {
+                membershipRes = await query('SELECT id, name, \'Platform Admin\' as role FROM organisations WHERE id = $1 AND is_active = true', [organisation_id]);
+            } else {
+                membershipRes = await query(`
+                    SELECT o.id, o.name, COALESCE(om.role, u.role) as role
+                    FROM organisations o
+                    LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
+                    LEFT JOIN users u ON u.id = $1
+                    WHERE o.id = $2 AND (om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id))
+                      AND o.is_active = true
+                `, [userId, organisation_id]);
+            }
         } catch (dbErr) {
             membershipRes = { rows: [] };
         }
