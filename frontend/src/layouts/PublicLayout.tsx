@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Clock, ShieldCheck, ArrowRight, Building2, Search } from 'lucide-react';
+import { Clock, ShieldCheck, ArrowRight, Building2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export const PublicLayout: React.FC = () => {
@@ -10,7 +10,7 @@ export const PublicLayout: React.FC = () => {
     { label: 'Overview', path: '/' },
     { label: 'Features', path: '/features' },
     { label: 'Pricing', path: '/pricing' },
-    { label: 'Find Organisation', path: '/find-organisation' },
+    { label: 'Portal', path: '/portal-access' },
   ];
 
   const isActive = (path: string) => {
@@ -61,14 +61,9 @@ export const PublicLayout: React.FC = () => {
 
           {/* Action CTAs */}
           <div className="flex items-center gap-2.5">
-            <Link to="/find-organisation">
-              <Button variant="secondary" size="sm" leftIcon={<Search className="w-3.5 h-3.5" />}>
-                Find Workplace
-              </Button>
-            </Link>
-            <Link to="/login">
+            <Link to="/portal-access">
               <Button variant="primary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                Sign In
+                Go to Portal
               </Button>
             </Link>
           </div>
@@ -112,21 +107,21 @@ export const PublicLayout: React.FC = () => {
           <div>
             <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Access & Security</h4>
             <ul className="space-y-2 text-xs text-[var(--muted)]">
-              <li><Link to="/find-organisation" className="hover:text-[var(--text)] transition-colors">Find Your Organisation</Link></li>
-              <li><Link to="/login" className="hover:text-[var(--text)] transition-colors">Branded Tenant Login</Link></li>
+              <li><Link to="/portal-access" className="hover:text-[var(--text)] transition-colors">Workplace Portal</Link></li>
+              <li><Link to="/portal-access" className="hover:text-[var(--text)] transition-colors">Locate Workplace Portal</Link></li>
               <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Two-Factor Authentication</Link></li>
               <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Fortnight Lock Passwords</Link></li>
             </ul>
           </div>
 
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Platform</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Workplace Access</h4>
             <p className="text-xs text-[var(--muted)] leading-relaxed mb-3">
-              Need to provision a new tenant instance or request an enterprise invite?
+              Access your organisation's dedicated timesheet and rostering instance.
             </p>
-            <Link to="/find-organisation">
+            <Link to="/portal-access">
               <Button variant="outline" size="sm" className="w-full justify-start" leftIcon={<Building2 className="w-3.5 h-3.5" />}>
-                Locate Existing Tenant
+                Go to Portal
               </Button>
             </Link>
           </div>

@@ -5,7 +5,7 @@ import { PublicLayout } from './layouts/PublicLayout';
 import { Home } from './pages/public/Home';
 import { Features } from './pages/public/Features';
 import { Pricing } from './pages/public/Pricing';
-import { FindOrg } from './pages/public/FindOrg';
+import { PortalAccess } from './pages/public/PortalAccess';
 import { OrgLogin } from './pages/auth/OrgLogin';
 
 import Roster from './pages/Roster';
@@ -42,7 +42,7 @@ function getRole(): string | null {
 
 function AppHomeRedirect() {
   const role = getRole();
-  if (!role) return <Navigate to="/find-organisation" replace />;
+  if (!role) return <Navigate to="/portal-access" replace />;
   if (role === 'Platform Admin') return <Navigate to="/platform" replace />;
   if (role === 'Employee') return <Navigate to="/portal" replace />;
   return <Navigate to="/roster" replace />;
@@ -50,7 +50,7 @@ function AppHomeRedirect() {
 
 function ProtectedRoute({ allowedRoles, children }: { allowedRoles: string[]; children: JSX.Element }) {
   const role = getRole();
-  if (!role) return <Navigate to="/find-organisation" replace />;
+  if (!role) return <Navigate to="/portal-access" replace />;
   if (!allowedRoles.includes(role)) {
     if (role === 'Employee') return <Navigate to="/portal" replace />;
     return <Navigate to="/roster" replace />;
@@ -77,8 +77,9 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/features" element={<Features />} />
           <Route path="/pricing" element={<Pricing />} />
-          <Route path="/find-organisation" element={<FindOrg />} />
-          <Route path="/signin" element={<Navigate to="/find-organisation" replace />} />
+          <Route path="/portal-access" element={<PortalAccess />} />
+          <Route path="/find-organisation" element={<Navigate to="/portal-access" replace />} />
+          <Route path="/signin" element={<Navigate to="/portal-access" replace />} />
         </Route>
 
         {/* Branded & General Authentication Routes */}
@@ -91,7 +92,7 @@ export default function App() {
         <Route path="/setup-org" element={<SetupOrganisation />} />
 
         {/* Authenticated Application Shell */}
-        <Route element={isAuthenticated ? <Layout /> : <Navigate to="/find-organisation" replace />}>
+        <Route element={isAuthenticated ? <Layout /> : <Navigate to="/portal-access" replace />}>
           <Route path="/app" element={<AppHomeRedirect />} />
           <Route 
             path="/dashboard" 

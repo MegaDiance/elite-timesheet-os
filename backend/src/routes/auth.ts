@@ -109,7 +109,7 @@ async function getUserOrganisations(userId: string, userOrgId?: string, defaultR
  * Validates credentials. If 2FA is active, issues OTP and temporary token.
  */
 router.post('/login', checkRateLimit, async (req: any, res: any) => {
-    const { email, password } = req.body;
+    const { email, password, organisation_slug, organisation_id } = req.body;
     if (!email || !password) {
         return res.status(400).json({ error: 'Email and password required' });
     }
@@ -129,6 +129,93 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
         if (!valid) {
             recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
             return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Check if an organisation was specified for dedicated workplace login
+        let targetOrg: any = null;
+        if (organisation_id) {
+            try {
+                const orgRes = await query('SELECT id, name, slug, is_active FROM organisations WHERE id = $1', [organisation_id]);
+                targetOrg = orgRes.rows[0];
+            } catch {}
+        } else if (organisation_slug) {
+            const cleanSlug = organisation_slug.trim().toLowerCase();
+            try {
+                const orgRes = await query('SELECT id, name, slug, is_active FROM organisations WHERE LOWER(slug) = $1', [cleanSlug]);
+                if (orgRes.rows.length > 0) {
+                    targetOrg = orgRes.rows[0];
+                } else {
+                    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSlug);
+                    if (isUuid) {
+                        const orgById = await query('SELECT id, name, slug, is_active FROM organisations WHERE id = $1', [cleanSlug]);
+                        targetOrg = orgById.rows[0];
+                    }
+                }
+            } catch {}
+        }
+
+        if ((organisation_id || organisation_slug) && !targetOrg) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'ORGANISATION_NOT_FOUND',
+                    message: 'The specified organisation could not be found.'
+                }
+            });
+        }
+
+        if (targetOrg && targetOrg.is_active === false) {
+            return res.status(403).json({
+                success: false,
+                error: { message: 'This workplace organisation is currently deactivated.' }
+            });
+        }
+
+        let effectiveOrgId = user.org_id;
+        let effectiveRole = user.role;
+
+        if (targetOrg) {
+            let memberRes: any = { rows: [] };
+            try {
+                memberRes = await query(
+                    'SELECT role FROM organisation_members WHERE organisation_id = $1 AND user_id = $2',
+                    [targetOrg.id, user.id]
+                );
+            } catch {
+                memberRes = { rows: [] };
+            }
+
+            if (memberRes.rows.length > 0) {
+                effectiveRole = memberRes.rows[0].role;
+                effectiveOrgId = targetOrg.id;
+            } else if (user.role === 'Platform Admin') {
+                effectiveRole = 'Platform Admin';
+                effectiveOrgId = targetOrg.id;
+            } else {
+                let empRes: any = { rows: [] };
+                try {
+                    empRes = await query(
+                        'SELECT id FROM employees WHERE org_id = $1 AND user_id = $2 AND is_active = true AND deleted_at IS NULL',
+                        [targetOrg.id, user.id]
+                    );
+                } catch {
+                    empRes = { rows: [] };
+                }
+
+                if (empRes.rows.length > 0) {
+                    effectiveRole = user.role;
+                    effectiveOrgId = targetOrg.id;
+                } else {
+                    recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+                    return res.status(403).json({
+                        success: false,
+                        error: {
+                            code: 'NO_ORGANISATION_ACCESS',
+                            message: `Your account does not have access to ${targetOrg.name}. Please locate your correct organisation portal.`
+                        }
+                    });
+                }
+            }
         }
 
         // Gracefully detect if two_factor_codes table is available in the current database
@@ -174,7 +261,12 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
             console.log(`[2FA CODE FOR TESTING] Code for ${cleanEmail}: ${code}`);
 
             // Generate temporary verification session token (10m expiration)
-            const tempToken = generateTempToken({ id: user.id, email: user.email });
+            const tempToken = generateTempToken({
+                id: user.id,
+                email: user.email,
+                organisation_id: effectiveOrgId,
+                role: effectiveRole
+            });
 
             let deliveryNotice = undefined;
             if (emailResult.reroutedTo) {
@@ -194,12 +286,12 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
 
         // Single-factor fallback if explicitly disabled
         clearRateLimit(cleanEmail);
-        const orgs = await getUserOrganisations(user.id, user.org_id, user.role);
+        const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
         const token = generateToken({
             id: user.id,
             email: user.email,
-            organisation_id: user.org_id,
-            role: user.role
+            organisation_id: effectiveOrgId,
+            role: effectiveRole
         });
 
         res.json({
@@ -209,8 +301,8 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
                 user: {
                     id: user.id,
                     email: user.email,
-                    role: user.role,
-                    organisation_id: user.org_id,
+                    role: effectiveRole,
+                    organisation_id: effectiveOrgId,
                     organisations: orgs
                 }
             }
@@ -293,12 +385,15 @@ router.post('/verify-2fa', async (req: any, res: any) => {
             ).catch(() => {});
         }
 
-        const orgs = await getUserOrganisations(user.id, user.org_id, user.role);
+        const effectiveOrgId = decoded.organisation_id || user.org_id;
+        const effectiveRole = decoded.role || user.role;
+
+        const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
         const token = generateToken({
             id: user.id,
             email: user.email,
-            organisation_id: user.org_id,
-            role: user.role
+            organisation_id: effectiveOrgId,
+            role: effectiveRole
         });
 
         res.json({
@@ -308,8 +403,8 @@ router.post('/verify-2fa', async (req: any, res: any) => {
                 user: {
                     id: user.id,
                     email: user.email,
-                    role: user.role,
-                    organisation_id: user.org_id,
+                    role: effectiveRole,
+                    organisation_id: effectiveOrgId,
                     organisations: orgs
                 }
             }

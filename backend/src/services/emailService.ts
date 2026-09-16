@@ -24,11 +24,12 @@ export interface EmailDeliveryResult {
  * If no provider API key is configured, safely falls back to audited development transport.
  */
 export async function sendTransactionalEmail(options: EmailOptions): Promise<EmailDeliveryResult> {
-    const provider = (process.env.EMAIL_PROVIDER || (process.env.NODE_ENV === 'test' ? 'dev-mock' : 'auto')).toLowerCase();
+    const isTestEnv = process.env.NODE_ENV === 'test';
+    const provider = (process.env.EMAIL_PROVIDER || (isTestEnv ? 'dev-mock' : 'auto')).toLowerCase();
     const fromAddress = process.env.EMAIL_FROM || 'Elite Timesheet <onboarding@resend.dev>';
 
     // 1. Resend Provider
-    if (provider === 'resend' || (provider === 'auto' && process.env.RESEND_API_KEY)) {
+    if (provider === 'resend' || (!isTestEnv && provider === 'auto' && process.env.RESEND_API_KEY)) {
         if (!process.env.RESEND_API_KEY) {
             return {
                 success: false,

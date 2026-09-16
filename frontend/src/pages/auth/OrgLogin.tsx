@@ -84,14 +84,15 @@ export const OrgLogin: React.FC = () => {
     if (user.organisation_id) {
       localStorage.setItem('current_org_id', user.organisation_id);
     }
+    window.dispatchEvent(new Event('auth-change'));
 
     const role = user.role;
     if (role === 'Employee') {
-      navigate('/app/portal');
+      navigate('/portal');
     } else if (role === 'Platform Admin') {
-      navigate('/app/platform');
+      navigate('/platform');
     } else {
-      navigate('/app/roster');
+      navigate('/roster');
     }
   };
 
@@ -109,7 +110,8 @@ export const OrgLogin: React.FC = () => {
     try {
       const res = await api.post('/auth/login', { 
         email: email.trim(), 
-        password 
+        password,
+        organisation_slug: slug
       });
 
       if (res.data?.success) {
@@ -204,9 +206,9 @@ export const OrgLogin: React.FC = () => {
             No organisation was found matching the identifier <code className="font-mono text-indigo-400">@{slug}</code>. The workplace may have been renamed or unlisted.
           </p>
           <div className="pt-2 flex flex-col gap-2">
-            <Link to="/find-organisation">
+            <Link to="/portal-access">
               <Button variant="primary" size="md" className="w-full">
-                Find My Organisation
+                Go to Workplace Portal
               </Button>
             </Link>
             <Link to="/">
@@ -226,11 +228,11 @@ export const OrgLogin: React.FC = () => {
         {/* Back Link */}
         <div className="flex items-center justify-between">
           <Link 
-            to="/find-organisation" 
+            to="/portal-access" 
             className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] transition-colors"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Switch Workplace</span>
+            <span>Switch Workplace / Different Portal</span>
           </Link>
           <Badge variant="purple" size="sm">@{org?.slug}</Badge>
         </div>

@@ -112,14 +112,14 @@ export const Pricing: React.FC = () => {
             </div>
 
             <div className="pt-8 mt-8 border-t border-[var(--border)] space-y-3">
-              <Link to="/find-organisation" className="block w-full">
+              <Link to="/portal-access" className="block w-full">
                 <Button 
                   variant={tier.popular ? 'primary' : 'secondary'} 
                   size="md" 
                   className="w-full"
                   rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
                 >
-                  Find Workplace
+                  Go to Portal
                 </Button>
               </Link>
               <p className="text-[11px] text-center text-[var(--muted)]">
@@ -142,9 +142,9 @@ export const Pricing: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <Link to="/find-organisation">
+          <Link to="/portal-access">
             <Button variant="outline" size="sm" leftIcon={<Building2 className="w-4 h-4" />}>
-              Existing Tenant
+              Go to Portal
             </Button>
           </Link>
           <Link to="/setup-org">

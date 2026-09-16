@@ -48,6 +48,18 @@ export default function Login() {
   const isResetSuccess = searchParams.get('reset') === 'success';
   const isSetupSuccess = searchParams.get('setup') === 'success';
 
+  const [recentSlug, setRecentSlug] = useState<string | null>(null);
+  const [recentName, setRecentName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const slug = localStorage.getItem('last_org_slug');
+    const name = localStorage.getItem('last_org_name');
+    if (slug) {
+      setRecentSlug(slug);
+      setRecentName(name || slug);
+    }
+  }, []);
+
   // Resend cooldown timer
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -275,7 +287,34 @@ export default function Login() {
           {/* STEP 1: CREDENTIALS                                          */}
           {/* ============================================================ */}
           {step === 'credentials' && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div className="space-y-4">
+              {recentSlug && (
+                <div className="p-3.5 bg-indigo-500/5 border border-indigo-500/20 rounded-lg flex items-center justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                      {(recentName || recentSlug).charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider">Your Workplace</div>
+                      <div className="text-xs font-bold text-[var(--text)] truncate">{recentName}</div>
+                    </div>
+                  </div>
+                  <Link to={`/login/${recentSlug}`}>
+                    <Button variant="primary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
+                      Go to Portal
+                    </Button>
+                  </Link>
+                </div>
+              )}
+
+              <div className="text-center pb-1">
+                <Link to="/portal-access" className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-medium">
+                  <span>Locate your organisation portal</span>
+                  <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+
+              <form onSubmit={handleLoginSubmit} className="space-y-4">
               <Input
                 label="Work Email Address"
                 type="email"
@@ -317,6 +356,7 @@ export default function Login() {
                 Sign In to Continue
               </Button>
             </form>
+            </div>
           )}
 
           {/* ============================================================ */}

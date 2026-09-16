@@ -9,8 +9,7 @@ import {
   Users, 
   ArrowRight, 
   Search,
-  Sparkles,
-  Building
+  Sparkles
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
@@ -23,9 +22,9 @@ export const Home: React.FC = () => {
   const handleQuickSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      navigate(`/find-organisation?q=${encodeURIComponent(searchQuery.trim())}`);
+      navigate(`/portal-access?q=${encodeURIComponent(searchQuery.trim())}`);
     } else {
-      navigate('/find-organisation');
+      navigate('/portal-access');
     }
   };
 
@@ -80,25 +79,39 @@ export const Home: React.FC = () => {
             Built for shift-based teams, logistics, healthcare, and enterprise operators. Streamline fortnightly rosters, enforce break policies, and eliminate timesheet disputes.
           </p>
 
-          {/* Quick Search Workplace Form */}
-          <form onSubmit={handleQuickSearch} className="max-w-xl mx-auto pt-2">
+          {/* Hero CTAs */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <Link to="/portal-access">
+              <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>
+                Go to Portal
+              </Button>
+            </Link>
+            <Link to="/features">
+              <Button variant="secondary" size="lg">
+                Explore Features
+              </Button>
+            </Link>
+          </div>
+
+          {/* Quick Workplace Search / Portal Entry */}
+          <form onSubmit={handleQuickSearch} className="max-w-xl mx-auto pt-4">
             <div className="flex flex-col sm:flex-row items-center gap-2 bg-[var(--panel)] p-2 rounded-lg border border-[var(--border)] shadow-sm">
               <div className="relative flex-1 w-full flex items-center">
                 <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Enter your organisation name or slug..."
+                  placeholder="Enter organisation name or slug (e.g. acme)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-transparent pl-9 pr-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)]/60 focus:outline-none"
                 />
               </div>
-              <Button type="submit" variant="primary" size="md" className="w-full sm:w-auto shrink-0">
-                Find Workplace
+              <Button type="submit" variant="primary" size="md" className="w-full sm:w-auto shrink-0" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
+                Go to Portal
               </Button>
             </div>
             <p className="text-xs text-[var(--muted)] mt-2 text-left sm:text-center">
-              Looking for a specific tenant? You can search by workplace name or custom subdomain.
+              Locate your organisation to access your dedicated workplace login.
             </p>
           </form>
         </div>
@@ -234,9 +247,9 @@ export const Home: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-            <Link to="/find-organisation" className="w-full sm:w-auto">
-              <Button variant="primary" size="lg" className="w-full" leftIcon={<Building className="w-4 h-4" />}>
-                Find My Organisation
+            <Link to="/portal-access" className="w-full sm:w-auto">
+              <Button variant="primary" size="lg" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
+                Go to Portal
               </Button>
             </Link>
             <Link to="/features" className="w-full sm:w-auto">

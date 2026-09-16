@@ -14,12 +14,12 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use((response) => response, (error) => {
     if (error.response?.status === 401) {
-        const publicPrefixes = ['/login', '/features', '/pricing', '/find-organisation', '/reset-password', '/setup-org', '/accept-invite'];
+        const publicPrefixes = ['/login', '/features', '/pricing', '/portal-access', '/find-organisation', '/reset-password', '/setup-org', '/accept-invite'];
         const isPublicRoute = window.location.pathname === '/' || publicPrefixes.some(p => window.location.pathname.startsWith(p));
         
         if (!isPublicRoute) {
             localStorage.removeItem('token');
-            window.location.href = '/find-organisation';
+            window.location.href = '/portal-access';
         }
     }
     return Promise.reject(error);

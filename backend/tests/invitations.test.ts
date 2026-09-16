@@ -329,7 +329,7 @@ describe('Organization & User Invitation Integration Tests', () => {
     describe('Employee Invite & Account Setup Workflow', () => {
         let employeeId: string;
         let empInviteToken: string;
-        const employeeEmail = 'staff@example.com';
+        const employeeEmail = `staff_${Date.now()}_${Math.floor(Math.random() * 1000)}@example.com`;
 
         it('should create an employee and generate invite link when create_account is true', async () => {
             const res = await request(app)

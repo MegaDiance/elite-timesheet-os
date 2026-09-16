@@ -130,10 +130,15 @@ export default function Layout() {
   };
 
   const handleLogout = () => {
+    const lastSlug = localStorage.getItem('last_org_slug');
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     window.dispatchEvent(new Event('auth-change'));
-    navigate('/find-organisation');
+    if (lastSlug) {
+      navigate(`/login/${lastSlug}`);
+    } else {
+      navigate('/portal-access');
+    }
   };
 
   const toggleTheme = () => {

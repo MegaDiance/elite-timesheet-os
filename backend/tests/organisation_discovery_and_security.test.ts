@@ -322,4 +322,36 @@ describe('Organisation Discovery & Security Hardening Tests', () => {
             expect(membershipA.rows.length).toBe(0);
         });
     });
+
+    describe('Dedicated Organisation Login Enforcement', () => {
+        it('allows login to a specific organisation when user is a member', async () => {
+            const res = await request(app)
+                .post('/api/auth/login')
+                .send({
+                    email: 'contractor@multicompany.com',
+                    password: 'password123',
+                    organisation_slug: 'beacon-health'
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.user.organisation_id).toBe(orgBId);
+            expect(res.body.data.token).toBeDefined();
+        });
+
+        it('rejects login to an organisation when user is not a member', async () => {
+            // Note: Org A membership was deleted in previous test
+            const res = await request(app)
+                .post('/api/auth/login')
+                .send({
+                    email: 'contractor@multicompany.com',
+                    password: 'password123',
+                    organisation_slug: 'apex-logistics'
+                });
+
+            expect(res.status).toBe(403);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('NO_ORGANISATION_ACCESS');
+        });
+    });
 });
