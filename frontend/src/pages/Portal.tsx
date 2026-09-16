@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { jwtDecode } from 'jwt-decode';
 import api from '../services/apiClient';
 
 interface DaySummary {
@@ -92,9 +93,25 @@ export default function Portal() {
   const [leaveReason, setLeaveReason] = useState('');
   const [leaveSubmitting, setLeaveSubmitting] = useState(false);
 
-  // Announcements State
+  // Announcements / Team Chat State
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
+  const [chatContent, setChatContent] = useState('');
+  const [chatSubmitting, setChatSubmitting] = useState(false);
+  const [submittingTimesheet, setSubmittingTimesheet] = useState(false);
+
+  // User auth context
+  const token = localStorage.getItem('token');
+  let currentUserId = '';
+  let currentUserRole = 'Employee';
+  if (token) {
+    try {
+      const decoded: any = jwtDecode(token);
+      currentUserId = decoded.id || '';
+      currentUserRole = decoded.role || 'Employee';
+    } catch {}
+  }
+  const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(currentUserRole);
   const [seenAnnouncementIds, setSeenAnnouncementIds] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('seen_announcement_ids');
@@ -239,6 +256,48 @@ export default function Portal() {
     }
   };
 
+  const handleSendChatMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatContent.trim()) return;
+    setChatSubmitting(true);
+    try {
+      await api.post('/announcements', { content: chatContent.trim() });
+      setChatContent('');
+      showToast('Message posted to Team Chat');
+      fetchAnnouncements();
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to post message');
+    } finally {
+      setChatSubmitting(false);
+    }
+  };
+
+  const handleDeleteChatMessage = async (id: string) => {
+    if (!window.confirm('Delete this message?')) return;
+    try {
+      await api.delete(`/announcements/${id}`);
+      showToast('Message deleted');
+      setAnnouncements(prev => prev.filter(a => a.id !== id));
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to delete message');
+    }
+  };
+
+  const handleSubmitTimesheet = async () => {
+    setSubmittingTimesheet(true);
+    try {
+      const res = await api.post('/submissions/submit', { start_date: fnIso });
+      if (res.data?.success) {
+        showToast('Timesheet submitted successfully for review');
+        fetchPortal();
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to submit timesheet');
+    } finally {
+      setSubmittingTimesheet(false);
+    }
+  };
+
   const formatDateStr = (d: Date) => d.toISOString().split('T')[0];
 
   // Helper date manipulators
@@ -330,24 +389,24 @@ export default function Portal() {
       )}
 
       {/* Header Bar */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-3xl font-black text-[var(--text)]">Employee Portal</h2>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 max-w-full">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="text-2xl sm:text-3xl font-black text-[var(--text)] tracking-tight">Employee Portal</h2>
             {portalData?.employee && (
-              <span className="bg-[var(--primary-light)] text-[var(--primary)] text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
-                {portalData.employee.full_name} ({portalData.employee.department || 'General'})
+              <span className="bg-[var(--primary-light)] text-[var(--primary)] text-xs font-bold px-2.5 py-1 rounded-md border border-[var(--primary)]/25 tracking-wide">
+                {portalData.employee.full_name} <span className="opacity-70">({portalData.employee.department || 'General'})</span>
               </span>
             )}
           </div>
-          <p className="text-sm text-[var(--muted)] mt-1">Compass-style view for your shifts and leave</p>
+          <p className="text-xs sm:text-sm text-[var(--muted)] mt-1">Overview of your shifts, timesheet submissions, leave, and team chat</p>
         </div>
 
         {/* Tab Selector */}
         <div className="flex items-center bg-[var(--panel-subtle)] p-1 rounded-2xl border border-[var(--border)] shadow-sm gap-1">
           <button
             onClick={() => setActiveTab('schedule')}
-            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'schedule'
                 ? 'bg-[var(--panel)] text-[var(--primary)] shadow-sm'
                 : 'text-[var(--muted)] hover:text-[var(--text)]'
@@ -363,7 +422,7 @@ export default function Portal() {
           </button>
           <button
             onClick={() => setActiveTab('leave')}
-            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'leave'
                 ? 'bg-[var(--panel)] text-[var(--primary)] shadow-sm'
                 : 'text-[var(--muted)] hover:text-[var(--text)]'
@@ -382,17 +441,16 @@ export default function Portal() {
               setActiveTab('announcements');
               markAnnouncementsAsSeen(announcements);
             }}
-            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'announcements'
                 ? 'bg-[var(--panel)] text-[var(--primary)] shadow-sm'
                 : 'text-[var(--muted)] hover:text-[var(--text)]'
             }`}
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
-            <span>Announcements</span>
+            <span>Team Chat</span>
             {unreadAnnouncementsCount > 0 && (
               <span className="bg-[var(--primary)] text-white text-[10px] font-black px-1.5 py-0.2 rounded-full">
                 {unreadAnnouncementsCount}
@@ -400,6 +458,57 @@ export default function Portal() {
             )}
           </button>
         </div>
+      </div>
+
+      {/* Timesheet Submission & Approval Status Bar */}
+      <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
+            portalData?.submission?.status === 'Approved'
+              ? 'bg-emerald-500/20 text-emerald-400'
+              : portalData?.submission?.status === 'Submitted' || portalData?.submission?.status === 'Under Review'
+              ? 'bg-blue-500/20 text-blue-400'
+              : portalData?.submission?.status === 'Rejected'
+              ? 'bg-rose-500/20 text-rose-400'
+              : 'bg-zinc-500/20 text-zinc-400'
+          }`}>
+            {portalData?.submission?.status === 'Approved' ? '✓' : '⏱'}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Timesheet Status:</span>
+              <span className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
+                portalData?.submission?.status === 'Approved'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : portalData?.submission?.status === 'Submitted'
+                  ? 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
+                  : portalData?.submission?.status === 'Under Review'
+                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  : portalData?.submission?.status === 'Rejected'
+                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                  : 'bg-zinc-500/15 text-zinc-300 border border-zinc-500/30'
+              }`}>
+                {portalData?.submission?.status || 'Draft'}
+              </span>
+            </div>
+            {portalData?.submission?.rejection_reason && (
+              <p className="text-xs text-rose-400 font-medium mt-1">
+                Feedback: {portalData.submission.rejection_reason}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* 1-Click Submission Action */}
+        {(!portalData?.submission?.status || portalData?.submission?.status === 'Draft' || portalData?.submission?.status === 'Rejected') && (
+          <button
+            onClick={handleSubmitTimesheet}
+            disabled={submittingTimesheet}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-colors shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-end sm:self-auto"
+          >
+            <span>{submittingTimesheet ? 'Submitting...' : 'Submit Fortnight Timesheet'}</span>
+          </button>
+        )}
       </div>
 
       {/* TAB 1: MY SCHEDULE & FULL ROSTER */}
@@ -640,52 +749,54 @@ export default function Portal() {
 
           {/* FORTNIGHT VIEW */}
           {calendarView === 'fortnight' && (
-            <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-4 shadow-sm">
-              <div className="grid grid-cols-7 gap-2 mb-2 text-center text-xs font-black text-[var(--muted)] uppercase">
-                <div className="text-[var(--primary)]">Sun</div>
-                <div>Mon</div>
-                <div>Tue</div>
-                <div>Wed</div>
-                <div>Thu</div>
-                <div>Fri</div>
-                <div className="text-[var(--primary)]">Sat</div>
-              </div>
+            <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-4 shadow-sm overflow-x-auto">
+              <div className="min-w-[700px]">
+                <div className="grid grid-cols-7 gap-2 mb-2 text-center text-xs font-black text-[var(--muted)] uppercase">
+                  <div className="text-[var(--primary)]">Sun</div>
+                  <div>Mon</div>
+                  <div>Tue</div>
+                  <div>Wed</div>
+                  <div>Thu</div>
+                  <div>Fri</div>
+                  <div className="text-[var(--primary)]">Sat</div>
+                </div>
 
-              <div className="grid grid-cols-7 gap-2">
-                {days.map((d) => {
-                  const isWeekend = ['Sat', 'Sun'].includes(d.dayOfWeek);
-                  const seg = d.segments[0] || {};
-                  const isSelected = d.date === activeDateIso;
+                <div className="grid grid-cols-7 gap-2">
+                  {days.map((d) => {
+                    const isWeekend = ['Sat', 'Sun'].includes(d.dayOfWeek);
+                    const seg = d.segments[0] || {};
+                    const isSelected = d.date === activeDateIso;
 
-                  return (
-                    <div
-                      key={d.date}
-                      onClick={() => setActiveDate(new Date(d.date))}
-                      className={`p-2 rounded-xl border text-left min-h-[80px] transition-all cursor-pointer flex flex-col justify-between ${
-                        isSelected
-                          ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/30 bg-[var(--panel)]'
-                          : isWeekend
-                          ? 'border-[var(--border)] bg-[var(--panel-subtle)]/40 hover:bg-[var(--glass-4)]'
-                          : 'border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--glass-4)]'
-                      }`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-bold text-[var(--text)]">{d.dayOfWeek} {d.date.split('-').slice(1).join('/')}</span>
-                        {d.isPublicHoliday && (
-                          <span className="w-2 h-2 rounded-full bg-[#ec4899]" title={d.holidayName || 'Public Holiday'}></span>
+                    return (
+                      <div
+                        key={d.date}
+                        onClick={() => setActiveDate(new Date(d.date))}
+                        className={`p-2 rounded-xl border text-left min-h-[80px] transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/30 bg-[var(--panel)]'
+                            : isWeekend
+                            ? 'border-[var(--border)] bg-[var(--panel-subtle)]/40 hover:bg-[var(--glass-4)]'
+                            : 'border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--glass-4)]'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <span className="text-xs font-bold text-[var(--text)]">{d.dayOfWeek} {d.date.split('-').slice(1).join('/')}</span>
+                          {d.isPublicHoliday && (
+                            <span className="w-2 h-2 rounded-full bg-[#ec4899]" title={d.holidayName || 'Public Holiday'}></span>
+                          )}
+                        </div>
+
+                        {seg.roster_in && seg.roster_out ? (
+                          <div className="bg-[var(--primary-light)] text-[var(--primary)] rounded text-[9px] px-1 py-0.5 truncate font-bold">
+                            {seg.roster_in} - {seg.roster_out}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-[var(--muted)] opacity-50">—</div>
                         )}
                       </div>
-
-                      {seg.roster_in && seg.roster_out ? (
-                        <div className="bg-[var(--primary-light)] text-[var(--primary)] rounded text-[9px] px-1 py-0.5 truncate font-bold">
-                          {seg.roster_in} - {seg.roster_out}
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-[var(--muted)] opacity-50">—</div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
@@ -955,18 +1066,18 @@ export default function Portal() {
         </div>
       )}
 
-      {/* TAB 3: ANNOUNCEMENTS & ROSTER NOTIFICATIONS */}
+      {/* TAB 3: TEAM CHAT & WORKPLACE FEED */}
       {activeTab === 'announcements' && (
         <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-6 shadow-sm space-y-6">
-          <div className="flex justify-between items-center border-b border-[var(--border)] pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border)] pb-4">
             <div>
-              <h3 className="text-lg font-black text-[var(--text)]">Announcements & Team Updates</h3>
-              <p className="text-xs text-[var(--muted)]">Automated roster publication notices and messages from management</p>
+              <h3 className="text-xl font-black text-[var(--text)]">Team Chat & Feed</h3>
+              <p className="text-xs text-[var(--muted)]">Communicate with colleagues, discuss shifts, and view roster alerts</p>
             </div>
             <button
               onClick={fetchAnnouncements}
               disabled={loadingAnnouncements}
-              className="px-3.5 py-2 bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--glass-4)] rounded-xl text-xs font-bold border border-[var(--border)] flex items-center gap-1.5 transition-colors"
+              className="px-3.5 py-2 bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--glass-4)] rounded-xl text-xs font-bold border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
             >
               <svg className={`w-3.5 h-3.5 ${loadingAnnouncements ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="23 4 23 10 17 10"></polyline>
@@ -977,67 +1088,111 @@ export default function Portal() {
             </button>
           </div>
 
+          {/* Quick Team Chat Composer */}
+          <div className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl p-4 shadow-inner">
+            <form onSubmit={handleSendChatMessage} className="space-y-3">
+              <textarea
+                rows={2}
+                value={chatContent}
+                onChange={e => setChatContent(e.target.value)}
+                placeholder="Write a message to your team (e.g. Can someone cover Friday morning?)..."
+                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)] resize-none"
+              />
+              <div className="flex justify-between items-center">
+                <span className="text-[11px] text-[var(--muted)] font-medium">Visible to all active team members</span>
+                <button
+                  type="submit"
+                  disabled={chatSubmitting || !chatContent.trim()}
+                  className="px-4 py-2 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-sm disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                  <span>{chatSubmitting ? 'Posting...' : 'Post Message'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
           {loadingAnnouncements ? (
             <div className="flex items-center justify-center py-12 text-[var(--muted)] font-bold text-xs gap-2">
               <div className="w-4 h-4 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
-              Loading announcements...
+              Loading conversation...
             </div>
           ) : announcements.length === 0 ? (
             <div className="text-center py-14 text-[var(--muted)]">
               <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-[var(--panel-subtle)] text-[var(--muted)] flex items-center justify-center">
                 <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                 </svg>
               </div>
-              <div className="font-bold text-sm text-[var(--text)]">No announcements yet</div>
-              <div className="text-xs mt-1">When new rosters are pushed or management posts updates, they will appear here.</div>
+              <div className="font-bold text-sm text-[var(--text)]">No messages yet</div>
+              <div className="text-xs mt-1">Start the conversation by posting a message above!</div>
             </div>
           ) : (
             <div className="space-y-4">
-              {announcements.map((item) => (
-                <div 
-                  key={item.id} 
-                  className={`p-5 rounded-2xl border transition-all ${
-                    item.is_system || item.announcement_type === 'roster_publish'
-                      ? 'bg-[var(--primary-light)]/40 border-[var(--primary)]/30'
-                      : 'bg-[var(--panel-subtle)] border-[var(--border)]'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
-                        item.is_system || item.announcement_type === 'roster_publish'
-                          ? 'bg-[var(--primary)] text-white'
-                          : 'bg-[var(--panel)] text-[var(--primary)] border border-[var(--primary)]/30'
-                      }`}>
-                        {item.is_system || item.announcement_type === 'roster_publish' ? 'Roster Release' : item.author_role}
-                      </span>
-                      <span className="font-bold text-xs text-[var(--text)]">
-                        {item.author_name}
-                      </span>
+              {announcements.map((item) => {
+                const isRosterAlert = item.is_system || item.announcement_type === 'roster_publish';
+                const canDelete = (isMgmt || item.author_id === currentUserId) && !isRosterAlert;
+
+                return (
+                  <div 
+                    key={item.id} 
+                    className={`p-5 rounded-2xl border transition-all ${
+                      isRosterAlert
+                        ? 'bg-[var(--primary-light)]/40 border-[var(--primary)]/30'
+                        : 'bg-[var(--panel-subtle)] border-[var(--border)]'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
+                          isRosterAlert
+                            ? 'bg-[var(--primary)] text-white'
+                            : item.author_role === 'Employee'
+                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-[var(--panel)] text-[var(--primary)] border border-[var(--primary)]/30'
+                        }`}>
+                          {isRosterAlert ? 'Roster Release' : item.author_role}
+                        </span>
+                        <span className="font-bold text-xs text-[var(--text)]">
+                          {item.author_name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[11px] text-[var(--muted)] font-medium">
+                          {new Date(item.created_at).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </span>
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDeleteChatMessage(item.id)}
+                            className="text-xs text-[var(--danger)] hover:underline font-semibold cursor-pointer"
+                            title="Delete message"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-[11px] text-[var(--muted)] font-medium">
-                      {new Date(item.created_at).toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </span>
+
+                    {item.title && (
+                      <h4 className="text-sm font-black text-[var(--text)] mb-1">
+                        {item.title}
+                      </h4>
+                    )}
+
+                    <p className="text-xs text-[var(--text)] whitespace-pre-wrap leading-relaxed">
+                      {item.content}
+                    </p>
                   </div>
-
-                  {item.title && (
-                    <h4 className="text-sm font-black text-[var(--text)] mb-1">
-                      {item.title}
-                    </h4>
-                  )}
-
-                  <p className="text-xs text-[var(--text)] whitespace-pre-wrap leading-relaxed">
-                    {item.content}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

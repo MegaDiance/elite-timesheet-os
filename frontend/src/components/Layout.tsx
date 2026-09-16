@@ -5,7 +5,6 @@ import {
   Clock, 
   Calendar, 
   Users, 
-  Bell, 
   Plane, 
   FileText, 
   ShieldCheck, 
@@ -18,7 +17,8 @@ import {
   Sliders, 
   KeyRound,
   User as UserIcon,
-  Layers
+  Layers,
+  MessageSquare
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { Badge } from './ui/Badge';
@@ -170,18 +170,11 @@ export default function Layout() {
               </span>
             </Link>
 
-            {/* Active Organisation Context Switcher */}
-            <button
-              onClick={() => setShowOrgSwitchModal(true)}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-[var(--panel-subtle)] hover:bg-[var(--hover-row)] border border-[var(--border)] text-xs text-[var(--text)] font-medium transition-colors cursor-pointer"
-              title="Click to switch active organization"
-            >
+            {/* Active Organisation Context Tag (Non-clickable) */}
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] font-medium">
               <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="max-w-[140px] truncate">{currentOrgName}</span>
-              {organisations.length > 1 && (
-                <ChevronDown className="w-3 h-3 text-[var(--muted)] shrink-0" />
-              )}
-            </button>
+              <span className="max-w-[160px] truncate text-[var(--text)] font-semibold">{currentOrgName}</span>
+            </div>
           </div>
 
           {/* Center: Role-Based Main Navigation Links */}
@@ -232,8 +225,8 @@ export default function Layout() {
                       : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
                   }`}
                 >
-                  <Bell className="w-3.5 h-3.5" />
-                  <span>Alerts</span>
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>Team Chat</span>
                 </Link>
 
                 {role !== 'Manager' && (
@@ -276,7 +269,7 @@ export default function Layout() {
                   }`}
                 >
                   <Calendar className="w-3.5 h-3.5" />
-                  <span>My Shifts</span>
+                  <span>Portal</span>
                 </Link>
 
                 <Link
@@ -287,8 +280,8 @@ export default function Layout() {
                       : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
                   }`}
                 >
-                  <Bell className="w-3.5 h-3.5" />
-                  <span>Announcements</span>
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>Team Chat</span>
                 </Link>
               </>
             )}

@@ -35,9 +35,9 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
 /**
  * POST /api/announcements
- * Allows managers/admins to post a team announcement.
+ * Allows all organisation members (including employees) to post a team message or announcement.
  */
-router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { title, content } = req.body;
@@ -46,8 +46,19 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
             return res.status(400).json({ success: false, error: { message: 'Announcement content is required.' } });
         }
 
-        const authorName = req.user?.email ? req.user.email.split('@')[0] : 'Management';
+        let authorName = req.user?.email ? req.user.email.split('@')[0] : 'Team Member';
+        try {
+            const emp = await query('SELECT full_name FROM employees WHERE user_id = $1 AND org_id = $2', [req.user?.id, orgId]);
+            if (emp.rows.length > 0 && emp.rows[0].full_name) {
+                authorName = emp.rows[0].full_name;
+            }
+        } catch {
+            // fallback
+        }
+
         const id = crypto.randomUUID();
+        const role = req.user?.role || 'Employee';
+        const isEmployee = role === 'Employee';
 
         await query(
             `INSERT INTO organisation_announcements (id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type)
@@ -57,11 +68,11 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
                 orgId,
                 req.user?.id,
                 authorName,
-                req.user?.role || 'Manager',
+                role,
                 title?.trim() || null,
                 content.trim(),
                 false,
-                'general'
+                isEmployee ? 'team_message' : 'general'
             ]
         );
 
@@ -72,7 +83,7 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
                 title: title?.trim() || null,
                 content: content.trim(),
                 author_name: authorName,
-                author_role: req.user?.role || 'Manager',
+                author_role: role,
                 created_at: new Date().toISOString()
             }
         });
@@ -84,14 +95,26 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
 
 /**
  * DELETE /api/announcements/:id
- * Allows managers/admins to delete an announcement.
+ * Allows managers/admins to delete any announcement, or employees to delete their own messages.
  */
-router.delete('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { id } = req.params;
+        const userRole = req.user?.role || 'Employee';
+        const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(userRole);
+
+        const existing = await query('SELECT author_id FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
+        }
+
+        if (!isMgmt && existing.rows[0].author_id !== req.user?.id) {
+            return res.status(403).json({ success: false, error: { message: 'You can only delete your own messages.' } });
+        }
 
         await query('DELETE FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
+
         res.json({ success: true, message: 'Announcement deleted.' });
     } catch (err: any) {
         console.error('[ANNOUNCEMENTS DELETE ERROR]', err);

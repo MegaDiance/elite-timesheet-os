@@ -63,6 +63,14 @@ export default function SmartTimeInput({ value, onChange, disabled, placeholder 
     onChange(parsed);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      const parsed = parseSmartTime(val);
+      setVal(parsed);
+      onChange(parsed);
+    }
+  };
+
   return (
     <input
       type="text"
@@ -71,6 +79,7 @@ export default function SmartTimeInput({ value, onChange, disabled, placeholder 
       value={val}
       onChange={e => setVal(e.target.value)}
       onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
       className={className}
     />
   );
