@@ -440,6 +440,13 @@ export default function Roster() {
     }
   };
 
+  const formatCompactShift = (start?: string, end?: string) => {
+    if (!start || !end) return '';
+    const s = start.replace(/^0/, '');
+    const e = end.replace(/^0/, '');
+    return `${s}-${e}`;
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden relative">
       {/* Toast Notification Popup */}
@@ -587,16 +594,21 @@ export default function Roster() {
                   </div>
                 </th>
               ))}
-              <th className="w-[80px] text-center text-[var(--muted)] text-xs font-bold">Roster</th>
-              <th className="w-[140px] text-center text-[var(--muted)] text-xs font-bold">Actual</th>
-              <th className="w-[80px] text-center text-[var(--muted)] text-xs font-bold">Variance</th>
+              <th className="w-[150px] text-center text-xs font-bold py-1.5 px-2">
+                <div className="flex flex-col items-center">
+                  <span className="text-[var(--primary)] text-[0.68rem] uppercase font-black tracking-wider">Roster</span>
+                  <div className="w-full border-t border-[var(--border)] my-1" />
+                  <span className="text-[var(--success)] text-[0.68rem] uppercase font-black tracking-wider">Timesheet</span>
+                </div>
+              </th>
+              <th className="w-[85px] text-center text-[var(--muted)] text-xs font-bold py-2">Variance</th>
             </tr>
           </thead>
           <tbody>
             {departments.map(dept => (
               <React.Fragment key={dept}>
                 <tr>
-                  <td colSpan={18} className="bg-[var(--panel-subtle)] text-[var(--primary)] font-bold text-xs px-4 py-2 uppercase tracking-widest sticky left-0 z-10 border-t border-[var(--border)]">
+                  <td colSpan={17} className="bg-[var(--panel-subtle)] text-[var(--primary)] font-bold text-xs px-4 py-2 uppercase tracking-widest sticky left-0 z-10 border-t border-[var(--border)]">
                     {dept}
                   </td>
                 </tr>
@@ -668,54 +680,122 @@ export default function Roster() {
                         const iso = fmtISO(d);
                         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                         const rec = records.find(r => r.employee_id === emp.id && r.record_date === iso);
-                        let cellContent = <span className="text-[var(--muted)] opacity-40">+</span>;
                         
-                        if (rec && rec.segments?.length > 0) {
-                          // Sort segments chronologically by start time
-                          const sortedSegs = [...rec.segments].sort((a, b) => {
-                            const tA = (a.roster_in || a.actual_in || '00:00');
-                            const tB = (b.roster_in || b.actual_in || '00:00');
-                            return tA.localeCompare(tB);
-                          });
+                        // Extract roster segments (scheduled shifts)
+                        const rosterSegs = (rec?.segments || []).filter(s => 
+                          !s.is_unplanned && (
+                            (s.roster_in && s.roster_out) || 
+                            Number(s.roster_hours) > 0 || 
+                            (s.segment_type && s.segment_type !== 'WORK')
+                          )
+                        ).sort((a, b) => (a.roster_in || '00:00').localeCompare(b.roster_in || '00:00'));
+                        
+                        // Extract timesheet segments (logged actuals)
+                        const actualSegs = rec?.has_actuals 
+                          ? (rec?.segments || []).filter(s => 
+                              (s.actual_in && s.actual_out) || 
+                              Number(s.actual_hours) > 0 || 
+                              s.is_unplanned ||
+                              (s.actual_segment_type && s.actual_segment_type !== 'WORK')
+                            ).sort((a, b) => (a.actual_in || '00:00').localeCompare(b.actual_in || '00:00'))
+                          : [];
 
-                          cellContent = <div className="flex flex-col gap-1">
-                            {sortedSegs.map((s, idx) => {
-                              const segType = rec.has_actuals ? (s.actual_segment_type || s.segment_type) : s.segment_type;
-                              const colorStyle = getSegmentBadgeColor(segType, rec.has_actuals, s.is_unplanned, isWeekend);
-
-                              return (
-                                <div key={idx} title={s.notes ? `Note: ${s.notes}` : undefined} className={`text-[0.65rem] font-bold px-1 py-0.5 rounded border relative ${colorStyle}`}>
-                                  {rec.has_actuals && s.actual_in && s.actual_out ? `${s.actual_in} - ${s.actual_out}` : (s.roster_in && s.roster_out ? `${s.roster_in} - ${s.roster_out}` : segType)}
-                                  {s.notes && (
-                                    <svg className="w-2.5 h-2.5 inline-block ml-1 opacity-70" viewBox="0 0 24 24" fill="currentColor">
-                                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                                    </svg>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>;
-                        }
                         return (
-                          <td onClick={() => handleCellClick(emp.id, emp.full_name, iso)} key={i} className={`text-center align-middle cursor-pointer hover:bg-[var(--glass-4)] ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}>
-                            {cellContent}
+                          <td 
+                            onClick={() => handleCellClick(emp.id, emp.full_name, iso)} 
+                            key={i} 
+                            title="Click to view & edit day shift / timesheet"
+                            className={`text-center align-middle cursor-pointer p-1 hover:bg-[var(--glass-4)] transition-colors ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}
+                          >
+                            <div className="flex flex-col h-full min-h-[52px] justify-between">
+                              {/* Roster Section (Top) */}
+                              <div className="flex flex-col items-center justify-center min-h-[22px] w-full gap-0.5">
+                                {rosterSegs.length > 0 ? (
+                                  rosterSegs.map((s, idx) => {
+                                    const colorStyle = getSegmentBadgeColor(s.segment_type, false, false, isWeekend);
+                                    const timeDisplay = (s.roster_in && s.roster_out) 
+                                      ? formatCompactShift(s.roster_in, s.roster_out)
+                                      : (s.segment_type !== 'WORK' ? `${s.segment_type}${s.roster_hours ? ` (${s.roster_hours}h)` : ''}` : `${s.roster_hours || 0}h`);
+                                    return (
+                                      <div 
+                                        key={idx} 
+                                        title={s.notes ? `Roster Note: ${s.notes}` : `Roster: ${s.segment_type} (${s.roster_in || ''}-${s.roster_out || ''})`} 
+                                        className={`text-[0.6rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate text-center tracking-tight ${colorStyle}`}
+                                      >
+                                        {timeDisplay}
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <span className="text-[var(--muted)] text-[0.62rem] opacity-35">—</span>
+                                )}
+                              </div>
+
+                              {/* Dividing Line */}
+                              <div className="w-full border-t border-[var(--border)] my-0.5 opacity-60" />
+
+                              {/* Timesheet Section (Bottom) */}
+                              <div className="flex flex-col items-center justify-center min-h-[22px] w-full gap-0.5">
+                                {actualSegs.length > 0 ? (
+                                  actualSegs.map((s, idx) => {
+                                    const segType = s.actual_segment_type || s.segment_type;
+                                    const colorStyle = getSegmentBadgeColor(segType, true, s.is_unplanned, isWeekend);
+                                    const timeDisplay = (s.actual_in && s.actual_out) 
+                                      ? formatCompactShift(s.actual_in, s.actual_out)
+                                      : (segType !== 'WORK' ? `${segType}${s.actual_hours ? ` (${s.actual_hours}h)` : ''}` : `${s.actual_hours || 0}h`);
+                                    return (
+                                      <div 
+                                        key={idx} 
+                                        title={s.notes ? `Actual Note: ${s.notes}` : `Actual: ${segType}${s.is_unplanned ? ' (Unplanned)' : ''} (${s.actual_in || ''}-${s.actual_out || ''})`} 
+                                        className={`text-[0.6rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate flex items-center justify-center gap-0.5 tracking-tight ${colorStyle}`}
+                                      >
+                                        {s.is_unplanned && <span className="text-[0.55rem] font-black text-[#ef4444] bg-[#ef4444]/20 px-0.5 rounded mr-0.5 shrink-0">U</span>}
+                                        <span className="truncate">{timeDisplay}</span>
+                                        {s.notes && (
+                                          <svg className="w-2 h-2 inline-block ml-0.5 opacity-70 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                                          </svg>
+                                        )}
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <span className="text-[var(--muted)] text-[0.62rem] opacity-35">—</span>
+                                )}
+                              </div>
+                            </div>
                           </td>
                         );
                       })}
-                      <td className="text-center text-[var(--muted)] font-bold text-xs bg-[var(--panel)]">{totalRoster.toFixed(2)}h</td>
-                      <td className="text-center text-[var(--success)] font-bold text-xs bg-[var(--panel)] p-2">
-                        <div>{totalTimesheet.toFixed(2)}h</div>
-                        {/* Actual Hours Breakdown */}
-                        <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold">
-                          {breakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {breakdown.Weekdays.toFixed(2)}h</span>}
-                          {breakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {breakdown.Weekends.toFixed(2)}h</span>}
-                          {breakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {breakdown.TIL.toFixed(2)}h</span>}
-                          {breakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {breakdown.Sick.toFixed(2)}h</span>}
-                          {breakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {breakdown.Annual.toFixed(2)}h</span>}
-                          {breakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {breakdown.Unplanned.toFixed(2)}h</span>}
+                      {/* Merged Roster / Timesheet Summary Column */}
+                      <td className="text-center bg-[var(--panel)] p-2 align-middle">
+                        <div className="flex flex-col h-full min-h-[52px] justify-between">
+                          {/* Roster Total (Top) */}
+                          <div className="flex items-center justify-center min-h-[22px]">
+                            <span className="text-[var(--primary)] font-bold text-xs">{totalRoster.toFixed(2)}h</span>
+                          </div>
+
+                          {/* Dividing Line */}
+                          <div className="w-full border-t border-[var(--border)] my-1 opacity-60" />
+
+                          {/* Timesheet Total & Category Breakdown (Bottom) */}
+                          <div className="flex flex-col items-center justify-center min-h-[22px]">
+                            <span className="text-[var(--success)] font-bold text-xs">{totalTimesheet.toFixed(2)}h</span>
+                            {(breakdown.Weekdays > 0 || breakdown.Weekends > 0 || breakdown.TIL > 0 || breakdown.Sick > 0 || breakdown.Annual > 0 || breakdown.Unplanned > 0) && (
+                              <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold w-full">
+                                {breakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {breakdown.Weekdays.toFixed(2)}h</span>}
+                                {breakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {breakdown.Weekends.toFixed(2)}h</span>}
+                                {breakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {breakdown.TIL.toFixed(2)}h</span>}
+                                {breakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {breakdown.Sick.toFixed(2)}h</span>}
+                                {breakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {breakdown.Annual.toFixed(2)}h</span>}
+                                {breakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {breakdown.Unplanned.toFixed(2)}h</span>}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td className={`text-center font-bold text-xs bg-[var(--panel)] ${totalTimesheet - totalRoster > 0 ? 'text-[var(--success)]' : totalTimesheet - totalRoster < 0 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
+                      {/* Variance Column */}
+                      <td className={`text-center font-bold text-xs bg-[var(--panel)] align-middle ${totalTimesheet - totalRoster > 0 ? 'text-[var(--success)]' : totalTimesheet - totalRoster < 0 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
                         {(totalTimesheet - totalRoster) > 0 ? `+${(totalTimesheet - totalRoster).toFixed(2)}h` : `${(totalTimesheet - totalRoster).toFixed(2)}h`}
                       </td>
                     </tr>
