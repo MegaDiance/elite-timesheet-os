@@ -86,7 +86,7 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
         for (const i of targetDays) {
             const dateIso = fmtISO(addDays(fortnightStart, i));
             const dayTemplates = templates.rows.filter((t: any) => t.day_index === i && t.roster_in && t.roster_out);
-            const isWeekday = (i % 7 < 5);
+            const isWeekday = (i % 7 >= 1 && i % 7 <= 5);
             const shiftsToApply = dayTemplates.length > 0
                 ? dayTemplates
                 : (!hasTemplates ? [{ segment_type: 'WORK', roster_in: '09:00', roster_out: '17:00', roster_hours: calcHours('09:00', '17:00', { breakMins: isWeekday ? Number(orgSettings.break_mins_weekday) : Number(orgSettings.break_mins_weekend), breakThresholdHours: Number(orgSettings.break_threshold_hours) }) }] : []);

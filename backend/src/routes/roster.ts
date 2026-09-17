@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { autoRosterAll, autoLogAll } from '../services/rosterService';
 import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { query } from '../services/db';
 
 const router = Router();
 router.use(requireAuth, requireTenantContext);
@@ -11,6 +12,12 @@ router.post('/auto-roster', requireRole(['Admin', 'Company Admin', 'Platform Adm
         if (!orgId) return res.status(400).json({ error: 'Missing orgId' });
         const { start_date, selected_days } = req.body;
         if (!start_date) return res.status(400).json({ success: false, error: { message: 'start_date required' }});
+
+        // Block if roster is locked for this fortnight
+        const lockRes = await query('SELECT roster_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
+        if (lockRes.rows[0]?.roster_locked) {
+            return res.status(423).json({ success: false, error: { code: 'ROSTER_LOCKED', message: 'The roster for this fortnight is locked and cannot be modified.' } });
+        }
 
         const [year, month, day] = start_date.split('-');
         const dt = new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0);
@@ -30,6 +37,12 @@ router.post('/auto-log', requireAuth, requireRole(['Admin', 'Company Admin', 'Pl
         const { start_date, selected_days } = req.body;
         if (!start_date) return res.status(400).json({ success: false, error: { message: 'start_date required' }});
 
+        // Block if timesheet is locked for this fortnight
+        const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
+        if (lockRes.rows[0]?.timesheet_locked) {
+            return res.status(423).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'The timesheet for this fortnight is locked and cannot be modified.' } });
+        }
+
         const [year, month, day] = start_date.split('-');
         const dt = new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0);
 
@@ -42,3 +55,4 @@ router.post('/auto-log', requireAuth, requireRole(['Admin', 'Company Admin', 'Pl
 });
 
 export default router;
+

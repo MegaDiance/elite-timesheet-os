@@ -171,16 +171,31 @@ export default function Layout() {
               </span>
             </Link>
 
-            {/* Active Organisation Context Tag (Non-clickable) */}
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] font-medium">
-              <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="max-w-[160px] truncate text-[var(--text)] font-semibold">{currentOrgName}</span>
-            </div>
+            {/* Active Organisation Context Tag (Non-clickable) — hidden for Platform Admins */}
+            {!isPlatformAdmin && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] font-medium">
+                <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span className="max-w-[160px] truncate text-[var(--text)] font-semibold">{currentOrgName}</span>
+              </div>
+            )}
           </div>
 
           {/* Center: Role-Based Main Navigation Links */}
           <nav className="hidden md:flex items-center gap-1">
-            {isManagerOrAdmin ? (
+            {isPlatformAdmin ? (
+              /* Platform Admin: only show the Platform admin tab */
+              <Link
+                to="/platform"
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                  isActive('/platform')
+                    ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                    : 'text-indigo-400 hover:bg-indigo-500/10'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Platform Admin</span>
+              </Link>
+            ) : isManagerOrAdmin ? (
               <>
                 <Link
                   to="/roster"
@@ -243,23 +258,10 @@ export default function Layout() {
                     <span>Audit</span>
                   </Link>
                 )}
-
-                {isPlatformAdmin && (
-                  <Link
-                    to="/platform"
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                      isActive('/platform')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-indigo-400 hover:bg-indigo-500/10'
-                    }`}
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Platform</span>
-                  </Link>
-                )}
               </>
             ) : null}
           </nav>
+
 
           {/* Right: User Profile Menu */}
           <div className="relative" ref={profileMenuRef}>
@@ -305,8 +307,8 @@ export default function Layout() {
                   </button>
                 </div>
 
-                {/* Manager / Admin Operational Settings */}
-                {isManagerOrAdmin && (
+                {/* Manager / Admin Operational Settings — not shown to Platform Admins */}
+                {isManagerOrAdmin && !isPlatformAdmin && (
                   <div className="py-1">
                     <div className="px-4 py-1 text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider">
                       Workplace Controls
@@ -328,8 +330,9 @@ export default function Layout() {
                   </div>
                 )}
 
-                {/* Switch Organisation */}
-                {organisations.length > 1 && (
+                {/* Switch Organisation — not shown to Platform Admins unless in an org */}
+                {organisations.length > 1 && !isPlatformAdmin && (
+
                   <div className="py-1">
                     <button
                       onClick={() => { setShowOrgSwitchModal(true); setShowProfileMenu(false); }}
