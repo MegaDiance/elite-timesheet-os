@@ -448,7 +448,7 @@ export default function Roster() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden relative">
+    <div className="flex flex-col h-[calc(100vh-82px)] sm:h-[calc(100vh-86px)] overflow-hidden relative w-full">
       {/* Toast Notification Popup */}
       {toastMessage && (
         <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
@@ -594,14 +594,14 @@ export default function Roster() {
                   </div>
                 </th>
               ))}
-              <th className="w-[160px] text-center text-xs font-bold py-1.5 px-2">
+              <th className="w-[140px] text-center text-xs font-bold py-1.5 px-2">
                 <div className="flex flex-col items-center">
                   <span className="text-[var(--primary)] text-[0.68rem] uppercase font-black tracking-wider">Roster</span>
                   <div className="w-full border-t-2 border-[var(--divider-split)] my-1.5 shadow-xs" />
                   <span className="text-[var(--success)] text-[0.68rem] uppercase font-black tracking-wider">Timesheet</span>
                 </div>
               </th>
-              <th className="w-[85px] text-center text-[var(--muted)] text-xs font-bold py-2">Variance</th>
+              <th className="w-[68px] text-center text-[var(--muted)] text-xs font-bold py-2">Variance</th>
             </tr>
           </thead>
           <tbody>
@@ -729,7 +729,7 @@ export default function Roster() {
                             onClick={() => handleCellClick(emp.id, emp.full_name, iso)} 
                             key={i} 
                             title="Click to view & edit day shift / timesheet"
-                            className={`text-center align-middle cursor-pointer p-1 hover:bg-[var(--glass-4)] transition-colors ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}
+                            className={`text-center align-middle cursor-pointer p-0.5 hover:bg-[var(--glass-4)] transition-colors ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}
                           >
                             <div className="flex flex-col h-full min-h-[52px] justify-between">
                               {/* Roster Section (Top) */}
@@ -744,7 +744,7 @@ export default function Roster() {
                                       <div 
                                         key={idx} 
                                         title={s.notes ? `Roster Note: ${s.notes}` : `Roster: ${s.segment_type} (${s.roster_in || ''}-${s.roster_out || ''})`} 
-                                        className={`text-[0.6rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate text-center tracking-tight ${colorStyle}`}
+                                        className={`text-[0.62rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate text-center tracking-tighter ${colorStyle}`}
                                       >
                                         {timeDisplay}
                                       </div>
@@ -771,7 +771,7 @@ export default function Roster() {
                                       <div 
                                         key={idx} 
                                         title={s.notes ? `Actual Note: ${s.notes}` : `Actual: ${segType}${s.is_unplanned ? ' (Unplanned)' : ''} (${s.actual_in || ''}-${s.actual_out || ''})`} 
-                                        className={`text-[0.6rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate flex items-center justify-center gap-0.5 tracking-tight ${colorStyle}`}
+                                        className={`text-[0.62rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate flex items-center justify-center gap-0.5 tracking-tighter ${colorStyle}`}
                                       >
                                         {s.is_unplanned && <span className="text-[0.55rem] font-black text-[#ef4444] bg-[#ef4444]/20 px-0.5 rounded mr-0.5 shrink-0">U</span>}
                                         <span className="truncate">{timeDisplay}</span>

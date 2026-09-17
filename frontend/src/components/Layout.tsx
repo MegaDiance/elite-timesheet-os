@@ -148,6 +148,7 @@ export default function Layout() {
   const role = user?.role || 'Employee';
   const isManagerOrAdmin = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
   const isPlatformAdmin = role === 'Platform Admin';
+  const isFluid = location.pathname === '/roster' || location.pathname === '/' || location.pathname === '/portal';
 
   const isActive = (path: string) => {
     if (path === '/roster' && (location.pathname === '/' || location.pathname === '/roster')) return true;
@@ -158,7 +159,7 @@ export default function Layout() {
     <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-15 flex items-center justify-between">
+        <div className={`w-full mx-auto px-4 sm:px-6 lg:px-8 h-15 flex items-center justify-between ${isFluid ? 'max-w-none' : 'max-w-7xl'}`}>
           {/* Left: Brand + Organisation Context */}
           <div className="flex items-center gap-6">
             <Link to={role === 'Employee' ? '/portal' : '/roster'} className="flex items-center gap-2 group">
@@ -368,7 +369,7 @@ export default function Layout() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className={`flex-1 w-full mx-auto ${isFluid ? 'max-w-none px-2 sm:px-3 lg:px-4 py-2 sm:py-2.5' : 'max-w-7xl px-4 sm:px-6 lg:px-8 py-6'}`}>
         <Outlet />
       </main>
 
