@@ -35,6 +35,11 @@ describe('Auth Routes', () => {
 
         const Pool = db.adapters.createPg().Pool;
         setPool(new Pool());
+        clearAllRateLimits();
+    });
+
+    beforeEach(() => {
+        clearAllRateLimits();
     });
 
     afterAll(() => {

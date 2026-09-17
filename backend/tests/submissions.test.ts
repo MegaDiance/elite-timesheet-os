@@ -169,32 +169,8 @@ describe('Timesheet Submissions and Approvals Workflow Tests', () => {
         companyAdminToken = generateToken({ id: adminUserId, email: 'admin@approval.com', organisation_id: orgId, role: 'Company Admin' });
         employeeToken = generateToken({ id: empUserId, email: 'emp@approval.com', organisation_id: orgId, role: 'Employee' });
 
-        const pool = {
-            query: (text: string, params: any[]) => {
-                let p = params || [];
-                let sql = text;
-                p.forEach((val, idx) => {
-                    const ph = new RegExp('\\$' + (idx + 1), 'g');
-                    sql = sql.replace(ph, typeof val === 'string' ? `'${val}'` : (val === null ? 'NULL' : val));
-                });
-                try {
-                    const rows = db.public.many(sql);
-                    return Promise.resolve({ rows });
-                } catch (e: any) {
-                    if (e.message?.includes('no result') || e.message?.includes('not found')) {
-                        return Promise.resolve({ rows: [] });
-                    }
-                    try {
-                        db.public.none(sql);
-                        return Promise.resolve({ rows: [] });
-                    } catch (e2: any) {
-                        return Promise.reject(e2);
-                    }
-                }
-            }
-        };
-
-        setPool(pool as any);
+        const PgPool = db.adapters.createPg().Pool;
+        setPool(new PgPool());
     });
 
     test('Employee can submit timesheet for active fortnight', async () => {

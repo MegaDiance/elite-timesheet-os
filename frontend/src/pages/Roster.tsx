@@ -594,10 +594,10 @@ export default function Roster() {
                   </div>
                 </th>
               ))}
-              <th className="w-[150px] text-center text-xs font-bold py-1.5 px-2">
+              <th className="w-[160px] text-center text-xs font-bold py-1.5 px-2">
                 <div className="flex flex-col items-center">
                   <span className="text-[var(--primary)] text-[0.68rem] uppercase font-black tracking-wider">Roster</span>
-                  <div className="w-full border-t border-[var(--border)] my-1" />
+                  <div className="w-full border-t-2 border-[var(--divider-split)] my-1.5 shadow-xs" />
                   <span className="text-[var(--success)] text-[0.68rem] uppercase font-black tracking-wider">Timesheet</span>
                 </div>
               </th>
@@ -615,7 +615,14 @@ export default function Roster() {
                 {employees.filter(e => e.department === dept).map(emp => {
                   let totalRoster = 0;
                   let totalTimesheet = 0;
-                  const breakdown: { [key: string]: number } = {
+                  const rosterBreakdown: { [key: string]: number } = {
+                    Weekdays: 0,
+                    Weekends: 0,
+                    TIL: 0,
+                    Sick: 0,
+                    Annual: 0
+                  };
+                  const timesheetBreakdown: { [key: string]: number } = {
                     Weekdays: 0,
                     Weekends: 0,
                     TIL: 0,
@@ -630,29 +637,46 @@ export default function Roster() {
                     const rec = records.find(r => r.employee_id === emp.id && r.record_date === iso);
                     if (rec && rec.segments?.length > 0) {
                       rec.segments.forEach(s => {
-                        totalRoster += Number(s.roster_hours || 0);
-                        const actHrs = Number(s.actual_hours || 0);
-                        if (actHrs > 0 || rec.has_actuals) {
-                          totalTimesheet += actHrs;
-                        }
-                        
-                        const effectiveHours = rec.has_actuals ? actHrs : Number(s.roster_hours || 0);
-                        const segType = rec.has_actuals ? (s.actual_segment_type || s.segment_type) : s.segment_type;
-
-                        if (s.is_unplanned) {
-                          breakdown.Unplanned += effectiveHours;
-                        } else if (segType === 'WORK' || segType === 'Normal') {
-                          if (isWeekend) {
-                            breakdown.Weekends += effectiveHours;
-                          } else {
-                            breakdown.Weekdays += effectiveHours;
+                        // 1. Roster hours & breakdown
+                        const rostHrs = Number(s.roster_hours || 0);
+                        totalRoster += rostHrs;
+                        if (rostHrs > 0 && !s.is_unplanned) {
+                          const rType = s.segment_type || 'WORK';
+                          if (rType === 'WORK' || rType === 'Normal') {
+                            if (isWeekend) {
+                              rosterBreakdown.Weekends += rostHrs;
+                            } else {
+                              rosterBreakdown.Weekdays += rostHrs;
+                            }
+                          } else if (rType === 'TIL') {
+                            rosterBreakdown.TIL += rostHrs;
+                          } else if (rType === 'Sick') {
+                            rosterBreakdown.Sick += rostHrs;
+                          } else if (rType === 'Annual') {
+                            rosterBreakdown.Annual += rostHrs;
                           }
-                        } else if (segType === 'TIL') {
-                          breakdown.TIL += effectiveHours;
-                        } else if (segType === 'Sick') {
-                          breakdown.Sick += effectiveHours;
-                        } else if (segType === 'Annual') {
-                          breakdown.Annual += effectiveHours;
+                        }
+
+                        // 2. Timesheet actual hours & breakdown
+                        const actHrs = Number(s.actual_hours || 0);
+                        if (rec.has_actuals && (actHrs > 0 || (s.actual_in && s.actual_out) || s.actual_segment_type)) {
+                          totalTimesheet += actHrs;
+                          const aType = s.actual_segment_type || s.segment_type || 'WORK';
+                          if (s.is_unplanned) {
+                            timesheetBreakdown.Unplanned += actHrs;
+                          } else if (aType === 'WORK' || aType === 'Normal') {
+                            if (isWeekend) {
+                              timesheetBreakdown.Weekends += actHrs;
+                            } else {
+                              timesheetBreakdown.Weekdays += actHrs;
+                            }
+                          } else if (aType === 'TIL') {
+                            timesheetBreakdown.TIL += actHrs;
+                          } else if (aType === 'Sick') {
+                            timesheetBreakdown.Sick += actHrs;
+                          } else if (aType === 'Annual') {
+                            timesheetBreakdown.Annual += actHrs;
+                          }
                         }
                       });
                     }
@@ -731,8 +755,8 @@ export default function Roster() {
                                 )}
                               </div>
 
-                              {/* Dividing Line */}
-                              <div className="w-full border-t border-[var(--border)] my-0.5 opacity-60" />
+                              {/* Dividing Line (Defined) */}
+                              <div className="w-full border-t-2 border-[var(--divider-split)] my-1 shadow-xs" />
 
                               {/* Timesheet Section (Bottom) */}
                               <div className="flex flex-col items-center justify-center min-h-[22px] w-full gap-0.5">
@@ -770,25 +794,34 @@ export default function Roster() {
                       {/* Merged Roster / Timesheet Summary Column */}
                       <td className="text-center bg-[var(--panel)] p-2 align-middle">
                         <div className="flex flex-col h-full min-h-[52px] justify-between">
-                          {/* Roster Total (Top) */}
-                          <div className="flex items-center justify-center min-h-[22px]">
+                          {/* Roster Total & Breakdown (Top) */}
+                          <div className="flex flex-col items-center justify-center min-h-[22px]">
                             <span className="text-[var(--primary)] font-bold text-xs">{totalRoster.toFixed(2)}h</span>
+                            {(rosterBreakdown.Weekdays > 0 || rosterBreakdown.Weekends > 0 || rosterBreakdown.TIL > 0 || rosterBreakdown.Sick > 0 || rosterBreakdown.Annual > 0) && (
+                              <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold w-full">
+                                {rosterBreakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {rosterBreakdown.Weekdays.toFixed(2)}h</span>}
+                                {rosterBreakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {rosterBreakdown.Weekends.toFixed(2)}h</span>}
+                                {rosterBreakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {rosterBreakdown.TIL.toFixed(2)}h</span>}
+                                {rosterBreakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {rosterBreakdown.Sick.toFixed(2)}h</span>}
+                                {rosterBreakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {rosterBreakdown.Annual.toFixed(2)}h</span>}
+                              </div>
+                            )}
                           </div>
 
-                          {/* Dividing Line */}
-                          <div className="w-full border-t border-[var(--border)] my-1 opacity-60" />
+                          {/* Dividing Line (Defined) */}
+                          <div className="w-full border-t-2 border-[var(--divider-split)] my-2 shadow-xs" />
 
                           {/* Timesheet Total & Category Breakdown (Bottom) */}
                           <div className="flex flex-col items-center justify-center min-h-[22px]">
                             <span className="text-[var(--success)] font-bold text-xs">{totalTimesheet.toFixed(2)}h</span>
-                            {(breakdown.Weekdays > 0 || breakdown.Weekends > 0 || breakdown.TIL > 0 || breakdown.Sick > 0 || breakdown.Annual > 0 || breakdown.Unplanned > 0) && (
+                            {(timesheetBreakdown.Weekdays > 0 || timesheetBreakdown.Weekends > 0 || timesheetBreakdown.TIL > 0 || timesheetBreakdown.Sick > 0 || timesheetBreakdown.Annual > 0 || timesheetBreakdown.Unplanned > 0) && (
                               <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold w-full">
-                                {breakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {breakdown.Weekdays.toFixed(2)}h</span>}
-                                {breakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {breakdown.Weekends.toFixed(2)}h</span>}
-                                {breakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {breakdown.TIL.toFixed(2)}h</span>}
-                                {breakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {breakdown.Sick.toFixed(2)}h</span>}
-                                {breakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {breakdown.Annual.toFixed(2)}h</span>}
-                                {breakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {breakdown.Unplanned.toFixed(2)}h</span>}
+                                {timesheetBreakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {timesheetBreakdown.Weekdays.toFixed(2)}h</span>}
+                                {timesheetBreakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {timesheetBreakdown.Weekends.toFixed(2)}h</span>}
+                                {timesheetBreakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {timesheetBreakdown.TIL.toFixed(2)}h</span>}
+                                {timesheetBreakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {timesheetBreakdown.Sick.toFixed(2)}h</span>}
+                                {timesheetBreakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {timesheetBreakdown.Annual.toFixed(2)}h</span>}
+                                {timesheetBreakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {timesheetBreakdown.Unplanned.toFixed(2)}h</span>}
                               </div>
                             )}
                           </div>
