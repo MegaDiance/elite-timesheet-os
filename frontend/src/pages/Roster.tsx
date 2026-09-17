@@ -702,21 +702,21 @@ export default function Roster() {
                           </td>
                         );
                       })}
-                      <td className="text-center text-[var(--muted)] font-bold text-xs bg-[var(--panel)]">{totalRoster.toFixed(4)}h</td>
+                      <td className="text-center text-[var(--muted)] font-bold text-xs bg-[var(--panel)]">{totalRoster.toFixed(2)}h</td>
                       <td className="text-center text-[var(--success)] font-bold text-xs bg-[var(--panel)] p-2">
-                        <div>{totalTimesheet.toFixed(4)}h</div>
+                        <div>{totalTimesheet.toFixed(2)}h</div>
                         {/* Actual Hours Breakdown */}
                         <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold">
-                          {breakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {breakdown.Weekdays.toFixed(4)}h</span>}
-                          {breakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {breakdown.Weekends.toFixed(4)}h</span>}
-                          {breakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {breakdown.TIL.toFixed(4)}h</span>}
-                          {breakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {breakdown.Sick.toFixed(4)}h</span>}
-                          {breakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {breakdown.Annual.toFixed(4)}h</span>}
-                          {breakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {breakdown.Unplanned.toFixed(4)}h</span>}
+                          {breakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {breakdown.Weekdays.toFixed(2)}h</span>}
+                          {breakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {breakdown.Weekends.toFixed(2)}h</span>}
+                          {breakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {breakdown.TIL.toFixed(2)}h</span>}
+                          {breakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {breakdown.Sick.toFixed(2)}h</span>}
+                          {breakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {breakdown.Annual.toFixed(2)}h</span>}
+                          {breakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {breakdown.Unplanned.toFixed(2)}h</span>}
                         </div>
                       </td>
                       <td className={`text-center font-bold text-xs bg-[var(--panel)] ${totalTimesheet - totalRoster > 0 ? 'text-[var(--success)]' : totalTimesheet - totalRoster < 0 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
-                        {(totalTimesheet - totalRoster) > 0 ? `+${(totalTimesheet - totalRoster).toFixed(4)}h` : `${(totalTimesheet - totalRoster).toFixed(4)}h`}
+                        {(totalTimesheet - totalRoster) > 0 ? `+${(totalTimesheet - totalRoster).toFixed(2)}h` : `${(totalTimesheet - totalRoster).toFixed(2)}h`}
                       </td>
                     </tr>
                   );

@@ -157,32 +157,8 @@ describe('Calculations Accuracy, Team Chat & Multi-Tenant Safety Integration Tes
             VALUES ('${crypto.randomUUID()}', '${orgAId}', '2026-04-25', 'ANZAC Day');
         `);
 
-        const pool = {
-            query: (text: string, params: any[]) => {
-                let p = params || [];
-                let sql = text;
-                p.forEach((val, idx) => {
-                    const ph = new RegExp('\\$' + (idx + 1), 'g');
-                    sql = sql.replace(ph, typeof val === 'string' ? `'${val}'` : (val === null ? 'NULL' : val));
-                });
-                try {
-                    const rows = db.public.many(sql);
-                    return Promise.resolve({ rows, rowCount: rows.length });
-                } catch (e: any) {
-                    if (e.message?.includes('no result') || e.message?.includes('not found')) {
-                        return Promise.resolve({ rows: [], rowCount: 0 });
-                    }
-                    try {
-                        db.public.none(sql);
-                        return Promise.resolve({ rows: [], rowCount: 1 });
-                    } catch (e2: any) {
-                        return Promise.reject(e2);
-                    }
-                }
-            }
-        };
-
-        setPool(pool as any);
+        const PgPool = db.adapters.createPg().Pool;
+        setPool(new PgPool());
 
         empAToken = generateToken({ id: empAUserId, email: 'dennis@alpha.com', organisation_id: orgAId, role: 'Employee' });
         empBToken = generateToken({ id: empBUserId, email: 'sarah@beta.com', organisation_id: orgBId, role: 'Employee' });
@@ -230,7 +206,7 @@ describe('Calculations Accuracy, Team Chat & Multi-Tenant Safety Integration Tes
                 .set('Authorization', `Bearer ${mgrAToken}`)
                 .send({ content: 'Official roster published' });
 
-            const mgrMsgId = mgrPost.body.data.id;
+            const mgrMsgId = mgrPost.body?.data?.id;
 
             const delRes = await request(app)
                 .delete(`/api/announcements/${mgrMsgId}`)
