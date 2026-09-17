@@ -14,7 +14,7 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use((response) => response, (error) => {
     if (error.response?.status === 401) {
-        const publicPrefixes = ['/login', '/features', '/pricing', '/portal-access', '/find-organisation', '/reset-password', '/setup-org', '/accept-invite'];
+        const publicPrefixes = ['/login', '/features', '/pricing', '/portal-access', '/find-organisation', '/reset-password', '/setup-org', '/accept-invite', '/platform-gate', '/platform-login'];
         const isPublicRoute = window.location.pathname === '/' || publicPrefixes.some(p => window.location.pathname.startsWith(p));
         
         if (!isPublicRoute) {

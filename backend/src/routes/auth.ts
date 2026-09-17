@@ -314,6 +314,126 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
 });
 
 /**
+ * POST /api/auth/platform-login
+ * Secret endpoint for Platform Superadministrators.
+ * Rejects any non-Platform Admin credentials with 403 Forbidden.
+ */
+router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ success: false, error: { message: 'Email and password required' } });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    try {
+        const result = await query('SELECT * FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+        const user = result.rows[0];
+
+        if (!user || !user.is_active || !user.password_hash) {
+            recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            return res.status(401).json({ success: false, error: { message: 'Invalid administrative credentials' } });
+        }
+
+        const valid = await comparePassword(password, user.password_hash);
+        if (!valid) {
+            recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            return res.status(401).json({ success: false, error: { message: 'Invalid administrative credentials' } });
+        }
+
+        // STRICT ROLE ENFORCEMENT: Only Platform Admin role is allowed
+        if (user.role !== 'Platform Admin') {
+            recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'FORBIDDEN',
+                    message: 'Access Denied: Account does not possess Platform Administrator clearance.'
+                }
+            });
+        }
+
+        // Check 2FA
+        let has2FATable = true;
+        try {
+            await query('SELECT 1 FROM two_factor_codes LIMIT 1');
+        } catch {
+            has2FATable = false;
+        }
+
+        const is2FAEnabled = has2FATable && user.two_factor_enabled === true;
+        if (is2FAEnabled) {
+            const code = Math.floor(100000 + crypto.randomInt(900000)).toString();
+            const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+            await query('DELETE FROM two_factor_codes WHERE user_id = $1', [user.id]);
+            await query(
+                'INSERT INTO two_factor_codes (id, user_id, code_hash, expires_at, attempts) VALUES ($1, $2, $3, $4, 0)',
+                [crypto.randomUUID(), user.id, codeHash, expiresAt]
+            );
+
+            const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
+            const emailResult = await sendTransactionalEmail({
+                to: user.email,
+                subject: emailTemplate.subject,
+                html: emailTemplate.html,
+                text: emailTemplate.text
+            });
+
+            const tempToken = generateTempToken({
+                id: user.id,
+                email: user.email,
+                organisation_id: user.org_id,
+                role: 'Platform Admin'
+            });
+
+            console.log(`[PLATFORM 2FA CODE FOR TESTING] Code for ${cleanEmail}: ${code}`);
+
+            return res.json({
+                success: true,
+                require_2fa: true,
+                temp_token: tempToken,
+                masked_email: maskEmail(user.email),
+                delivery_notice: emailResult.success ? undefined : `Notice: ${emailResult.error} (Code printed to server console)`
+            });
+        }
+
+        clearRateLimit(cleanEmail);
+        const orgs = await getUserOrganisations(user.id, user.org_id, 'Platform Admin');
+        const token = generateToken({
+            id: user.id,
+            email: user.email,
+            organisation_id: user.org_id,
+            role: 'Platform Admin'
+        });
+
+        // Audit Log
+        await query(
+            'INSERT INTO audit_logs (id, org_id, actor_id, action, entity_type, entity_id, details, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+            [crypto.randomUUID(), user.org_id, user.id, 'PLATFORM_LOGIN_SUCCESS', 'users', user.id, `Platform Admin logged in: ${user.email}`]
+        ).catch(() => {});
+
+        res.json({
+            success: true,
+            data: {
+                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: 'Platform Admin',
+                    organisation_id: user.org_id,
+                    organisations: orgs
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Platform login error:', err);
+        res.status(500).json({ success: false, error: { message: 'Internal server error' } });
+    }
+});
+
+/**
  * POST /api/auth/verify-2fa
  * Validates the 6-digit OTP code against the hashed record in two_factor_codes.
  */

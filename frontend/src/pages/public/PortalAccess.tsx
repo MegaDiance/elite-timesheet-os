@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   Building2, 
   ArrowRight, 
   Search, 
-  Clock, 
-  ExternalLink,
+  Clock,
   ShieldCheck,
   Briefcase,
   Layers
@@ -45,6 +44,17 @@ export const PortalAccess: React.FC = () => {
       setRecentName(cachedName || cachedSlug);
     }
   }, []);
+
+  // Secret easter egg for Platform Administrator (5 taps/clicks on shield)
+  const [secretClicks, setSecretClicks] = useState(0);
+  const handleSecretShieldClick = () => {
+    const next = secretClicks + 1;
+    setSecretClicks(next);
+    if (next >= 5) {
+      setSecretClicks(0);
+      navigate('/platform-gate');
+    }
+  };
 
   // Debounced search
   useEffect(() => {
@@ -287,20 +297,14 @@ export const PortalAccess: React.FC = () => {
         </form>
       </Card>
 
-      {/* Platform Admin link & trust footer */}
-      <div className="space-y-3 text-center">
-        <div className="text-xs text-[var(--muted)]">
-          <span>Platform Administrator? </span>
-          <Link to="/login?platform=true" className="text-indigo-400 hover:underline font-medium inline-flex items-center gap-0.5">
-            Sign in to Platform Console <ExternalLink className="w-3 h-3 ml-0.5" />
-          </Link>
-        </div>
-
-        <div className="text-center text-xs text-[var(--muted)] flex items-center justify-center gap-1.5 pt-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-500" />
+        <div 
+          onClick={handleSecretShieldClick}
+          className="text-center text-xs text-[var(--muted)] flex items-center justify-center gap-1.5 pt-2 cursor-default select-none transition-colors active:text-indigo-400"
+          title="Protected by enterprise multi-tenant isolation"
+        >
+          <ShieldCheck className={`w-4 h-4 transition-colors ${secretClicks > 0 ? 'text-indigo-400' : 'text-emerald-500'}`} />
           <span>Multi-tenant isolation & enterprise encryption</span>
         </div>
-      </div>
     </div>
   );
 };

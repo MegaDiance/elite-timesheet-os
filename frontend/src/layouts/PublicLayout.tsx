@@ -1,10 +1,33 @@
-import React from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Clock, ShieldCheck, ArrowRight, Building2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export const PublicLayout: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [buildClicks, setBuildClicks] = useState(0);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Secret Platform Admin Hotkey: Cmd+Shift+P (Mac) or Ctrl+Shift+P (Win/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        navigate('/platform-gate');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigate]);
+
+  const handleBuildClick = () => {
+    const next = buildClicks + 1;
+    setBuildClicks(next);
+    if (next >= 5) {
+      setBuildClicks(0);
+      navigate('/platform-gate');
+    }
+  };
 
   const navLinks = [
     { label: 'Overview', path: '/' },
@@ -130,7 +153,13 @@ export const PublicLayout: React.FC = () => {
         <div className="max-w-7xl mx-auto pt-6 border-t border-[var(--border)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--muted)]">
           <p>© {new Date().getFullYear()} Elite Timesheet OS Pro. All rights reserved.</p>
           <div className="flex items-center gap-4">
-            <span>Production Build v2.4.0</span>
+            <span 
+              onClick={handleBuildClick}
+              className={`select-none cursor-default transition-colors ${buildClicks > 0 ? 'text-indigo-400 font-medium' : ''}`}
+              title="System Build Status"
+            >
+              Production Build v2.4.0
+            </span>
             <span>•</span>
             <span>PostgreSQL & Supabase Ready</span>
           </div>

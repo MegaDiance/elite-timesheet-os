@@ -7,6 +7,7 @@ import { Features } from './pages/public/Features';
 import { Pricing } from './pages/public/Pricing';
 import { PortalAccess } from './pages/public/PortalAccess';
 import { OrgLogin } from './pages/auth/OrgLogin';
+import PlatformGate from './pages/auth/PlatformGate';
 
 import Roster from './pages/Roster';
 import Employees from './pages/Employees';
@@ -90,6 +91,10 @@ export default function App() {
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/setup-org" element={<SetupOrganisation />} />
+        
+        {/* Unlisted Secret Platform Admin Console Gateway */}
+        <Route path="/platform-gate" element={<PlatformGate />} />
+        <Route path="/platform-login" element={<PlatformGate />} />
 
         {/* Authenticated Application Shell */}
         <Route element={isAuthenticated ? <Layout /> : <Navigate to="/portal-access" replace />}>
