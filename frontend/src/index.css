@@ -68,7 +68,7 @@ body {
 
 .ag-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 1200px; }
 .ag-table th { background: var(--table-header); padding: 6px 4px; font-size: 0.68rem; font-weight: 700; color: var(--muted); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border); position: sticky; top: 0; z-index: 10; cursor: default; }
-.ag-table th.name-col { width: 175px; text-align: left; position: sticky; left: 0; z-index: 20; border-right: 2px solid var(--border); padding-left: 10px; }
+.ag-table th.name-col { width: 200px; text-align: left; position: sticky; left: 0; z-index: 20; border-right: 2px solid var(--border); padding-left: 10px; }
 .ag-table td { padding: 3px 2px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); vertical-align: middle; transition: background 0.15s; }
 .ag-table td.name-col { position: sticky; left: 0; background: var(--panel); z-index: 15; border-right: 2px solid var(--border); font-weight: 700; font-size: 0.82rem; padding: 6px 10px; }
 

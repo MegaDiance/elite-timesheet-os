@@ -29,6 +29,7 @@ interface Employee {
   full_name: string;
   department: string;
   template: any[];
+  contracted_hours?: number;
 }
 
 export default function Roster() {
@@ -685,8 +686,11 @@ export default function Roster() {
                   return (
                     <tr key={emp.id} className="hover:bg-[var(--hover-row)] group border-b border-[var(--border)]">
                       <td className="name-col p-2">
-                        <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                        <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
                           <span className="font-bold text-sm text-[var(--text)]">{emp.full_name}</span>
+                          <span className="text-xs font-semibold text-[#ef4444] dark:text-[#f87171] tracking-tight">
+                            {emp.contracted_hours !== undefined && emp.contracted_hours !== null ? `${emp.contracted_hours} hours` : '76 hours'}
+                          </span>
                         </div>
                         <div className="flex items-center gap-1 flex-wrap">
                           <button onClick={() => handleSingleEmployeeRoster(emp)} className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-[var(--primary-light)] text-[var(--primary)] hover:opacity-80 border border-[var(--primary)]/30">
