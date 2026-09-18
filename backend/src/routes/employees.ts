@@ -4,6 +4,7 @@ import { query } from '../services/db';
 import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
 import { calcHours } from '../services/timeParser';
 import { sendTransactionalEmail, buildEmployeeInviteEmailTemplate } from '../services/emailService';
+import { revokeAllUserSessions } from '../services/sessionService';
 
 const router = Router();
 router.use(requireAuth, requireTenantContext);
@@ -48,8 +49,7 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
         }
 
         const empId = crypto.randomUUID();
-        let userId: string | null = null;
-
+        let userId: string | null = req.body.user_id || null;
         let token: string | null = null;
 
         if (create_account && email) {
@@ -63,21 +63,45 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
             }
 
             userId = crypto.randomUUID();
-            const userRole = role || 'Employee';
+            const callerRole = req.user?.role || 'Employee';
+            let userRole = role || 'Employee';
+            if (!['Company Admin', 'Platform Admin'].includes(callerRole) && userRole !== 'Employee') {
+                userRole = 'Employee';
+            }
 
             await query(
                 `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,
                 [userId, orgId, cleanEmail, 'PENDING_SETUP', userRole, false]
             );
 
+            await query(
+                `INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)`,
+                [crypto.randomUUID(), orgId, userId, userRole]
+            );
+
             token = crypto.randomBytes(32).toString('hex');
+            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
             const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-            await query('INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [token, userId, expiresAt]);
-        } else if (!userId && email) {
+            await query('INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [tokenHash, userId, expiresAt]);
+        } else if (userId) {
+            // Explicit user_id supplied: verify that the user is a member of this tenant
+            const memberCheck = await query('SELECT id FROM organisation_members WHERE organisation_id = $1 AND user_id = $2', [orgId, userId]);
+            if (memberCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_USER_MEMBERSHIP', message: 'Provided user does not belong to this organisation.' }
+                });
+            }
+        } else if (email) {
+            // Find existing user if already a registered member of this organization
             const cleanEmail = email.trim().toLowerCase();
             const existingUser = await query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
             if (existingUser.rows.length > 0) {
-                userId = existingUser.rows[0].id;
+                const candUserId = existingUser.rows[0].id;
+                const memberCheck = await query('SELECT id FROM organisation_members WHERE organisation_id = $1 AND user_id = $2', [orgId, candUserId]);
+                if (memberCheck.rows.length > 0) {
+                    userId = candUserId;
+                }
             }
         }
 
@@ -168,16 +192,26 @@ router.put('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform
             }
 
             userId = crypto.randomUUID();
-            const userRole = role || 'Employee';
+            const callerRole = req.user?.role || 'Employee';
+            let userRole = role || 'Employee';
+            if (!['Company Admin', 'Platform Admin'].includes(callerRole) && userRole !== 'Employee') {
+                userRole = 'Employee';
+            }
 
             await query(
                 `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,
                 [userId, orgId, cleanEmail, 'PENDING_SETUP', userRole, false]
             );
 
+            await query(
+                `INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)`,
+                [crypto.randomUUID(), orgId, userId, userRole]
+            );
+
             const token = crypto.randomBytes(32).toString('hex');
+            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
             const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-            await query('INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [token, userId, expiresAt]);
+            await query('INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [tokenHash, userId, expiresAt]);
 
             const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';
             inviteLink = `${origin}/accept-invite?token=${token}`;
@@ -197,11 +231,21 @@ router.put('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform
 
             emailSent = deliveryResult.success;
             emailProvider = deliveryResult.provider;
+        } else if (req.body.user_id && req.body.user_id !== emp.user_id) {
+            // Explicit user_id supplied: verify that the user is a member of this tenant
+            const memberCheck = await query('SELECT id FROM organisation_members WHERE organisation_id = $1 AND user_id = $2', [orgId, req.body.user_id]);
+            if (memberCheck.rows.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_USER_MEMBERSHIP', message: 'Provided user does not belong to this organisation.' }
+                });
+            }
+            userId = req.body.user_id;
         }
 
         await query(
-            `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, user_id = $6 WHERE id = $7`,
-            [full_name, department, email, phone, contracted_hours, userId, empId]
+            `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, user_id = $6 WHERE id = $7 AND org_id = $8`,
+            [full_name, department, email, phone, contracted_hours, userId, empId, orgId]
         );
 
         await query(
@@ -220,7 +264,23 @@ router.post('/:id/deactivate', requireAuth, requireRole(['Admin', 'Company Admin
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
+        const empRes = await query('SELECT user_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
         await query('UPDATE employees SET is_active = false, deleted_at = $1 WHERE id = $2 AND org_id = $3', [new Date().toISOString(), empId, orgId]);
+        if (empRes.rows.length > 0 && empRes.rows[0].user_id) {
+            const userId = empRes.rows[0].user_id;
+            // 1. Remove user membership from this organisation
+            await query('DELETE FROM organisation_members WHERE user_id = $1 AND organisation_id = $2', [userId, orgId]);
+
+            // 2. Revoke active sessions for this user in this tenant
+            await query('UPDATE sessions SET is_active = false, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2', [userId, orgId]);
+
+            // 3. Only deactivate the global user record and revoke all sessions if no memberships remain anywhere
+            const remainingMemberships = await query('SELECT id FROM organisation_members WHERE user_id = $1', [userId]);
+            if (remainingMemberships.rows.length === 0) {
+                await query('UPDATE users SET is_active = false WHERE id = $1', [userId]);
+                await revokeAllUserSessions(userId);
+            }
+        }
         await query(`INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'DEACTIVATED', empId, `Deactivated employee ${empId}`]);
         res.json({ success: true });
     } catch (err: any) {
@@ -252,6 +312,21 @@ router.delete('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platf
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
         }
         const emp = empCheck.rows[0];
+
+        // Guard: Cannot delete employee with approved/locked historical payroll records
+        const approvedCheck = await query(
+            "SELECT id FROM timesheet_submissions WHERE employee_id = $1 AND org_id = $2 AND status IN ('Approved', 'Locked') LIMIT 1",
+            [empId, orgId]
+        );
+        if (approvedCheck.rows.length > 0) {
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'EMPLOYEE_HAS_APPROVED_PAYROLL',
+                    message: 'Cannot permanently delete an employee with approved timesheets or payroll history. Deactivate the employee instead.'
+                }
+            });
+        }
 
         // Clean up linked user account if exists (scoped to tenant!)
         if (emp.user_id && emp.user_id !== req.user?.id) {
@@ -349,11 +424,12 @@ router.post('/:id/send-invitation', requireAuth, requireRole(['Admin', 'Company 
 
         // Generate new token
         const token = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         
         await query(
             'INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', 
-            [token, userAccountId, expiresAt]
+            [tokenHash, userAccountId, expiresAt]
         );
 
         const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';

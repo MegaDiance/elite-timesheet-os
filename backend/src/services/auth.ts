@@ -2,6 +2,11 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 const SALT_ROUNDS = 10;
+if (process.env.NODE_ENV === 'production') {
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'super_secret_jwt_key_for_local_dev') {
+        throw new Error('FATAL SECURITY ERROR: JWT_SECRET environment variable must be set to a secure secret in production.');
+    }
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_for_local_dev';
 
 export async function hashPassword(password: string): Promise<string> {

@@ -9,7 +9,7 @@ exports.shorthands = undefined;
  * @returns {Promise<void> | void}
  */
 exports.up = (pgm) => {
-    pgm.sql(\`
+    pgm.sql(`
         -- 1. Organizations discovery & policy settings
         ALTER TABLE organisations
             ADD COLUMN IF NOT EXISTS slug TEXT UNIQUE,
@@ -65,11 +65,11 @@ exports.up = (pgm) => {
 
         -- Index for fast tenant lookup by slug
         CREATE INDEX IF NOT EXISTS idx_organisations_slug ON organisations(slug);
-    \`);
+    `);
 };
 
 exports.down = (pgm) => {
-    pgm.sql(\`
+    pgm.sql(`
         DROP TABLE IF EXISTS organisation_announcements;
         DROP TABLE IF EXISTS two_factor_codes;
         ALTER TABLE audit_logs DROP COLUMN IF EXISTS snapshot;
@@ -86,5 +86,5 @@ exports.down = (pgm) => {
             DROP COLUMN IF EXISTS logo_url,
             DROP COLUMN IF EXISTS display_name,
             DROP COLUMN IF EXISTS slug;
-    \`);
+    `);
 };

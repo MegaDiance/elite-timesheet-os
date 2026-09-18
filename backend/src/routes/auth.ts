@@ -2,22 +2,35 @@ import { Router, Response } from 'express';
 import { query } from '../services/db';
 import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword } from '../services/auth';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate } from '../services/emailService';
+import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate } from '../services/emailService';
+import { createSession, touchSession, revokeSession, revokeAllUserSessions, getActiveUserSessions, recordLoginAttempt } from '../services/sessionService';
+import { parseClientInfo, assessLoginRisk, createLoginChallenge } from '../services/securityService';
 import crypto from 'crypto';
 
 const router = Router();
 
-// Rate limiting state: email or IP -> { count, firstAttempt }
+// Rate limiting state: key -> { count, firstAttempt }
 const rateLimits = new Map<string, { count: number, firstAttempt: number }>();
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 
+function normalizeRateLimitKey(key: string): string {
+    if (!key) return 'ip:127.0.0.1';
+    if (key.startsWith('email:') || key.startsWith('ip:')) return key;
+    if (key.includes('@')) return `email:${key.trim().toLowerCase()}`;
+    return `ip:${key.trim()}`;
+}
+
 function checkRateLimit(req: any, res: any, next: any) {
     const rawEmail = req.body?.email;
-    if (!rawEmail || typeof rawEmail !== 'string') {
-        return next();
+    let key: string;
+    if (rawEmail && typeof rawEmail === 'string' && rawEmail.trim()) {
+        key = `email:${rawEmail.trim().toLowerCase()}`;
+    } else {
+        const clientInfo = parseClientInfo(req);
+        key = `ip:${clientInfo.ip || '127.0.0.1'}`;
     }
-    const key = rawEmail.trim().toLowerCase();
+    key = normalizeRateLimitKey(key);
     const attempts = rateLimits.get(key) || { count: 0, firstAttempt: Date.now() };
     
     if (Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
@@ -26,7 +39,10 @@ function checkRateLimit(req: any, res: any, next: any) {
     }
     
     if (attempts.count >= MAX_ATTEMPTS) {
-        return res.status(429).json({ error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in 15 minutes.' }});
+        return res.status(429).json({
+            success: false,
+            error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in 15 minutes.' }
+        });
     }
     
     req.rateLimitKey = key;
@@ -35,12 +51,17 @@ function checkRateLimit(req: any, res: any, next: any) {
 }
 
 function recordFailedAttempt(key: string, attempts: any) {
+    const normKey = normalizeRateLimitKey(key);
+    if (!attempts) {
+        attempts = rateLimits.get(normKey) || { count: 0, firstAttempt: Date.now() };
+    }
     attempts.count++;
-    rateLimits.set(key, attempts);
+    rateLimits.set(normKey, attempts);
 }
 
 function clearRateLimit(key: string) {
-    rateLimits.delete(key);
+    const normKey = normalizeRateLimitKey(key);
+    rateLimits.delete(normKey);
 }
 
 export function clearAllRateLimits() {
@@ -58,46 +79,60 @@ function isStrongPassword(password: string): { valid: boolean; reason?: string }
 }
 
 function maskEmail(email: string): string {
-    const [user, domain] = email.split('@');
-    if (!domain) return email;
-    if (user.length <= 2) return `${user[0]}*@${domain}`;
-    return `${user[0]}${'*'.repeat(Math.min(user.length - 2, 5))}${user[user.length - 1]}@${domain}`;
+    if (!email || !email.includes('@')) return 'your email';
+    const [name, domain] = email.split('@');
+    if (name.length <= 2) {
+        return `${name[0]}***@${domain}`;
+    }
+    return `${name.slice(0, 2)}***${name.slice(-1)}@${domain}`;
 }
 
-async function getUserOrganisations(userId: string, userOrgId?: string, defaultRole?: string) {
+async function getUserOrganisations(userId: string, currentOrgId?: string, userRole?: string): Promise<any[]> {
     try {
-        if (defaultRole === 'Platform Admin') {
-            try {
-                const allOrgs = await query(`
-                    SELECT id, name, COALESCE(slug, id) as slug, logo_url, 'Platform Admin' as role
-                    FROM organisations
-                    ORDER BY name ASC
-                `);
-                return allOrgs.rows;
-            } catch {
-                const fallback = await query(`SELECT id, name, 'Platform Admin' as role FROM organisations ORDER BY name ASC`);
-                return fallback.rows;
-            }
+        if (userRole === 'Platform Admin') {
+            const allOrgs = await query('SELECT id, name, slug FROM organisations WHERE is_active = true ORDER BY name ASC');
+            return allOrgs.rows.map((o: any) => ({
+                id: o.id,
+                name: o.name,
+                slug: o.slug || o.id,
+                role: 'Platform Admin',
+                is_current: o.id === currentOrgId
+            }));
         }
 
         try {
             const orgsRes = await query(`
-                SELECT DISTINCT o.id, o.name, COALESCE(o.slug, o.id) as slug, o.logo_url, COALESCE(om.role, u.role) as role
+                SELECT DISTINCT o.id, o.name, o.slug, COALESCE(om.role, u.role) as role
                 FROM organisations o
                 LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
                 LEFT JOIN users u ON u.id = $1
-                WHERE om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id)
+                WHERE (om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id))
+                  AND o.is_active = true
+                ORDER BY o.name ASC
             `, [userId]);
-            return orgsRes.rows;
-        } catch {
+
+            return orgsRes.rows.map((o: any) => ({
+                id: o.id,
+                name: o.name,
+                slug: o.slug || o.id,
+                role: o.role || 'Employee',
+                is_current: o.id === currentOrgId
+            }));
+        } catch (dbErr) {
             const orgsResFallback = await query(`
-                SELECT DISTINCT o.id, o.name, COALESCE(om.role, u.role) as role
-                FROM organisations o
-                LEFT JOIN organisation_members om ON om.organisation_id = o.id AND om.user_id = $1
-                LEFT JOIN users u ON u.id = $1
-                WHERE om.user_id = $1 OR (u.id = $1 AND u.org_id = o.id)
+                SELECT o.id, o.name, o.slug, om.role
+                FROM organisation_members om
+                JOIN organisations o ON om.organisation_id = o.id
+                WHERE om.user_id = $1 AND o.is_active = true
             `, [userId]);
-            return orgsResFallback.rows;
+
+            return orgsResFallback.rows.map((o: any) => ({
+                id: o.id,
+                name: o.name,
+                slug: o.slug || o.id,
+                role: o.role,
+                is_current: o.id === currentOrgId
+            }));
         }
     } catch (err) {
         return [];
@@ -106,7 +141,7 @@ async function getUserOrganisations(userId: string, userOrgId?: string, defaultR
 
 /**
  * POST /api/auth/login
- * Validates credentials. If 2FA is active, issues OTP and temporary token.
+ * Validates credentials, checks for suspicious context / 2FA, creates server-backed session.
  */
 router.post('/login', checkRateLimit, async (req: any, res: any) => {
     const { email, password, organisation_slug, organisation_id } = req.body;
@@ -115,6 +150,7 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const clientInfo = parseClientInfo(req);
 
     try {
         const result = await query('SELECT * FROM users WHERE LOWER(email) = $1', [cleanEmail]);
@@ -122,12 +158,36 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
 
         if (!user || !user.is_active || !user.password_hash) {
             recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            await recordLoginAttempt({
+                email: cleanEmail,
+                status: 'FAILED',
+                clientInfo,
+                authMethod: 'password'
+            });
+            await query(
+                `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, details)
+                 VALUES ($1, $2, NOW(), $3, 'LOGIN_FAILED', 'auth', $4)`,
+                [crypto.randomUUID(), user?.org_id || '123e4567-e89b-12d3-a456-000000000000', user?.id || null, `Failed login attempt for email: ${cleanEmail}`]
+            ).catch(() => {});
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const valid = await comparePassword(password, user.password_hash);
         if (!valid) {
             recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            await recordLoginAttempt({
+                userId: user.id,
+                orgId: user.org_id,
+                email: cleanEmail,
+                status: 'FAILED',
+                clientInfo,
+                authMethod: 'password'
+            });
+            await query(
+                `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, details)
+                 VALUES ($1, $2, NOW(), $3, 'LOGIN_FAILED', 'auth', $4)`,
+                [crypto.randomUUID(), user.org_id || '123e4567-e89b-12d3-a456-000000000000', user.id, `Failed password attempt for ${cleanEmail}`]
+            ).catch(() => {});
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -218,6 +278,57 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
             }
         }
 
+        // Suspicious Login Risk Assessment
+        const risk = await assessLoginRisk(user.id, clientInfo, req);
+        if (risk.isSuspicious) {
+            const challenge = await createLoginChallenge(user.id, effectiveOrgId, effectiveRole, clientInfo);
+            const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';
+            const verifyLink = `${origin}/verify-login?token=${challenge.token}`;
+
+            const emailTemplate = buildSuspiciousLoginVerificationTemplate({
+                recipientEmail: user.email,
+                verifyLink,
+                verificationCode: challenge.code,
+                approxLocation: clientInfo.approxLocation,
+                deviceInfo: clientInfo.deviceInfo
+            });
+
+            await sendTransactionalEmail({
+                to: user.email,
+                subject: emailTemplate.subject,
+                html: emailTemplate.html,
+                text: emailTemplate.text
+            });
+
+            await recordLoginAttempt({
+                userId: user.id,
+                orgId: effectiveOrgId,
+                email: cleanEmail,
+                status: 'CHALLENGE_REQUIRED',
+                clientInfo,
+                authMethod: 'password'
+            });
+
+            await query(
+                `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+                 VALUES ($1, $2, NOW(), $3, 'LOGIN_SUSPICIOUS_CHALLENGE', 'auth', $4, $5)`,
+                [
+                    crypto.randomUUID(),
+                    effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000',
+                    user.id,
+                    challenge.challengeId,
+                    `Suspicious login challenge issued: ${risk.reason}`
+                ]
+            ).catch(() => {});
+
+            return res.json({
+                success: true,
+                require_login_verification: true,
+                masked_email: maskEmail(user.email),
+                message: 'Sign-in from a new location requires confirmation. Please check your email inbox.'
+            });
+        }
+
         // Gracefully detect if two_factor_codes table is available in the current database
         let has2FATable = true;
         try {
@@ -229,21 +340,16 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
         // Two-Step Verification Check (default: disabled until user explicitly enables it)
         const is2FAEnabled = has2FATable && user.two_factor_enabled === true;
         if (is2FAEnabled) {
-            // Generate cryptographically secure 6-digit OTP
             const code = Math.floor(100000 + crypto.randomInt(900000)).toString();
             const codeHash = crypto.createHash('sha256').update(code).digest('hex');
             const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
-            // Invalidate any previous 2FA codes for this user
             await query('DELETE FROM two_factor_codes WHERE user_id = $1', [user.id]);
-
-            // Save new hashed 2FA code
             await query(
                 'INSERT INTO two_factor_codes (id, user_id, code_hash, expires_at, attempts) VALUES ($1, $2, $3, $4, 0)',
                 [crypto.randomUUID(), user.id, codeHash, expiresAt]
             );
 
-            // Dispatch 2FA email
             const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
             const emailResult = await sendTransactionalEmail({
                 to: user.email,
@@ -252,15 +358,6 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
                 text: emailTemplate.text
             });
 
-            // Log for local/dev auditing
-            if (emailResult.success) {
-                console.log(`[2FA CODE] Verification code dispatched for ${cleanEmail} (provider: ${emailResult.provider}${emailResult.reroutedTo ? ', delivered to: ' + emailResult.reroutedTo : ''})`);
-            } else {
-                console.warn(`[2FA CODE WARNING] Failed to deliver email to ${cleanEmail}: ${emailResult.error}`);
-            }
-            console.log(`[2FA CODE FOR TESTING] Code for ${cleanEmail}: ${code}`);
-
-            // Generate temporary verification session token (10m expiration)
             const tempToken = generateTempToken({
                 id: user.id,
                 email: user.email,
@@ -268,36 +365,49 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
                 role: effectiveRole
             });
 
-            let deliveryNotice = undefined;
-            if (emailResult.reroutedTo) {
-                deliveryNotice = `Dev Notice: Verification email delivered to your verified address (${emailResult.reroutedTo}).`;
-            } else if (!emailResult.success && process.env.NODE_ENV !== 'production') {
-                deliveryNotice = `Email Notice: ${emailResult.error} (Code printed to server console).`;
-            }
-
             return res.json({
                 success: true,
                 require_2fa: true,
                 temp_token: tempToken,
                 masked_email: maskEmail(user.email),
-                delivery_notice: deliveryNotice
+                delivery_notice: emailResult.reroutedTo ? `Notice: Delivered to ${emailResult.reroutedTo}` : undefined
             });
         }
 
-        // Single-factor fallback if explicitly disabled
+        // Successful Standard Authentication -> Create Server Session
         clearRateLimit(cleanEmail);
+        const session = await createSession(user.id, effectiveOrgId, clientInfo);
+
         const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
         const token = generateToken({
             id: user.id,
             email: user.email,
             organisation_id: effectiveOrgId,
-            role: effectiveRole
+            role: effectiveRole,
+            session_id: session.sessionId
         });
+
+        await recordLoginAttempt({
+            userId: user.id,
+            orgId: effectiveOrgId,
+            email: cleanEmail,
+            status: 'SUCCESS',
+            clientInfo,
+            authMethod: 'password',
+            sessionId: session.sessionId
+        });
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, $2, NOW(), $3, 'LOGIN_SUCCESS', 'auth', $4, $5)`,
+            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', user.id, session.sessionId, `User logged in from ${clientInfo.approxLocation}`]
+        ).catch(() => {});
 
         res.json({
             success: true,
             data: {
                 token,
+                session_id: session.sessionId,
                 user: {
                     id: user.id,
                     email: user.email,
@@ -314,9 +424,166 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
 });
 
 /**
+ * POST /api/auth/verify-login
+ * Confirms a suspicious login challenge using a token or 6-digit code.
+ */
+router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => {
+    const { token, code, email, challenge_id } = req.body;
+    if (!token && !code) {
+        return res.status(400).json({ success: false, error: { message: 'Verification token or code is required.' } });
+    }
+
+    const clientInfo = parseClientInfo(req);
+
+    try {
+        let challengeRes: any;
+        if (token && typeof token === 'string') {
+            const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+            challengeRes = await query(
+                `SELECT * FROM login_verification_challenges 
+                 WHERE token_hash = $1 AND consumed = false AND expires_at > NOW()`,
+                [tokenHash]
+            );
+        } else if (code && typeof code === 'string') {
+            const rawCode = code.trim();
+            const codeHash = crypto.createHash('sha256').update(rawCode).digest('hex');
+
+            if (challenge_id) {
+                challengeRes = await query(
+                    `SELECT * FROM login_verification_challenges 
+                     WHERE id = $1 AND consumed = false AND expires_at > NOW()`,
+                    [challenge_id]
+                );
+            } else if (email && typeof email === 'string') {
+                challengeRes = await query(
+                    `SELECT c.* FROM login_verification_challenges c
+                     JOIN users u ON c.user_id = u.id
+                     WHERE LOWER(u.email) = $1 AND c.consumed = false AND c.expires_at > NOW()
+                     ORDER BY c.created_at DESC LIMIT 1`,
+                    [email.trim().toLowerCase()]
+                );
+            } else {
+                challengeRes = await query(
+                    `SELECT * FROM login_verification_challenges 
+                     WHERE (verification_code = $1 OR verification_code = $2) AND consumed = false AND expires_at > NOW()
+                     ORDER BY created_at DESC LIMIT 1`,
+                    [codeHash, rawCode]
+                );
+            }
+
+            if (challengeRes && challengeRes.rows.length > 0) {
+                const targetChallenge = challengeRes.rows[0];
+                const currentAttempts = Number(targetChallenge.attempts || 0);
+
+                if (currentAttempts >= 5) {
+                    await query('UPDATE login_verification_challenges SET consumed = true WHERE id = $1', [targetChallenge.id]).catch(() => {});
+                    recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+                    return res.status(429).json({
+                        success: false,
+                        error: { message: 'Too many incorrect attempts. This verification challenge has been invalidated. Please sign in again.' }
+                    });
+                }
+
+                const matches = (targetChallenge.verification_code === codeHash || targetChallenge.verification_code === rawCode);
+                if (!matches) {
+                    const nextAttempts = currentAttempts + 1;
+                    if (nextAttempts >= 5) {
+                        await query('UPDATE login_verification_challenges SET consumed = true, attempts = $1 WHERE id = $2', [nextAttempts, targetChallenge.id]).catch(() => {});
+                        recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+                        return res.status(429).json({
+                            success: false,
+                            error: { message: 'Too many incorrect attempts. This verification challenge has been invalidated. Please sign in again.' }
+                        });
+                    }
+
+                    await query('UPDATE login_verification_challenges SET attempts = $1 WHERE id = $2', [nextAttempts, targetChallenge.id]).catch(() => {});
+                    recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+                    const remaining = 5 - nextAttempts;
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                            message: `Incorrect verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`
+                        }
+                    });
+                }
+            }
+        }
+
+        if (!challengeRes || challengeRes.rows.length === 0) {
+            recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+            return res.status(400).json({
+                success: false,
+                error: { message: 'Invalid, expired, or already used verification challenge. Please sign in again.' }
+            });
+        }
+
+        const challenge = challengeRes.rows[0];
+
+        // Mark challenge as consumed
+        await query('UPDATE login_verification_challenges SET consumed = true WHERE id = $1', [challenge.id]);
+        clearRateLimit(req.rateLimitKey);
+
+        // Fetch user
+        const userRes = await query('SELECT * FROM users WHERE id = $1 AND is_active = true', [challenge.user_id]);
+        if (userRes.rows.length === 0) {
+            return res.status(401).json({ success: false, error: { message: 'User account is not active.' } });
+        }
+        const user = userRes.rows[0];
+
+        // Create server-side session
+        const session = await createSession(user.id, challenge.org_id || user.org_id, clientInfo);
+
+        const effectiveRole = challenge.role || user.role;
+        const effectiveOrgId = challenge.org_id || user.org_id;
+
+        const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
+        const authToken = generateToken({
+            id: user.id,
+            email: user.email,
+            organisation_id: effectiveOrgId,
+            role: effectiveRole,
+            session_id: session.sessionId
+        });
+
+        await recordLoginAttempt({
+            userId: user.id,
+            orgId: effectiveOrgId,
+            email: user.email,
+            status: 'CHALLENGE_VERIFIED',
+            clientInfo,
+            authMethod: 'suspicious_verify',
+            sessionId: session.sessionId
+        });
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, $2, NOW(), $3, 'SUSPICIOUS_LOGIN_VERIFIED', 'auth', $4, $5)`,
+            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', user.id, session.sessionId, `Suspicious login verified from ${clientInfo.approxLocation}`]
+        ).catch(() => {});
+
+        res.json({
+            success: true,
+            data: {
+                token: authToken,
+                session_id: session.sessionId,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: effectiveRole,
+                    organisation_id: effectiveOrgId,
+                    organisations: orgs
+                }
+            }
+        });
+    } catch (err: any) {
+        console.error('Verify login error:', err);
+        res.status(500).json({ success: false, error: { message: 'Internal server error during login verification.' } });
+    }
+});
+
+/**
  * POST /api/auth/platform-login
- * Secret endpoint for Platform Superadministrators.
- * Rejects any non-Platform Admin credentials with 403 Forbidden.
+ * Secret administrative gateway for Platform Superadministrators.
  */
 router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
     const { email, password } = req.body;
@@ -325,6 +592,7 @@ router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const clientInfo = parseClientInfo(req);
 
     try {
         const result = await query('SELECT * FROM users WHERE LOWER(email) = $1', [cleanEmail]);
@@ -332,16 +600,17 @@ router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
 
         if (!user || !user.is_active || !user.password_hash) {
             recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            await recordLoginAttempt({ email: cleanEmail, status: 'FAILED', clientInfo, authMethod: 'platform_password' });
             return res.status(401).json({ success: false, error: { message: 'Invalid administrative credentials' } });
         }
 
         const valid = await comparePassword(password, user.password_hash);
         if (!valid) {
             recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
+            await recordLoginAttempt({ userId: user.id, orgId: user.org_id, email: cleanEmail, status: 'FAILED', clientInfo, authMethod: 'platform_password' });
             return res.status(401).json({ success: false, error: { message: 'Invalid administrative credentials' } });
         }
 
-        // STRICT ROLE ENFORCEMENT: Only Platform Admin role is allowed
         if (user.role !== 'Platform Admin') {
             recordFailedAttempt(cleanEmail, req.rateLimitAttempts);
             return res.status(403).json({
@@ -374,7 +643,7 @@ router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
             );
 
             const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
-            const emailResult = await sendTransactionalEmail({
+            await sendTransactionalEmail({
                 to: user.email,
                 subject: emailTemplate.subject,
                 html: emailTemplate.html,
@@ -388,27 +657,36 @@ router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
                 role: 'Platform Admin'
             });
 
-            console.log(`[PLATFORM 2FA CODE FOR TESTING] Code for ${cleanEmail}: ${code}`);
-
             return res.json({
                 success: true,
                 require_2fa: true,
                 temp_token: tempToken,
-                masked_email: maskEmail(user.email),
-                delivery_notice: emailResult.success ? undefined : `Notice: ${emailResult.error} (Code printed to server console)`
+                masked_email: maskEmail(user.email)
             });
         }
 
         clearRateLimit(cleanEmail);
+        const session = await createSession(user.id, user.org_id, clientInfo);
+
         const orgs = await getUserOrganisations(user.id, user.org_id, 'Platform Admin');
         const token = generateToken({
             id: user.id,
             email: user.email,
             organisation_id: user.org_id,
-            role: 'Platform Admin'
+            role: 'Platform Admin',
+            session_id: session.sessionId
         });
 
-        // Audit Log
+        await recordLoginAttempt({
+            userId: user.id,
+            orgId: user.org_id,
+            email: cleanEmail,
+            status: 'SUCCESS',
+            clientInfo,
+            authMethod: 'platform_password',
+            sessionId: session.sessionId
+        });
+
         await query(
             'INSERT INTO audit_logs (id, org_id, actor_id, action, entity_type, entity_id, details, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
             [crypto.randomUUID(), user.org_id, user.id, 'PLATFORM_LOGIN_SUCCESS', 'users', user.id, `Platform Admin logged in: ${user.email}`]
@@ -418,6 +696,7 @@ router.post('/platform-login', checkRateLimit, async (req: any, res: any) => {
             success: true,
             data: {
                 token,
+                session_id: session.sessionId,
                 user: {
                     id: user.id,
                     email: user.email,
@@ -450,6 +729,8 @@ router.post('/verify-2fa', async (req: any, res: any) => {
         return res.status(401).json({ success: false, error: { message: 'Verification session expired. Please sign in again.' } });
     }
 
+    const clientInfo = parseClientInfo(req);
+
     try {
         const userId = decoded.id;
         const userRes = await query('SELECT * FROM users WHERE id = $1 AND is_active = true', [userId]);
@@ -458,7 +739,6 @@ router.post('/verify-2fa', async (req: any, res: any) => {
         }
         const user = userRes.rows[0];
 
-        // Fetch active 2FA code record
         const codeRes = await query(
             'SELECT * FROM two_factor_codes WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
             [userId]
@@ -470,13 +750,11 @@ router.post('/verify-2fa', async (req: any, res: any) => {
 
         const record = codeRes.rows[0];
 
-        // Enforce maximum 5 attempts lockout
         if (record.attempts >= 5) {
             await query('DELETE FROM two_factor_codes WHERE user_id = $1', [userId]);
             return res.status(429).json({ success: false, error: { message: 'Too many incorrect attempts. Please sign in again to receive a fresh code.' } });
         }
 
-        // Compare SHA-256 hash of submitted code
         const submittedHash = crypto.createHash('sha256').update(code.trim()).digest('hex');
         if (submittedHash !== record.code_hash) {
             const nextAttempts = record.attempts + 1;
@@ -493,11 +771,15 @@ router.post('/verify-2fa', async (req: any, res: any) => {
             });
         }
 
-        // Correct code: delete OTP and issue full authentication session
         await query('DELETE FROM two_factor_codes WHERE user_id = $1', [userId]);
         clearRateLimit(user.email.toLowerCase());
 
-        // Audit log
+        const effectiveOrgId = decoded.organisation_id || user.org_id;
+        const effectiveRole = decoded.role || user.role;
+
+        // Create server-side session
+        const session = await createSession(user.id, effectiveOrgId, clientInfo);
+
         if (user.org_id) {
             await query(
                 'INSERT INTO audit_logs (id, org_id, actor_id, action, entity_type, entity_id, details, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
@@ -505,21 +787,30 @@ router.post('/verify-2fa', async (req: any, res: any) => {
             ).catch(() => {});
         }
 
-        const effectiveOrgId = decoded.organisation_id || user.org_id;
-        const effectiveRole = decoded.role || user.role;
+        await recordLoginAttempt({
+            userId: user.id,
+            orgId: effectiveOrgId,
+            email: user.email,
+            status: 'SUCCESS',
+            clientInfo,
+            authMethod: '2fa',
+            sessionId: session.sessionId
+        });
 
         const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
         const token = generateToken({
             id: user.id,
             email: user.email,
             organisation_id: effectiveOrgId,
-            role: effectiveRole
+            role: effectiveRole,
+            session_id: session.sessionId
         });
 
         res.json({
             success: true,
             data: {
                 token,
+                session_id: session.sessionId,
                 user: {
                     id: user.id,
                     email: user.email,
@@ -537,7 +828,6 @@ router.post('/verify-2fa', async (req: any, res: any) => {
 
 /**
  * POST /api/auth/resend-2fa
- * Resends a fresh 2FA code with cooldown protection.
  */
 router.post('/resend-2fa', async (req: any, res: any) => {
     const { temp_token } = req.body;
@@ -560,7 +850,6 @@ router.post('/resend-2fa', async (req: any, res: any) => {
         }
         const user = userRes.rows[0];
 
-        // Cooldown check (minimum 30 seconds between requests)
         const recentCode = await query(
             'SELECT created_at FROM two_factor_codes WHERE user_id = $1 AND created_at > NOW() - INTERVAL \'30 seconds\'',
             [userId]
@@ -569,7 +858,6 @@ router.post('/resend-2fa', async (req: any, res: any) => {
             return res.status(429).json({ success: false, error: { message: 'Please wait at least 30 seconds before requesting another code.' } });
         }
 
-        // Generate fresh OTP
         const code = Math.floor(100000 + crypto.randomInt(900000)).toString();
         const codeHash = crypto.createHash('sha256').update(code).digest('hex');
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -581,31 +869,16 @@ router.post('/resend-2fa', async (req: any, res: any) => {
         );
 
         const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
-        const emailResult = await sendTransactionalEmail({
+        await sendTransactionalEmail({
             to: user.email,
             subject: emailTemplate.subject,
             html: emailTemplate.html,
             text: emailTemplate.text
         });
 
-        if (emailResult.success) {
-            console.log(`[2FA CODE - RESENT] Fresh verification code for ${user.email} (provider: ${emailResult.provider}${emailResult.reroutedTo ? ', delivered to: ' + emailResult.reroutedTo : ''})`);
-        } else {
-            console.warn(`[2FA CODE - RESENT WARNING] Failed to deliver code to ${user.email}: ${emailResult.error}`);
-        }
-        console.log(`[2FA CODE FOR TESTING] Resent code for ${user.email}: ${code}`);
-
-        let deliveryNotice = undefined;
-        if (emailResult.reroutedTo) {
-            deliveryNotice = `Dev Notice: Fresh code sent to verified email (${emailResult.reroutedTo}).`;
-        } else if (!emailResult.success && process.env.NODE_ENV !== 'production') {
-            deliveryNotice = `Email Notice: ${emailResult.error} (Code printed to server console).`;
-        }
-
         res.json({ 
             success: true, 
-            message: 'A fresh verification code has been dispatched to your email.',
-            delivery_notice: deliveryNotice
+            message: 'A fresh verification code has been dispatched to your email.'
         });
     } catch (err: any) {
         console.error('Resend 2FA error:', err);
@@ -614,10 +887,163 @@ router.post('/resend-2fa', async (req: any, res: any) => {
 });
 
 /**
- * POST /api/auth/forgot-password
- * Generates single-use reset token and emails branded password reset link.
+ * POST /api/auth/keep-alive
+ * Extends the 15-minute inactivity session timer on explicit user activity.
  */
-router.post('/forgot-password', checkRateLimit, async (req: any, res: any) => {
+router.post('/keep-alive', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        if (req.user?.session_id) {
+            await touchSession(req.user.session_id, true);
+        }
+        res.json({
+            success: true,
+            message: 'Session refreshed successfully.',
+            timeout_seconds: 900
+        });
+    } catch (err: any) {
+        console.error('Keep-alive error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to refresh session.' } });
+    }
+});
+
+/**
+ * GET /api/auth/session/status
+ * Returns current session health & last activity timestamp.
+ */
+router.get('/session/status', requireAuth, async (req: AuthRequest, res: Response) => {
+    res.json({
+        success: true,
+        data: {
+            session_id: req.user?.session_id,
+            is_active: true,
+            approx_location: req.session?.approx_location || 'Local Network',
+            device_info: req.session?.device_info || 'Current Device',
+            last_active_at: req.session?.last_active_at
+        }
+    });
+});
+
+/**
+ * POST /api/auth/logout
+ * Immediately terminates and revokes the active server session.
+ */
+router.post('/logout', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        if (req.user?.session_id) {
+            await revokeSession(req.user.session_id);
+        }
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, $2, NOW(), $3, 'LOGOUT', 'sessions', $4, 'User logged out and revoked active session')`,
+            [crypto.randomUUID(), req.user?.organisation_id || '123e4567-e89b-12d3-a456-000000000000', req.user?.id, req.user?.session_id || null]
+        ).catch(() => {});
+
+        res.json({ success: true, message: 'Signed out successfully.' });
+    } catch (err: any) {
+        console.error('Logout error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to complete logout.' } });
+    }
+});
+
+/**
+ * GET /api/auth/security/activity
+ * Provides account security overview: Last login, active sessions, and recent logins.
+ */
+router.get('/security/activity', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id!;
+
+        // 1. Fetch last login
+        const lastLoginRes = await query(
+            `SELECT approx_location, device_info, created_at
+             FROM login_history
+             WHERE user_id = $1 AND status IN ('SUCCESS', 'CHALLENGE_VERIFIED')
+             ORDER BY created_at DESC
+             LIMIT 2`,
+            [userId]
+        );
+
+        // Current login is index 0, previous login is index 1 (if available)
+        const previousLogin = lastLoginRes.rows[1] || lastLoginRes.rows[0] || null;
+
+        // 2. Fetch active sessions
+        const activeSessions = await getActiveUserSessions(userId, req.user?.session_id);
+
+        // 3. Fetch recent login attempts (last 10)
+        const recentHistoryRes = await query(
+            `SELECT id, approx_location, device_info, status, auth_method, created_at
+             FROM login_history
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT 10`,
+            [userId]
+        );
+
+        res.json({
+            success: true,
+            data: {
+                last_login: previousLogin ? {
+                    approx_location: previousLogin.approx_location,
+                    device_info: previousLogin.device_info,
+                    timestamp: previousLogin.created_at
+                } : null,
+                active_sessions: activeSessions,
+                recent_history: recentHistoryRes.rows
+            }
+        });
+    } catch (err: any) {
+        console.error('Security activity error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to retrieve security activity.' } });
+    }
+});
+
+/**
+ * POST /api/auth/security/revoke-session
+ * Allows a user to terminate a specific session.
+ */
+router.post('/security/revoke-session', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const { session_id } = req.body;
+        if (!session_id) {
+            return res.status(400).json({ success: false, error: { message: 'session_id is required.' } });
+        }
+
+        // Verify session belongs to requesting user
+        const sessRes = await query('SELECT id FROM sessions WHERE id = $1 AND user_id = $2', [session_id, req.user?.id]);
+        if (sessRes.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { message: 'Session not found or does not belong to your account.' } });
+        }
+
+        await revokeSession(session_id);
+        res.json({ success: true, message: 'Session revoked successfully.' });
+    } catch (err: any) {
+        console.error('Revoke session error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to revoke session.' } });
+    }
+});
+
+/**
+ * POST /api/auth/security/revoke-other-sessions
+ * Logs out all other active devices.
+ */
+router.post('/security/revoke-other-sessions', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id!;
+        const currentSessionId = req.user?.session_id;
+
+        await revokeAllUserSessions(userId, currentSessionId);
+        res.json({ success: true, message: 'All other active sessions have been terminated.' });
+    } catch (err: any) {
+        console.error('Revoke other sessions error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to revoke other sessions.' } });
+    }
+});
+
+/**
+ * POST /api/auth/forgot-password
+ * Generates single-use reset token and emails hashed link.
+ */
+router.post('/forgot-password', async (req: any, res: any) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
@@ -626,50 +1052,34 @@ router.post('/forgot-password', checkRateLimit, async (req: any, res: any) => {
     try {
         const userRes = await query('SELECT id, email FROM users WHERE LOWER(email) = $1 AND is_active = true', [cleanEmail]);
         
-        // Prevent user enumeration: always return the same success message
+        // Prevent user enumeration: always return the same generic success message
         if (userRes.rowCount === 0) {
             return res.json({ success: true, message: 'If an account exists, a reset link was sent.' });
         }
 
         const user = userRes.rows[0];
-        const token = crypto.randomBytes(32).toString('hex');
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
         const expiresAt = new Date(Date.now() + 3600000).toISOString(); // 1 hour
 
         // Clear any old reset tokens for this user
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [user.id]);
-        await query('INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [token, user.id, expiresAt]);
+        await query('INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [tokenHash, user.id, expiresAt]);
 
-        // Reliable origin resolution
         const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';
-        const resetLink = `${origin}/reset-password?token=${token}`;
+        const resetLink = `${origin}/reset-password?token=${rawToken}`;
 
-        // Build branded email and send
         const template = buildPasswordResetEmailTemplate({ resetLink, recipientEmail: user.email });
-        const deliveryResult = await sendTransactionalEmail({
+        await sendTransactionalEmail({
             to: user.email,
             subject: template.subject,
             html: template.html,
             text: template.text
         });
 
-        if (deliveryResult.success) {
-            console.log(`[PASSWORD RESET LINK] Sent reset link for ${user.email}: ${resetLink} (provider: ${deliveryResult.provider}${deliveryResult.reroutedTo ? ', delivered to: ' + deliveryResult.reroutedTo : ''})`);
-        } else {
-            console.warn(`[PASSWORD RESET WARNING] Failed to deliver reset link to ${user.email}: ${deliveryResult.error}`);
-        }
-        console.log(`[PASSWORD RESET FOR TESTING] Link: ${resetLink}`);
-
-        let deliveryNotice = undefined;
-        if (deliveryResult.reroutedTo) {
-            deliveryNotice = `Dev Notice: Reset link was delivered to your verified address (${deliveryResult.reroutedTo}).`;
-        } else if (!deliveryResult.success && process.env.NODE_ENV !== 'production') {
-            deliveryNotice = `Email Notice: ${deliveryResult.error} (Link printed to server console).`;
-        }
-
         res.json({ 
             success: true, 
-            message: 'If an account exists, a reset link was sent.',
-            delivery_notice: deliveryNotice
+            message: 'If an account exists, a reset link was sent.'
         });
     } catch (err) {
         console.error('Forgot password error:', err);
@@ -688,9 +1098,10 @@ router.get('/verify-reset-token', async (req: any, res: any) => {
     }
 
     try {
+        const tokenHash = crypto.createHash('sha256').update(String(token).trim()).digest('hex');
         const tokenRes = await query(
-            'SELECT rt.user_id, u.email FROM reset_tokens rt JOIN users u ON u.id = rt.user_id WHERE rt.token_hash = $1 AND rt.expires_at > NOW()',
-            [token]
+            'SELECT rt.user_id, u.email FROM reset_tokens rt JOIN users u ON u.id = rt.user_id WHERE (rt.token_hash = $1 OR rt.token_hash = $2) AND rt.expires_at > NOW()',
+            [tokenHash, String(token).trim()]
         );
 
         if (tokenRes.rows.length === 0) {
@@ -706,7 +1117,7 @@ router.get('/verify-reset-token', async (req: any, res: any) => {
 
 /**
  * POST /api/auth/reset-password
- * Validates complexity, updates password hash, and purges all tokens.
+ * Validates complexity, updates password hash, revokes all sessions.
  */
 router.post('/reset-password', checkRateLimit, async (req: any, res: any) => {
     const { token, password } = req.body;
@@ -720,8 +1131,14 @@ router.post('/reset-password', checkRateLimit, async (req: any, res: any) => {
     }
 
     try {
-        const tokenRes = await query('SELECT user_id FROM reset_tokens WHERE token_hash = $1 AND expires_at > NOW()', [token]);
+        const tokenHash = crypto.createHash('sha256').update(String(token).trim()).digest('hex');
+        const tokenRes = await query(
+            'SELECT user_id FROM reset_tokens WHERE (token_hash = $1 OR token_hash = $2) AND expires_at > NOW()',
+            [tokenHash, String(token).trim()]
+        );
+
         if (tokenRes.rowCount === 0) {
+            recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
             return res.status(400).json({ success: false, error: { message: 'Invalid or expired token' } });
         }
 
@@ -731,6 +1148,16 @@ router.post('/reset-password', checkRateLimit, async (req: any, res: any) => {
         await query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, userId]);
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [userId]);
         await query('DELETE FROM two_factor_codes WHERE user_id = $1', [userId]).catch(() => {});
+
+        // Immediately revoke all existing sessions upon password reset
+        await revokeAllUserSessions(userId);
+        clearRateLimit(req.rateLimitKey);
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, '123e4567-e89b-12d3-a456-000000000000', NOW(), $2, 'PASSWORD_RESET_COMPLETED', 'users', $2, 'Password reset completed and all sessions revoked')`,
+            [crypto.randomUUID(), userId]
+        ).catch(() => {});
 
         res.json({ success: true, message: 'Password updated successfully. You can now sign in.' });
     } catch (err) {
@@ -786,11 +1213,16 @@ router.post('/switch-organisation', requireAuth, async (req: AuthRequest, res: R
         const orgInfo = membershipRes.rows[0];
         const newRole = orgInfo.role || req.user?.role || 'Employee';
 
+        if (req.user?.session_id) {
+            await query('UPDATE sessions SET org_id = $1 WHERE id = $2', [organisation_id, req.user.session_id]).catch(() => {});
+        }
+
         const newToken = generateToken({
             id: userId,
             email: req.user?.email!,
             organisation_id: organisation_id,
-            role: newRole
+            role: newRole,
+            session_id: req.user?.session_id
         });
 
         res.json({
@@ -817,12 +1249,13 @@ router.get('/invitation', async (req: any, res: any) => {
     if (!token) return res.status(400).json({ success: false, error: { message: 'Token required' } });
 
     try {
+        const tokenHash = crypto.createHash('sha256').update(String(token).trim()).digest('hex');
         const tokenRes = await query(`
             SELECT it.user_id, u.email 
             FROM invitation_tokens it
             JOIN users u ON u.id = it.user_id
-            WHERE it.token_hash = $1 AND it.expires_at > NOW()
-        `, [token]);
+            WHERE (it.token_hash = $1 OR it.token_hash = $2) AND it.expires_at > NOW()
+        `, [tokenHash, String(token).trim()]);
 
         if (tokenRes.rowCount === 0) {
             return res.status(400).json({ success: false, error: { message: 'Invalid or expired invitation token' } });
@@ -845,7 +1278,11 @@ router.post('/claim-invitation', async (req: any, res: any) => {
     }
 
     try {
-        const tokenRes = await query('SELECT user_id FROM invitation_tokens WHERE token_hash = $1 AND expires_at > NOW()', [token]);
+        const tokenHash = crypto.createHash('sha256').update(String(token).trim()).digest('hex');
+        const tokenRes = await query(
+            'SELECT user_id FROM invitation_tokens WHERE (token_hash = $1 OR token_hash = $2) AND expires_at > NOW()',
+            [tokenHash, String(token).trim()]
+        );
         if (tokenRes.rowCount === 0) {
             return res.status(400).json({ success: false, error: { message: 'Invalid or expired token' } });
         }
@@ -857,6 +1294,8 @@ router.post('/claim-invitation', async (req: any, res: any) => {
         await query('UPDATE employees SET is_active = true WHERE user_id = $1', [userId]);
         await query('DELETE FROM invitation_tokens WHERE user_id = $1', [userId]);
 
+        await revokeAllUserSessions(userId);
+
         res.json({ success: true });
     } catch (err) {
         console.error('Claim invitation error:', err);
@@ -866,7 +1305,6 @@ router.post('/claim-invitation', async (req: any, res: any) => {
 
 /**
  * GET /api/auth/2fa/status
- * Returns whether 2FA is currently enabled for the authenticated user.
  */
 router.get('/2fa/status', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
@@ -890,7 +1328,6 @@ router.get('/2fa/status', requireAuth, async (req: AuthRequest, res: Response) =
 
 /**
  * POST /api/auth/2fa/send-setup-code
- * Sends a test 2FA setup verification OTP to the user's email.
  */
 router.post('/2fa/send-setup-code', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
@@ -911,19 +1348,16 @@ router.post('/2fa/send-setup-code', requireAuth, async (req: AuthRequest, res: R
         );
 
         const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
-        const emailResult = await sendTransactionalEmail({
+        await sendTransactionalEmail({
             to: user.email,
             subject: emailTemplate.subject,
             html: emailTemplate.html,
             text: emailTemplate.text
         });
 
-        console.log(`[2FA SETUP CODE] Verification code for ${user.email}: ${code} (delivery: ${emailResult.provider}${emailResult.reroutedTo ? ', delivered to: ' + emailResult.reroutedTo : ''})`);
-
         res.json({
             success: true,
-            message: 'Setup code dispatched to your email.',
-            delivery_notice: emailResult.reroutedTo ? `Dev Notice: Code delivered to verified email (${emailResult.reroutedTo}).` : undefined
+            message: 'Setup code dispatched to your email.'
         });
     } catch (err: any) {
         console.error('[2FA SETUP SEND ERROR]', err);
@@ -933,7 +1367,6 @@ router.post('/2fa/send-setup-code', requireAuth, async (req: AuthRequest, res: R
 
 /**
  * POST /api/auth/2fa/enable
- * Verifies code & current password, then activates 2FA.
  */
 router.post('/2fa/enable', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
@@ -962,6 +1395,12 @@ router.post('/2fa/enable', requireAuth, async (req: AuthRequest, res: Response) 
         await query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [req.user?.id]);
         await query('DELETE FROM two_factor_codes WHERE user_id = $1', [req.user?.id]);
 
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, $2, NOW(), $3, '2FA_ENABLED', 'users', $3, 'Two-Factor Authentication activated')`,
+            [crypto.randomUUID(), req.user?.organisation_id || '123e4567-e89b-12d3-a456-000000000000', req.user?.id]
+        ).catch(() => {});
+
         res.json({ success: true, message: 'Two-Step Verification successfully enabled.' });
     } catch (err: any) {
         console.error('[2FA ENABLE ERROR]', err);
@@ -971,7 +1410,6 @@ router.post('/2fa/enable', requireAuth, async (req: AuthRequest, res: Response) 
 
 /**
  * POST /api/auth/2fa/disable
- * Disables 2FA with password confirmation.
  */
 router.post('/2fa/disable', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
@@ -987,6 +1425,12 @@ router.post('/2fa/disable', requireAuth, async (req: AuthRequest, res: Response)
 
         await query('UPDATE users SET two_factor_enabled = false WHERE id = $1', [req.user?.id]);
         await query('DELETE FROM two_factor_codes WHERE user_id = $1', [req.user?.id]);
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, $2, NOW(), $3, '2FA_DISABLED', 'users', $3, 'Two-Factor Authentication deactivated')`,
+            [crypto.randomUUID(), req.user?.organisation_id || '123e4567-e89b-12d3-a456-000000000000', req.user?.id]
+        ).catch(() => {});
 
         res.json({ success: true, message: 'Two-Step Verification disabled.' });
     } catch (err: any) {

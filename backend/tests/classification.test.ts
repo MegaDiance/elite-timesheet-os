@@ -11,7 +11,7 @@ describe('Shift Classification & Public Holiday Engine Tests', () => {
             name: 'gen_random_uuid',
             args: [],
             returns: DataType.uuid,
-            implementation: () => '123e4567-e89b-12d3-a456-' + Math.floor(Math.random() * 10000000),
+            implementation: () => crypto.randomUUID(),
         });
 
         db.public.none(`

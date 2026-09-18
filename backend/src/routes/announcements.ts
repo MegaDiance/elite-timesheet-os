@@ -6,6 +6,8 @@ import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../
 const router = Router();
 router.use(requireAuth, requireTenantContext);
 
+const isValidUUID = (val?: string | string[]) => Boolean(typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+
 interface ReactionSummary {
     emoji: string;
     count: number;
@@ -230,6 +232,10 @@ router.post('/:id/reactions', requireAuth, async (req: AuthRequest, res: Respons
         const { id } = req.params;
         const { emoji } = req.body;
 
+        if (!isValidUUID(id)) {
+            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
+        }
+
         if (!emoji || typeof emoji !== 'string' || !emoji.trim()) {
             return res.status(400).json({ success: false, error: { message: 'Valid emoji is required.' } });
         }
@@ -328,6 +334,10 @@ router.post('/:id/replies', requireAuth, async (req: AuthRequest, res: Response)
         const { id } = req.params;
         const { content } = req.body;
 
+        if (!isValidUUID(id)) {
+            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
+        }
+
         if (!content || !content.trim()) {
             return res.status(400).json({ success: false, error: { message: 'Reply content cannot be empty.' } });
         }
@@ -402,6 +412,10 @@ router.delete('/:id/replies/:replyId', requireAuth, async (req: AuthRequest, res
         const userRole = req.user?.role || 'Employee';
         const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(userRole);
 
+        if (!isValidUUID(id) || !isValidUUID(replyId)) {
+            return res.status(404).json({ success: false, error: { message: 'Reply not found.' } });
+        }
+
         const existing = await query(
             'SELECT author_id FROM announcement_replies WHERE id = $1 AND announcement_id = $2 AND org_id = $3',
             [replyId, id, orgId]
@@ -457,6 +471,10 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         const { id } = req.params;
         const userRole = req.user?.role || 'Employee';
         const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(userRole);
+
+        if (!isValidUUID(id)) {
+            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
+        }
 
         const existing = await query('SELECT author_id FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
         if (existing.rows.length === 0) {

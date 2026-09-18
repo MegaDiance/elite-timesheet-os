@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { 
   Lock, 
   Mail, 
@@ -26,6 +26,26 @@ interface OrgMetadata {
 export const OrgLogin: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const reasonParam = searchParams.get('reason');
+
+  const getReasonNotice = () => {
+    if (reasonParam === 'inactivity') {
+      return { text: 'You were signed out due to 15 minutes of inactivity for your data protection.', variant: 'warning' };
+    }
+    if (reasonParam === 'deactivated') {
+      return { text: 'Your account has been deactivated. Please contact your company administrator.', variant: 'danger' };
+    }
+    if (reasonParam === 'revoked') {
+      return { text: 'Your session has ended or was revoked from another device.', variant: 'warning' };
+    }
+    if (reasonParam === 'logout') {
+      return { text: 'You have been securely signed out.', variant: 'info' };
+    }
+    return null;
+  };
+
+  const reasonNotice = getReasonNotice();
 
   // Org lookup state
   const [org, setOrg] = useState<OrgMetadata | null>(null);
@@ -113,6 +133,11 @@ export const OrgLogin: React.FC = () => {
         password,
         organisation_slug: slug
       });
+
+      if (res.data?.require_login_verification) {
+        navigate(`/verify-login?email=${encodeURIComponent(res.data.email || email.trim())}`);
+        return;
+      }
 
       if (res.data?.success) {
         if (res.data.require_2fa) {
@@ -256,6 +281,19 @@ export const OrgLogin: React.FC = () => {
 
         {/* Login Card */}
         <Card className="p-8 space-y-6">
+          {reasonNotice && (
+            <div className={`p-3 rounded-md text-xs flex items-center gap-2 border ${
+              reasonNotice.variant === 'warning'
+                ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                : reasonNotice.variant === 'danger'
+                ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300'
+            }`}>
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{reasonNotice.text}</span>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 rounded-md bg-rose-500/10 border border-rose-500/20 text-xs text-rose-500 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />

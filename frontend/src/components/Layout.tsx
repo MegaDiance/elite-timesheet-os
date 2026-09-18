@@ -18,7 +18,11 @@ import {
   KeyRound,
   User as UserIcon,
   Layers,
-  MessageSquare
+  MessageSquare,
+  LayoutDashboard,
+  BarChart3,
+  Menu,
+  X
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { Badge } from './ui/Badge';
@@ -26,6 +30,9 @@ import { BreakSettingsModal } from './modals/BreakSettingsModal';
 import { LockPasswordsModal } from './modals/LockPasswordsModal';
 import { TwoFactorModal } from './modals/TwoFactorModal';
 import { OrgSwitchModal, type OrganisationMembership } from './modals/OrgSwitchModal';
+import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
+import { AccountSecurityModal } from './modals/AccountSecurityModal';
+import { useSessionTimeout } from '../hooks/useSessionTimeout';
 
 interface DecodedToken {
   id: string;
@@ -43,12 +50,28 @@ export default function Layout() {
   const [organisations, setOrganisations] = useState<OrganisationMembership[]>([]);
   const [currentOrgName, setCurrentOrgName] = useState<string>('My Organisation');
   const [switching, setSwitching] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Modals state
   const [showBreakModal, setShowBreakModal] = useState(false);
   const [showLockModal, setShowLockModal] = useState(false);
   const [show2FAModal, setShow2FAModal] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showOrgSwitchModal, setShowOrgSwitchModal] = useState(false);
+
+  // Close mobile navigation on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Inactivity timeout & multi-tab session management
+  const {
+    showWarning,
+    remainingSeconds,
+    isKeepingAlive,
+    staySignedIn,
+    logoutNow,
+  } = useSessionTimeout();
 
   // Profile menu dropdown
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -151,9 +174,13 @@ export default function Layout() {
   const isFluid = location.pathname === '/roster' || location.pathname === '/' || location.pathname === '/portal';
 
   const isActive = (path: string) => {
-    if (path === '/roster' && (location.pathname === '/' || location.pathname === '/roster')) return true;
+    if (path === '/dashboard') return location.pathname === '/dashboard';
+    if (path === '/roster') return location.pathname === '/roster';
+    if (path === '/portal') return location.pathname === '/portal';
     return location.pathname.startsWith(path);
   };
+
+  const homePath = isPlatformAdmin ? '/platform' : '/dashboard';
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
@@ -162,7 +189,7 @@ export default function Layout() {
         <div className={`w-full mx-auto px-4 sm:px-6 lg:px-8 h-15 flex items-center justify-between ${isFluid ? 'max-w-none' : 'max-w-7xl'}`}>
           {/* Left: Brand + Organisation Context */}
           <div className="flex items-center gap-6">
-            <Link to={role === 'Employee' ? '/portal' : '/roster'} className="flex items-center gap-2 group">
+            <Link to={homePath} className="flex items-center gap-2 group">
               <div className="w-8 h-8 rounded-md bg-indigo-600 flex items-center justify-center text-white shadow-xs group-hover:bg-indigo-500 transition-colors">
                 <Clock className="w-4 h-4" />
               </div>
@@ -197,6 +224,18 @@ export default function Layout() {
               </Link>
             ) : isManagerOrAdmin ? (
               <>
+                <Link
+                  to="/dashboard"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                    isActive('/dashboard')
+                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+                  }`}
+                >
+                  <LayoutDashboard className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Command Centre</span>
+                </Link>
+
                 <Link
                   to="/roster"
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
@@ -234,6 +273,18 @@ export default function Layout() {
                 </Link>
 
                 <Link
+                  to="/reports"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                    isActive('/reports')
+                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Reports</span>
+                </Link>
+
+                <Link
                   to="/announcements"
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
                     isActive('/announcements')
@@ -243,6 +294,18 @@ export default function Layout() {
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
                   <span>Team Chat</span>
+                </Link>
+
+                <Link
+                  to="/portal"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                    isActive('/portal')
+                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>My Portal</span>
                 </Link>
 
                 {role !== 'Manager' && (
@@ -259,17 +322,65 @@ export default function Layout() {
                   </Link>
                 )}
               </>
-            ) : null}
+            ) : (
+              <>
+                <Link
+                  to="/dashboard"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                    isActive('/dashboard')
+                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+                  }`}
+                >
+                  <LayoutDashboard className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Command Centre</span>
+                </Link>
+
+                <Link
+                  to="/portal"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                    isActive('/portal')
+                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>My Timesheet</span>
+                </Link>
+
+                <Link
+                  to="/announcements"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                    isActive('/announcements')
+                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+                  }`}
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>Team Chat</span>
+                </Link>
+              </>
+            )}
           </nav>
 
-
-          {/* Right: User Profile Menu */}
-          <div className="relative" ref={profileMenuRef}>
+          {/* Right: Actions & User Profile Menu */}
+          <div className="flex items-center gap-2">
+            {/* Mobile Menu Hamburger Toggle Button */}
             <button
-              onClick={() => setShowProfileMenu(!showProfileMenu)}
-              className="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-[var(--panel-subtle)] border border-transparent hover:border-[var(--border)] transition-colors cursor-pointer select-none"
-              aria-expanded={showProfileMenu}
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] border border-[var(--border)] transition-colors cursor-pointer"
+              aria-label="Toggle navigation"
             >
+              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
+
+            {/* Profile Dropdown */}
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-[var(--panel-subtle)] border border-transparent hover:border-[var(--border)] transition-colors cursor-pointer select-none"
+                aria-expanded={showProfileMenu}
+              >
               <div className="w-7 h-7 rounded-md bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs">
                 {user?.email?.charAt(0).toUpperCase() || <UserIcon className="w-3.5 h-3.5" />}
               </div>
@@ -298,6 +409,13 @@ export default function Layout() {
 
                 {/* Account Security for All Users */}
                 <div className="py-1">
+                  <button
+                    onClick={() => { setShowSecurityModal(true); setShowProfileMenu(false); }}
+                    className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Account Security & Sessions</span>
+                  </button>
                   <button
                     onClick={() => { setShow2FAModal(true); setShowProfileMenu(false); }}
                     className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
@@ -369,6 +487,176 @@ export default function Layout() {
             )}
           </div>
         </div>
+      </div>
+
+        {/* Mobile Navigation Drawer */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[var(--border)] bg-[var(--panel)] px-4 py-3 space-y-2 animate-in slide-in-from-top-2 duration-150 shadow-xl">
+            {!isPlatformAdmin && (
+              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <span className="font-semibold text-[var(--text)] truncate">{currentOrgName}</span>
+                </div>
+                <Badge variant="purple" size="sm">{role}</Badge>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              {isPlatformAdmin ? (
+                <Link
+                  to="/platform"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                    isActive('/platform')
+                      ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                      : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                  }`}
+                >
+                  <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                  <span>Platform Admin</span>
+                </Link>
+              ) : isManagerOrAdmin ? (
+                <>
+                  <Link
+                    to="/dashboard"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/dashboard')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <LayoutDashboard className="w-4 h-4 text-indigo-400" />
+                    <span>Command Centre</span>
+                  </Link>
+
+                  <Link
+                    to="/roster"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/roster')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4 text-indigo-400" />
+                    <span>Roster Grid</span>
+                  </Link>
+
+                  <Link
+                    to="/employees"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/employees')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <Users className="w-4 h-4 text-indigo-400" />
+                    <span>Staff Directory</span>
+                  </Link>
+
+                  <Link
+                    to="/leave-requests"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/leave-requests')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <Plane className="w-4 h-4 text-indigo-400" />
+                    <span>Leave Approvals</span>
+                  </Link>
+
+                  <Link
+                    to="/reports"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/reports')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <BarChart3 className="w-4 h-4 text-indigo-400" />
+                    <span>Reports & Payroll</span>
+                  </Link>
+
+                  <Link
+                    to="/announcements"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/announcements')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4 text-indigo-400" />
+                    <span>Team Chat</span>
+                  </Link>
+
+                  <Link
+                    to="/portal"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/portal')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 text-indigo-400" />
+                    <span>My Personal Portal</span>
+                  </Link>
+
+                  {role !== 'Manager' && (
+                    <Link
+                      to="/audit"
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                        isActive('/audit')
+                          ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                          : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                      }`}
+                    >
+                      <FileText className="w-4 h-4 text-indigo-400" />
+                      <span>Audit Logs</span>
+                    </Link>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Link
+                    to="/dashboard"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/dashboard')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <LayoutDashboard className="w-4 h-4 text-indigo-400" />
+                    <span>Command Centre</span>
+                  </Link>
+
+                  <Link
+                    to="/portal"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/portal')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 text-indigo-400" />
+                    <span>My Timesheet & Shifts</span>
+                  </Link>
+
+                  <Link
+                    to="/announcements"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive('/announcements')
+                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
+                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4 text-indigo-400" />
+                    <span>Team Chat</span>
+                  </Link>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content Area */}
@@ -380,6 +668,7 @@ export default function Layout() {
       <BreakSettingsModal isOpen={showBreakModal} onClose={() => setShowBreakModal(false)} />
       <LockPasswordsModal isOpen={showLockModal} onClose={() => setShowLockModal(false)} />
       <TwoFactorModal isOpen={show2FAModal} onClose={() => setShow2FAModal(false)} />
+      <AccountSecurityModal isOpen={showSecurityModal} onClose={() => setShowSecurityModal(false)} />
       <OrgSwitchModal
         isOpen={showOrgSwitchModal}
         onClose={() => setShowOrgSwitchModal(false)}
@@ -387,6 +676,15 @@ export default function Layout() {
         currentOrgId={user?.organisation_id}
         onSwitch={handleSwitchOrg}
         switching={switching}
+      />
+
+      {/* 15-Minute Session Inactivity Timeout Modal */}
+      <SessionTimeoutModal
+        isOpen={showWarning}
+        remainingSeconds={remainingSeconds}
+        isKeepingAlive={isKeepingAlive}
+        onStaySignedIn={staySignedIn}
+        onLogout={logoutNow}
       />
     </div>
   );

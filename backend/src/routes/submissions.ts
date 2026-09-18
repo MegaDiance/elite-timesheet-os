@@ -2,8 +2,10 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
 import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { addDays, fmtISO } from '../services/periodUtils';
 
 const router = Router();
+router.use(requireAuth, requireTenantContext);
 
 /**
  * POST /api/submissions/submit
@@ -55,14 +57,75 @@ router.post('/submit', requireAuth, requireTenantContext, async (req: AuthReques
             [orgId, employee_id, start_date]
         );
 
+        if (existing.rows.length > 0 && ['Approved', 'Locked'].includes(existing.rows[0].status)) {
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'TIMESHEET_ALREADY_APPROVED',
+                    message: 'This timesheet has already been approved and finalized. Resubmission is prohibited.'
+                }
+            });
+        }
+
+        // Validate shift segments completeness across the fortnight
+        try {
+            const [y, m, d] = start_date.split('-').map(Number);
+            const fnStart = new Date(Date.UTC(y, m - 1, d));
+            const fnEnd = addDays(fnStart, 13);
+            const endDateIso = fmtISO(fnEnd);
+
+            const recs = await query(
+                `SELECT dr.record_date, ss.actual_in, ss.actual_out, ss.roster_in, ss.roster_out
+                 FROM daily_records dr
+                 JOIN shift_segments ss ON ss.record_id = dr.id
+                 WHERE dr.org_id = $1 AND dr.employee_id = $2 AND dr.record_date >= $3 AND dr.record_date <= $4`,
+                [orgId, employee_id, start_date, endDateIso]
+            );
+
+            for (const r of recs.rows) {
+                if (r.actual_in && !r.actual_out) {
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                            code: 'INVALID_SEGMENT',
+                            message: `Incomplete shift segment on ${r.record_date}: missing finish time for clock-in at ${r.actual_in}.`
+                        }
+                    });
+                }
+                if (!r.actual_in && r.actual_out) {
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                            code: 'INVALID_SEGMENT',
+                            message: `Incomplete shift segment on ${r.record_date}: missing start time for finish time at ${r.actual_out}.`
+                        }
+                    });
+                }
+            }
+        } catch (err: any) {
+            if (!err.message?.includes('does not exist') && !err.data?.error?.includes('does not exist')) {
+                throw err;
+            }
+        }
+
         let subId: string;
         if (existing.rows.length > 0) {
             subId = existing.rows[0].id;
-            await query(`
+            const updateRes = await query(`
                 UPDATE timesheet_submissions
                 SET status = 'Submitted', submitted_at = NOW(), rejection_reason = NULL
-                WHERE id = $1
-            `, [subId]);
+                WHERE id = $1 AND org_id = $2 AND status NOT IN ('Approved', 'Locked')
+                RETURNING id
+            `, [subId, orgId]);
+            if (updateRes.rows.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    error: {
+                        code: 'TIMESHEET_ALREADY_APPROVED',
+                        message: 'This timesheet has already been approved and finalized. Resubmission is prohibited.'
+                    }
+                });
+            }
         } else {
             subId = crypto.randomUUID();
             await query(`
@@ -115,13 +178,52 @@ router.get('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Compan
         const subMap = new Map<string, any>();
         subsRes.rows.forEach((s: any) => subMap.set(s.employee_id, s));
 
+        // Calculate hours for each employee in this fortnight
+        const [y, m, d] = startDate.split('-').map(Number);
+        const fnStart = new Date(Date.UTC(y, m - 1, d));
+        const fnEnd = addDays(fnStart, 13);
+        const endDateIso = fmtISO(fnEnd);
+
+        const hoursMap = new Map<string, { rostered: number; actual: number }>();
+        try {
+            const recRes = await query(
+                `SELECT dr.employee_id, ss.roster_hours, ss.actual_hours, ss.actual_in, ss.actual_out
+                 FROM daily_records dr
+                 JOIN shift_segments ss ON ss.record_id = dr.id
+                 WHERE dr.org_id = $1 AND dr.record_date >= $2 AND dr.record_date <= $3`,
+                [orgId, startDate, endDateIso]
+            );
+
+            for (const row of recRes.rows) {
+                const prev = hoursMap.get(row.employee_id) || { rostered: 0, actual: 0 };
+                prev.rostered += Number(row.roster_hours || 0);
+                if (row.actual_hours > 0 || (row.actual_in && row.actual_out)) {
+                    prev.actual += Number(row.actual_hours || 0);
+                }
+                hoursMap.set(row.employee_id, prev);
+            }
+        } catch (err: any) {
+            if (!err.message?.includes('does not exist') && !err.data?.error?.includes('does not exist')) {
+                throw err;
+            }
+        }
+
         const data = employeesRes.rows.map((emp: any) => {
             const sub = subMap.get(emp.id);
+            const empHours = hoursMap.get(emp.id) || { rostered: 0, actual: 0 };
+            const contracted = Number(emp.contracted_hours || 76);
+            const actualHours = Math.round(empHours.actual * 100) / 100;
+            const rosteredHours = Math.round(empHours.rostered * 100) / 100;
+            const variance = Math.round((actualHours - contracted) * 100) / 100;
+
             return {
                 employee_id: emp.id,
                 full_name: emp.full_name,
                 department: emp.department,
-                contracted_hours: Number(emp.contracted_hours || 76),
+                contracted_hours: contracted,
+                rostered_hours: rosteredHours,
+                actual_hours: actualHours,
+                variance_hours: variance,
                 status: sub ? sub.status : 'Draft',
                 submission_id: sub ? sub.id : null,
                 submitted_at: sub ? sub.submitted_at : null,
@@ -147,6 +249,13 @@ router.post('/review', requireAuth, requireTenantContext, requireRole(['Admin', 
         const orgId = req.user?.organisation_id!;
         const { submission_id, employee_id, start_date } = req.body;
 
+        if (start_date) {
+            const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
+            if (lockRes.rows[0]?.timesheet_locked) {
+                return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheet is locked for this fortnight.' } });
+            }
+        }
+
         let targetId = submission_id;
         if (!targetId && employee_id && start_date) {
             const subRes = await query('SELECT id FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
@@ -156,10 +265,39 @@ router.post('/review', requireAuth, requireTenantContext, requireRole(['Admin', 
         }
 
         if (!targetId) {
-            return res.status(400).json({ success: false, error: { message: 'Missing submission identification' } });
+            return res.status(400).json({ success: false, error: { message: 'Missing submission identification or submission does not exist.' } });
         }
 
-        await query(`UPDATE timesheet_submissions SET status = 'Under Review' WHERE id = $1 AND org_id = $2`, [targetId, orgId]);
+        const subCheck = await query('SELECT id, status FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
+        if (subCheck.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { message: 'Submission not found in your organisation.' } });
+        }
+
+        const curStatus = subCheck.rows[0].status;
+        if (['Approved', 'Locked'].includes(curStatus)) {
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'TIMESHEET_ALREADY_APPROVED',
+                    message: 'Approved timesheets cannot be moved to Under Review.'
+                }
+            });
+        }
+        if (!['Submitted', 'Under Review'].includes(curStatus)) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_TRANSITION',
+                    message: `Cannot review timesheet with status '${curStatus}'. Only submitted timesheets can be reviewed.`
+                }
+            });
+        }
+
+        await query(`
+            UPDATE timesheet_submissions
+            SET status = 'Under Review'
+            WHERE id = $1 AND org_id = $2 AND status IN ('Submitted', 'Under Review')
+        `, [targetId, orgId]);
 
         res.json({ success: true, data: { status: 'Under Review' } });
     } catch (err: any) {
@@ -178,29 +316,71 @@ router.post('/approve', requireAuth, requireTenantContext, requireRole(['Admin',
         const userId = req.user?.id!;
         const { submission_id, employee_id, start_date } = req.body;
 
+        if (start_date) {
+            const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
+            if (lockRes.rows[0]?.timesheet_locked) {
+                return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheet is locked for this fortnight.' } });
+            }
+        }
+
         let targetId = submission_id;
         if (!targetId && employee_id && start_date) {
-            const subRes = await query('SELECT id FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
+            // Validate employee belongs to caller's organisation
+            const empCheck = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL', [employee_id, orgId]);
+            if (empCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, error: { message: 'Employee not found in your organisation.' } });
+            }
+
+            const subRes = await query('SELECT id, status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
             if (subRes.rows.length > 0) {
                 targetId = subRes.rows[0].id;
             } else {
-                targetId = crypto.randomUUID();
-                await query(`
-                    INSERT INTO timesheet_submissions (id, org_id, employee_id, start_date, status, submitted_at)
-                    VALUES ($1, $2, $3, $4, 'Submitted', NOW())
-                `, [targetId, orgId, employee_id, start_date]);
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_TRANSITION', message: 'Cannot approve timesheet: Timesheet has not been submitted.' }
+                });
             }
         }
 
         if (!targetId) {
-            return res.status(400).json({ success: false, error: { message: 'Missing submission identification' } });
+            return res.status(400).json({ success: false, error: { message: 'Missing submission identification or no submission exists.' } });
         }
 
-        await query(`
+        const subCheck = await query('SELECT id, status FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
+        if (subCheck.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { message: 'Submission not found in your organisation.' } });
+        }
+
+        const curStatus = subCheck.rows[0].status;
+        if (['Approved', 'Locked'].includes(curStatus)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'ALREADY_APPROVED', message: 'This timesheet has already been approved.' }
+            });
+        }
+        if (!['Submitted', 'Under Review'].includes(curStatus)) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_TRANSITION',
+                    message: `Cannot approve timesheet with status '${curStatus}'. Timesheet must be submitted before approval.`
+                }
+            });
+        }
+
+        const updateRes = await query(`
             UPDATE timesheet_submissions
             SET status = 'Approved', reviewed_by = $1, reviewed_at = NOW(), rejection_reason = NULL
-            WHERE id = $2 AND org_id = $3
+            WHERE id = $2 AND org_id = $3 AND status IN ('Submitted', 'Under Review')
+            RETURNING id
         `, [userId, targetId, orgId]);
+
+        if (updateRes.rows.length === 0) {
+            return res.status(409).json({
+                success: false,
+                error: { code: 'CONCURRENT_MODIFICATION', message: 'Timesheet status was modified concurrently.' }
+            });
+        }
 
         // Audit log
         await query(`
@@ -229,35 +409,82 @@ router.post('/reject', requireAuth, requireTenantContext, requireRole(['Admin', 
     try {
         const orgId = req.user?.organisation_id!;
         const userId = req.user?.id!;
-        const { submission_id, employee_id, start_date, reason } = req.body;
+        const { submission_id, employee_id, start_date } = req.body;
+        const rawReason = req.body.reason || req.body.rejection_reason;
 
-        if (!reason || !reason.trim()) {
+        if (!rawReason || !rawReason.trim()) {
             return res.status(400).json({ success: false, error: { message: 'A rejection reason is required.' } });
+        }
+        const reason = rawReason.trim();
+
+        if (start_date) {
+            const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
+            if (lockRes.rows[0]?.timesheet_locked) {
+                return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheet is locked for this fortnight.' } });
+            }
         }
 
         let targetId = submission_id;
         if (!targetId && employee_id && start_date) {
-            const subRes = await query('SELECT id FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
+            // Validate employee belongs to caller's organisation
+            const empCheck = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL', [employee_id, orgId]);
+            if (empCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, error: { message: 'Employee not found in your organisation.' } });
+            }
+
+            const subRes = await query('SELECT id, status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
             if (subRes.rows.length > 0) {
                 targetId = subRes.rows[0].id;
             } else {
-                targetId = crypto.randomUUID();
-                await query(`
-                    INSERT INTO timesheet_submissions (id, org_id, employee_id, start_date, status, submitted_at)
-                    VALUES ($1, $2, $3, $4, 'Submitted', NOW())
-                `, [targetId, orgId, employee_id, start_date]);
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_TRANSITION', message: 'Cannot reject timesheet: Timesheet has not been submitted.' }
+                });
             }
         }
 
         if (!targetId) {
-            return res.status(400).json({ success: false, error: { message: 'Missing submission identification' } });
+            return res.status(400).json({ success: false, error: { message: 'Missing submission identification or no submission exists to reject.' } });
         }
 
-        await query(`
+        const subCheck = await query('SELECT id, status FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
+        if (subCheck.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { message: 'Submission not found in your organisation.' } });
+        }
+
+        const curStatus = subCheck.rows[0].status;
+        if (['Approved', 'Locked'].includes(curStatus)) {
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'TIMESHEET_ALREADY_APPROVED',
+                    message: 'This timesheet has already been approved and finalized. It cannot be rejected.'
+                }
+            });
+        }
+        if (!['Submitted', 'Under Review'].includes(curStatus)) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_TRANSITION',
+                    message: `Cannot reject timesheet with status '${curStatus}'. Only submitted timesheets can be rejected.`
+                }
+            });
+        }
+
+        const updateRes = await query(`
             UPDATE timesheet_submissions
             SET status = 'Rejected', rejection_reason = $1, reviewed_by = $2, reviewed_at = NOW()
-            WHERE id = $3 AND org_id = $4
-        `, [reason.trim(), userId, targetId, orgId]);
+            WHERE id = $3 AND org_id = $4 AND status IN ('Submitted', 'Under Review')
+            RETURNING id
+        `, [reason, userId, targetId, orgId]);
+
+        if (updateRes.rows.length === 0) {
+            return res.status(409).json({
+                success: false,
+                error: { code: 'CONCURRENT_MODIFICATION', message: 'Timesheet status was modified concurrently.' }
+            });
+        }
 
         // Audit log
         await query(`
@@ -268,13 +495,121 @@ router.post('/reject', requireAuth, requireTenantContext, requireRole(['Admin', 
             orgId,
             userId,
             targetId,
-            JSON.stringify({ status: 'Rejected', reason: reason.trim(), rejected_by: req.user?.email })
+            JSON.stringify({ status: 'Rejected', reason, rejected_by: req.user?.email })
         ]);
 
-        res.json({ success: true, data: { id: targetId, status: 'Rejected', rejection_reason: reason.trim() } });
+        res.json({ success: true, data: { id: targetId, status: 'Rejected', rejection_reason: reason } });
     } catch (err: any) {
         console.error('[REJECT SUBMISSION ERROR]', err);
         res.status(500).json({ success: false, error: { message: 'Failed to reject timesheet submission.' } });
+    }
+});
+
+/**
+ * POST /api/submissions/bulk-approve
+ * Manager / Admin approves multiple employee timesheets in one operation
+ */
+router.post('/bulk-approve', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+    try {
+        const orgId = req.user?.organisation_id!;
+        const userId = req.user?.id!;
+        let { start_date, employee_ids, submission_ids } = req.body;
+
+        if (!start_date) {
+            return res.status(400).json({ success: false, error: { message: 'start_date is required.' } });
+        }
+
+        // If submission_ids is provided, resolve them to employee_ids belonging to caller's org
+        if (Array.isArray(submission_ids) && submission_ids.length > 0 && (!employee_ids || employee_ids.length === 0)) {
+            const subPlaceholders = submission_ids.map((_, i) => `$${i + 2}`).join(', ');
+            const subEmpRes = await query(
+                `SELECT employee_id FROM timesheet_submissions WHERE org_id = $1 AND id IN (${subPlaceholders})`,
+                [orgId, ...submission_ids]
+            );
+            employee_ids = subEmpRes.rows.map((r: any) => r.employee_id);
+        }
+
+        if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+            return res.status(400).json({ success: false, error: { message: 'start_date and non-empty employee_ids or submission_ids array are required.' } });
+        }
+
+        // Check if timesheet is locked for this fortnight
+        const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
+        if (lockRes.rows[0]?.timesheet_locked) {
+            return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheet is locked for this fortnight.' } });
+        }
+
+        // Verify that all employees belong to caller's org (filter out any foreign ids for tenant isolation)
+        const empPlaceholders = employee_ids.map((_, i) => `$${i + 2}`).join(', ');
+        const empCheck = await query(
+            `SELECT id FROM employees WHERE org_id = $1 AND id IN (${empPlaceholders}) AND deleted_at IS NULL`,
+            [orgId, ...employee_ids]
+        );
+        const validEmployees = empCheck.rows.map((e: any) => e.id);
+
+        if (validEmployees.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'INVALID_EMPLOYEE', message: 'No selected employees belong to your organisation.' }
+            });
+        }
+
+        const approvedEmployees: string[] = [];
+        for (const empId of validEmployees) {
+            const subRes = await query(
+                `SELECT id, status FROM timesheet_submissions 
+                 WHERE org_id = $1 AND employee_id = $2 AND start_date = $3 AND status IN ('Submitted', 'Under Review')`,
+                [orgId, empId, start_date]
+            );
+
+            if (subRes.rows.length === 0) {
+                // Skip employees without a submitted timesheet
+                continue;
+            }
+
+            const subId = subRes.rows[0].id;
+            const updateRes = await query(
+                `UPDATE timesheet_submissions
+                 SET status = 'Approved', reviewed_by = $1, reviewed_at = NOW(), rejection_reason = NULL
+                 WHERE id = $2 AND org_id = $3 AND status IN ('Submitted', 'Under Review')
+                 RETURNING id`,
+                [userId, subId, orgId]
+            );
+            if (updateRes.rows.length > 0) {
+                approvedEmployees.push(empId);
+            }
+        }
+
+        if (approvedEmployees.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'NO_SUBMITTED_TIMESHEETS', message: 'No selected employees have submitted timesheets ready for approval.' }
+            });
+        }
+
+        // Audit log
+        await query(
+            `INSERT INTO audit_logs (id, org_id, actor_id, action, entity_type, entity_id, details, timestamp)
+             VALUES ($1, $2, $3, 'TIMESHEET_BULK_APPROVED', 'timesheet_submissions', NULL, $4, NOW())`,
+            [
+                crypto.randomUUID(),
+                orgId,
+                userId,
+                JSON.stringify({ start_date, approved_count: approvedEmployees.length, employee_ids: approvedEmployees, approved_by: req.user?.email })
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: {
+                start_date,
+                approved_count: approvedEmployees.length,
+                approved_employees: approvedEmployees
+            }
+        });
+    } catch (err: any) {
+        console.error('[BULK APPROVE ERROR]', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to bulk-approve timesheets.' } });
     }
 });
 

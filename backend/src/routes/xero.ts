@@ -5,13 +5,43 @@ import {
     getXeroConnectionStatus,
     disconnectXero,
     saveXeroConnection,
-    transformPayrollToXeroTimesheets
+    transformPayrollToXeroTimesheets,
+    verifyXeroOAuthState
 } from '../services/xeroService';
 import { generatePayrollReport } from '../services/reportService';
 import { query } from '../services/db';
 import crypto from 'crypto';
 
 const router = Router();
+
+/**
+ * GET /api/xero/callback
+ * Handles OAuth 2.0 callback from Xero, validates HMAC state signature, and prevents CSRF
+ */
+router.get('/callback', async (req: any, res: Response) => {
+    try {
+        const { code, state, error } = req.query;
+        if (error) {
+            return res.status(400).json({ success: false, error: { message: `Xero authorization failed: ${error}` } });
+        }
+        if (!state || !code) {
+            return res.status(400).json({ success: false, error: { message: 'Missing code or state parameter.' } });
+        }
+        const stateVerification = verifyXeroOAuthState(state as string);
+        if (!stateVerification.valid || !stateVerification.orgId) {
+            return res.status(403).json({ success: false, error: { message: `Invalid or expired OAuth state: ${stateVerification.reason}` } });
+        }
+
+        res.json({
+            success: true,
+            message: 'OAuth state verified successfully. Connection ready to complete.',
+            data: { org_id: stateVerification.orgId }
+        });
+    } catch (err: any) {
+        console.error('[XERO CALLBACK ERROR]', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to process Xero callback.' } });
+    }
+});
 
 /**
  * GET /api/xero/status

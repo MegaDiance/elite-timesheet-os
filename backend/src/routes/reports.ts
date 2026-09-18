@@ -3,6 +3,7 @@ import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../
 import { generatePayrollReport, convertReportToCsv, generatePrintableHtml } from '../services/reportService';
 
 const router = Router();
+router.use(requireAuth, requireTenantContext);
 
 /**
  * GET /api/reports/payroll

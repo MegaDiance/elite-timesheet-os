@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { query, seedOrgDefaults } from '../services/db';
+import { query, withTransaction, seedOrgDefaults } from '../services/db';
 import { hashPassword } from '../services/auth';
 import { sendTransactionalEmail, buildOrgInviteEmailTemplate } from '../services/emailService';
 import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
@@ -8,9 +8,9 @@ import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
 const router = Router();
 
 // Public route to verify an org invite token
-router.get(['/verify-invite', '/verify/invite'], async (req: any, res: Response) => {
+const handleVerifyInvite = async (req: any, res: Response) => {
     try {
-        const { token } = req.query;
+        const token = (req.query.token as string || '').trim();
         if (!token) return res.status(400).json({ success: false, error: { message: 'Token required.' } });
 
         const tokenRes = await query('SELECT email FROM org_invitation_tokens WHERE token = $1 AND used = false', [token]);
@@ -23,7 +23,10 @@ router.get(['/verify-invite', '/verify/invite'], async (req: any, res: Response)
         console.error('[PLATFORM VERIFY INVITE ERROR]', err);
         res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to verify organization invite token.' } });
     }
-});
+};
+
+router.get('/verify-invite', handleVerifyInvite);
+router.get('/verify/invite', handleVerifyInvite);
 
 // Public route to claim an org invite
 router.post('/claim-invite', async (req: any, res: Response) => {
@@ -76,9 +79,6 @@ router.post('/claim-invite', async (req: any, res: Response) => {
             });
         }
 
-        // Mark token used
-        await query('UPDATE org_invitation_tokens SET used = true WHERE token = $1', [token]);
-
         const orgId = crypto.randomUUID();
         const rosterLockHash = roster_lock_password ? await hashPassword(roster_lock_password) : null;
         const timesheetLockHash = timesheet_lock_password ? await hashPassword(timesheet_lock_password) : null;
@@ -91,59 +91,67 @@ router.post('/claim-invite', async (req: any, res: Response) => {
             hasSlug = false;
         }
 
+        let slug = '';
         if (hasSlug) {
             const baseSlug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'org';
-            let slug = baseSlug;
+            slug = baseSlug;
             let suffix = 1;
             while (true) {
                 const existingSlug = await query('SELECT id FROM organisations WHERE slug = $1', [slug]);
                 if (existingSlug.rows.length === 0) break;
                 slug = `${baseSlug}-${suffix++}`;
             }
-
-            await query(
-                `INSERT INTO organisations (id, name, slug, display_name, break_mins_weekday, break_mins_weekend, break_threshold_hours, roster_lock_password_hash, timesheet_lock_password_hash)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [
-                    orgId, 
-                    name.trim(),
-                    slug,
-                    name.trim(),
-                    break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
-                    break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
-                    break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
-                    rosterLockHash,
-                    timesheetLockHash
-                ]
-            );
-        } else {
-            await query(
-                `INSERT INTO organisations (id, name, break_mins_weekday, break_mins_weekend, break_threshold_hours, roster_lock_password_hash, timesheet_lock_password_hash)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [
-                    orgId, 
-                    name.trim(),
-                    break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
-                    break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
-                    break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
-                    rosterLockHash,
-                    timesheetLockHash
-                ]
-            );
         }
 
         const userId = crypto.randomUUID();
         const hash = await hashPassword(admin_password);
         const twoFactorEnabled = Boolean(enable_2fa);
 
-        await query('INSERT INTO users (id, org_id, email, password_hash, role, two_factor_enabled) VALUES ($1, $2, $3, $4, $5, $6)', [
-            userId, orgId, normalizedInputEmail, hash, 'Company Admin', twoFactorEnabled
-        ]);
-        await query('INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)', [
-            crypto.randomUUID(), orgId, userId, 'Company Admin'
-        ]);
+        await withTransaction(async (txQuery) => {
+            // Mark token used
+            await txQuery('UPDATE org_invitation_tokens SET used = true WHERE token = $1', [token]);
 
-        await seedOrgDefaults(orgId);
+            if (hasSlug) {
+                await txQuery(
+                    `INSERT INTO organisations (id, name, slug, display_name, break_mins_weekday, break_mins_weekend, break_threshold_hours, roster_lock_password_hash, timesheet_lock_password_hash)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                    [
+                        orgId, 
+                        name.trim(),
+                        slug,
+                        name.trim(),
+                        break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
+                        break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
+                        break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
+                        rosterLockHash,
+                        timesheetLockHash
+                    ]
+                );
+            } else {
+                await txQuery(
+                    `INSERT INTO organisations (id, name, break_mins_weekday, break_mins_weekend, break_threshold_hours, roster_lock_password_hash, timesheet_lock_password_hash)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [
+                        orgId, 
+                        name.trim(),
+                        break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
+                        break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
+                        break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
+                        rosterLockHash,
+                        timesheetLockHash
+                    ]
+                );
+            }
+
+            await txQuery('INSERT INTO users (id, org_id, email, password_hash, role, two_factor_enabled) VALUES ($1, $2, $3, $4, $5, $6)', [
+                userId, orgId, normalizedInputEmail, hash, 'Company Admin', twoFactorEnabled
+            ]);
+            await txQuery('INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)', [
+                crypto.randomUUID(), orgId, userId, 'Company Admin'
+            ]);
+
+            await seedOrgDefaults(orgId);
+        });
 
         res.json({ success: true, data: { id: orgId, admin_id: userId } });
     } catch (err: any) {
@@ -361,36 +369,48 @@ router.post('/organisations', async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Organization name, admin email, and password required.' } });
         }
 
+        const normalizedAdminEmail = admin_email.trim().toLowerCase();
+
+        // Guard against duplicate admin email
+        const existingUser = await query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedAdminEmail]);
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'EMAIL_IN_USE', message: `An account with email ${normalizedAdminEmail} already exists. Please use a different admin email.` }
+            });
+        }
+
         const orgId = crypto.randomUUID();
         const rosterLockHash = roster_lock_password ? await hashPassword(roster_lock_password) : null;
         const timesheetLockHash = timesheet_lock_password ? await hashPassword(timesheet_lock_password) : null;
-
-        await query(
-            `INSERT INTO organisations (id, name, break_mins_weekday, break_mins_weekend, break_threshold_hours, roster_lock_password_hash, timesheet_lock_password_hash)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [
-                orgId, 
-                name.trim(),
-                break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
-                break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
-                break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
-                rosterLockHash,
-                timesheetLockHash
-            ]
-        );
-
         const userId = crypto.randomUUID();
         const hash = await hashPassword(admin_password);
         const twoFactorEnabled = Boolean(enable_2fa);
 
-        await query('INSERT INTO users (id, org_id, email, password_hash, role, two_factor_enabled) VALUES ($1, $2, $3, $4, $5, $6)', [
-            userId, orgId, admin_email.trim().toLowerCase(), hash, 'Company Admin', twoFactorEnabled
-        ]);
-        await query('INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)', [
-            crypto.randomUUID(), orgId, userId, 'Company Admin'
-        ]);
+        await withTransaction(async (txQuery) => {
+            await txQuery(
+                `INSERT INTO organisations (id, name, break_mins_weekday, break_mins_weekend, break_threshold_hours, roster_lock_password_hash, timesheet_lock_password_hash)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [
+                    orgId, 
+                    name.trim(),
+                    break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
+                    break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
+                    break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
+                    rosterLockHash,
+                    timesheetLockHash
+                ]
+            );
 
-        await seedOrgDefaults(orgId);
+            await txQuery('INSERT INTO users (id, org_id, email, password_hash, role, two_factor_enabled) VALUES ($1, $2, $3, $4, $5, $6)', [
+                userId, orgId, normalizedAdminEmail, hash, 'Company Admin', twoFactorEnabled
+            ]);
+            await txQuery('INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)', [
+                crypto.randomUUID(), orgId, userId, 'Company Admin'
+            ]);
+
+            await seedOrgDefaults(orgId);
+        });
 
         res.json({ success: true, data: { id: orgId, admin_id: userId } });
     } catch (err: any) {

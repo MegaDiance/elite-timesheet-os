@@ -228,7 +228,6 @@ describe('Two-Step Verification (2FA), Password Reset, & Security Hardening Inte
     describe('Security Response Headers & Sanitization', () => {
         it('should include enterprise security headers on all responses', async () => {
             const res = await request(app).get('/api/auth/verify-reset-token');
-
             expect(res.headers['x-content-type-options']).toBe('nosniff');
             expect(res.headers['x-frame-options']).toBe('SAMEORIGIN');
             expect(res.headers['x-xss-protection']).toBe('1; mode=block');

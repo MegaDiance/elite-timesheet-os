@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { FileCheck2, CheckCircle2, X, ThumbsDown, Search, Eye, CheckSquare, Square } from 'lucide-react';
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
+import { Badge } from '../components/ui/Badge';
 
 interface Segment {
   id?: string;
@@ -35,6 +37,16 @@ interface Employee {
 export default function Roster() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [records, setRecords] = useState<Record[]>([]);
+  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [showSubmissionsModal, setShowSubmissionsModal] = useState(false);
+  const [submissionSearch, setSubmissionSearch] = useState('');
+  const [submissionDeptFilter, setSubmissionDeptFilter] = useState('ALL');
+  const [submissionStatusFilter, setSubmissionStatusFilter] = useState<string>('ALL');
+  const [selectedSubIds, setSelectedSubIds] = useState<string[]>([]);
+  const [inspectingEmpId, setInspectingEmpId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<any>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [submittingAction, setSubmittingAction] = useState(false);
   const [rosterLocked, setRosterLocked] = useState(false);
   const [timesheetLocked, setTimesheetLocked] = useState(false);
   const [isPublished, setIsPublished] = useState(false);
@@ -86,14 +98,16 @@ export default function Roster() {
 
   const fetchData = async () => {
     try {
-      const [empRes, recordsRes, locksRes] = await Promise.all([
+      const [empRes, recordsRes, locksRes, subsRes] = await Promise.all([
         api.get('/employees'),
         api.get('/records'),
-        api.get('/locks')
+        api.get('/locks'),
+        api.get(`/submissions?start_date=${fnIso}`).catch(() => ({ data: { data: [] } }))
       ]);
 
       if (empRes.data?.data) setEmployees(empRes.data.data);
       if (recordsRes.data?.data) setRecords(recordsRes.data.data);
+      if (subsRes?.data?.data) setSubmissions(subsRes.data.data);
       if (locksRes.data?.data) {
         const lock = locksRes.data.data.find((l: any) => l.start_date === fnIso);
         if (lock) {
@@ -108,6 +122,65 @@ export default function Roster() {
       }
     } catch (err) {
       console.error('Failed to fetch roster data:', err);
+    }
+  };
+
+  const handleApproveSubmission = async (empId: string, subId?: string) => {
+    try {
+      setSubmittingAction(true);
+      await api.post('/submissions/approve', {
+        submission_id: subId,
+        employee_id: empId,
+        start_date: fnIso
+      });
+      showToast('Timesheet approved successfully.');
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to approve timesheet');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedSubIds.length === 0) return;
+    try {
+      setSubmittingAction(true);
+      const res = await api.post('/submissions/bulk-approve', {
+        start_date: fnIso,
+        submission_ids: selectedSubIds
+      });
+      if (res.data?.success) {
+        showToast(`Approved ${res.data.data.approved_count} timesheet${res.data.data.approved_count === 1 ? '' : 's'} successfully.`);
+        setSelectedSubIds([]);
+        fetchData();
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to bulk approve timesheets');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleRejectSubmission = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectTarget || !rejectionReason.trim()) return;
+    try {
+      setSubmittingAction(true);
+      await api.post('/submissions/reject', {
+        submission_id: rejectTarget.submission_id,
+        employee_id: rejectTarget.employee_id,
+        start_date: fnIso,
+        rejection_reason: rejectionReason.trim()
+      });
+      showToast('Timesheet rejected with feedback note.');
+      setRejectTarget(null);
+      setRejectionReason('');
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to reject timesheet');
+    } finally {
+      setSubmittingAction(false);
     }
   };
 
@@ -509,6 +582,16 @@ export default function Roster() {
         </div>
         
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Timesheet Review Action */}
+          <button 
+            onClick={() => setShowSubmissionsModal(true)} 
+            className="px-3 py-2 rounded-xl text-xs font-semibold bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Review employee submitted timesheets"
+          >
+            <FileCheck2 className="w-3.5 h-3.5" />
+            <span>Timesheets ({submissions.filter(s => s.status === 'Submitted').length})</span>
+          </button>
+
           <button 
             onClick={handleExportCsv} 
             className="px-3 py-2 rounded-xl text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors"
@@ -522,7 +605,7 @@ export default function Roster() {
             className="px-3 py-2 rounded-xl text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors"
             title="Print or Save PDF Report"
           >
-            <span>PDF Report</span>
+            <span>Print / PDF</span>
           </button>
 
           <button 
@@ -686,20 +769,51 @@ export default function Roster() {
                   return (
                     <tr key={emp.id} className="hover:bg-[var(--hover-row)] group border-b border-[var(--border)]">
                       <td className="name-col p-2">
-                        <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
+                        <div className="flex items-baseline gap-2 mb-1 flex-wrap">
                           <span className="font-bold text-sm text-[var(--text)]">{emp.full_name}</span>
                           <span className="text-xs font-semibold text-[#ef4444] dark:text-[#f87171] tracking-tight">
                             {emp.contracted_hours !== undefined && emp.contracted_hours !== null ? `${emp.contracted_hours} hours` : '76 hours'}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <button onClick={() => handleSingleEmployeeRoster(emp)} className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-[var(--primary-light)] text-[var(--primary)] hover:opacity-80 border border-[var(--primary)]/30">
+
+                        {/* Submission status & quick approve */}
+                        {(() => {
+                          const empSub = submissions.find(s => s.employee_id === emp.id);
+                          const subStatus = empSub ? empSub.status : 'Draft';
+                          return (
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <Badge
+                                variant={
+                                  subStatus === 'Approved' ? 'success' :
+                                  subStatus === 'Submitted' ? 'warning' :
+                                  subStatus === 'Rejected' ? 'danger' : 'outline'
+                                }
+                                size="sm"
+                              >
+                                {subStatus}
+                              </Badge>
+                              {subStatus === 'Submitted' && (
+                                <button
+                                  onClick={() => handleApproveSubmission(emp.id, empSub?.submission_id)}
+                                  disabled={submittingAction}
+                                  className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
+                                  title="Approve employee timesheet"
+                                >
+                                  <CheckCircle2 className="w-2.5 h-2.5" /> Approve
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button onClick={() => handleSingleEmployeeRoster(emp)} className="text-[0.65rem] font-bold px-2 py-1 rounded bg-[var(--primary-light)] text-[var(--primary)] hover:opacity-80 border border-[var(--primary)]/30 touch-manipulation">
                             Roster
                           </button>
-                          <button onClick={() => handleSingleEmployeeLogAll(emp.id, emp.full_name)} className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-[var(--success-light)] text-[var(--success)] hover:opacity-80 border border-[var(--success)]/30">
+                          <button onClick={() => handleSingleEmployeeLogAll(emp.id, emp.full_name)} className="text-[0.65rem] font-bold px-2 py-1 rounded bg-[var(--success-light)] text-[var(--success)] hover:opacity-80 border border-[var(--success)]/30 touch-manipulation">
                             Log All
                           </button>
-                          <button onClick={() => handleSingleEmployeeClear(emp.id, emp.full_name)} className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-[var(--danger-light)] text-[var(--danger)] hover:opacity-80 border border-[var(--danger)]/30">
+                          <button onClick={() => handleSingleEmployeeClear(emp.id, emp.full_name)} className="text-[0.65rem] font-bold px-2 py-1 rounded bg-[var(--danger-light)] text-[var(--danger)] hover:opacity-80 border border-[var(--danger)]/30 touch-manipulation">
                             Clear
                           </button>
                         </div>
@@ -1072,6 +1186,449 @@ export default function Roster() {
                   className="px-6 py-2.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-[var(--primary-light)] disabled:opacity-50"
                 >
                   {publishing ? 'Publishing...' : 'Finalise, Lock & Push'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Timesheet Submissions Review Modal */}
+      {showSubmissionsModal && (() => {
+        // Collect departments
+        const depts = Array.from(new Set(employees.map(e => e.department).filter(Boolean))).sort();
+
+        // Calculate counts
+        const submittedEmployees = employees.filter(emp => {
+          const empSub = submissions.find(s => s.employee_id === emp.id);
+          return empSub && (empSub.status === 'Submitted' || empSub.status === 'Under Review');
+        });
+
+        // Filtered employees
+        const filteredEmployees = employees.filter(emp => {
+          const empSub = submissions.find(s => s.employee_id === emp.id);
+          const status = empSub ? empSub.status : 'Draft';
+
+          const matchesSearch = !submissionSearch.trim() || 
+            emp.full_name.toLowerCase().includes(submissionSearch.toLowerCase()) ||
+            (emp.department && emp.department.toLowerCase().includes(submissionSearch.toLowerCase()));
+
+          const matchesDept = submissionDeptFilter === 'ALL' || emp.department === submissionDeptFilter;
+
+          const matchesStatus = submissionStatusFilter === 'ALL' || status === submissionStatusFilter;
+
+          return matchesSearch && matchesDept && matchesStatus;
+        });
+
+        const allEligibleSelected = submittedEmployees.length > 0 && submittedEmployees.every(emp => {
+          const sub = submissions.find(s => s.employee_id === emp.id);
+          return sub?.submission_id && selectedSubIds.includes(sub.submission_id);
+        });
+
+        const toggleSelectAll = () => {
+          if (allEligibleSelected) {
+            setSelectedSubIds([]);
+          } else {
+            const allIds = submittedEmployees
+              .map(emp => submissions.find(s => s.employee_id === emp.id)?.submission_id)
+              .filter(Boolean) as string[];
+            setSelectedSubIds(allIds);
+          }
+        };
+
+        const toggleSelectSubmission = (subId: string) => {
+          setSelectedSubIds(prev => 
+            prev.includes(subId) ? prev.filter(id => id !== subId) : [...prev, subId]
+          );
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
+            <div className="bg-[var(--panel)] rounded-3xl w-full max-w-4xl border border-[var(--border)] shadow-2xl p-6 flex flex-col max-h-[90vh]">
+              {/* Modal Header */}
+              <div className="flex justify-between items-center mb-4 border-b border-[var(--border)] pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
+                    <FileCheck2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[var(--text)]">
+                      Timesheet Submissions & Approvals
+                    </h3>
+                    <p className="text-xs text-[var(--muted)]">
+                      Fortnight: <strong className="text-[var(--text)] font-mono">{fnIso}</strong>
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowSubmissionsModal(false)}
+                  className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Filters & Actions Bar */}
+              <div className="space-y-3 mb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  {/* Status Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5 bg-[var(--panel-subtle)] p-1 rounded-xl border border-[var(--border)]">
+                    {[
+                      { id: 'ALL', label: 'All', count: employees.length },
+                      { id: 'Submitted', label: 'Submitted', count: submissions.filter(s => s.status === 'Submitted' || s.status === 'Under Review').length },
+                      { id: 'Approved', label: 'Approved', count: submissions.filter(s => s.status === 'Approved').length },
+                      { id: 'Rejected', label: 'Rejected', count: submissions.filter(s => s.status === 'Rejected').length },
+                      { id: 'Draft', label: 'Draft', count: employees.filter(e => !submissions.some(s => s.employee_id === e.id) || submissions.find(s => s.employee_id === e.id)?.status === 'Draft').length },
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setSubmissionStatusFilter(tab.id)}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                          submissionStatusFilter === tab.id
+                            ? 'bg-[var(--panel)] text-[var(--text)] shadow-xs border border-[var(--border)]'
+                            : 'text-[var(--muted)] hover:text-[var(--text)]'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        {tab.count > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                            tab.id === 'Submitted' && tab.count > 0
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : 'bg-[var(--glass-8)] text-[var(--muted)]'
+                          }`}>
+                            {tab.count}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Search & Department */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                      <input
+                        type="text"
+                        value={submissionSearch}
+                        onChange={e => setSubmissionSearch(e.target.value)}
+                        placeholder="Search employee..."
+                        className="bg-[var(--input-bg)] text-xs text-[var(--text)] pl-8 pr-3 py-1.5 rounded-lg border border-[var(--border)] focus:outline-none w-36 sm:w-44"
+                      />
+                    </div>
+                    {depts.length > 0 && (
+                      <select
+                        value={submissionDeptFilter}
+                        onChange={e => setSubmissionDeptFilter(e.target.value)}
+                        className="bg-[var(--panel-subtle)] text-xs text-[var(--text)] px-2.5 py-1.5 rounded-lg border border-[var(--border)] focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">All Departments</option>
+                        {depts.map(d => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bulk Actions Header */}
+                {submittedEmployees.length > 0 && (
+                  <div className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-xl p-2.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={toggleSelectAll}
+                        className="flex items-center gap-1.5 text-xs font-bold text-[var(--text)] hover:text-indigo-400 transition-colors cursor-pointer"
+                      >
+                        {allEligibleSelected ? (
+                          <CheckSquare className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <Square className="w-4 h-4 text-[var(--muted)]" />
+                        )}
+                        <span>Select All Ready ({submittedEmployees.length})</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={selectedSubIds.length === 0 || submittingAction}
+                      onClick={handleBulkApprove}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Approve Selected ({selectedSubIds.length})</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Submissions List */}
+              <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)] pr-1 my-1">
+                {filteredEmployees.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-[var(--muted)]">
+                    No employees matched the selected filter criteria.
+                  </div>
+                ) : (
+                  filteredEmployees.map(emp => {
+                    const empSub = submissions.find(s => s.employee_id === emp.id);
+                    const status = empSub ? empSub.status : 'Draft';
+                    const isSelectable = empSub?.submission_id && (status === 'Submitted' || status === 'Under Review');
+                    const isSelected = empSub?.submission_id && selectedSubIds.includes(empSub.submission_id);
+                    const isInspecting = inspectingEmpId === emp.id;
+
+                    const rosteredHrs = empSub?.rostered_hours != null ? Number(empSub.rostered_hours) : null;
+                    const actualHrs = empSub?.actual_hours != null ? Number(empSub.actual_hours) : null;
+                    const varianceHrs = empSub?.variance_hours != null ? Number(empSub.variance_hours) : null;
+
+                    return (
+                      <div key={emp.id} className="py-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            {/* Checkbox */}
+                            {isSelectable ? (
+                              <button
+                                type="button"
+                                onClick={() => toggleSelectSubmission(empSub.submission_id)}
+                                className="text-[var(--muted)] hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
+                              >
+                                {isSelected ? (
+                                  <CheckSquare className="w-4 h-4 text-emerald-400" />
+                                ) : (
+                                  <Square className="w-4 h-4" />
+                                )}
+                              </button>
+                            ) : (
+                              <div className="w-4 shrink-0" />
+                            )}
+
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs text-[var(--text)] truncate">{emp.full_name}</div>
+                              <div className="text-[11px] text-[var(--muted)] flex items-center gap-2 mt-0.5">
+                                <span>{emp.department || 'General'}</span>
+                                <span>•</span>
+                                <span>{emp.contracted_hours ?? 76}h contract</span>
+                                {empSub?.submitted_at && (
+                                  <>
+                                    <span>•</span>
+                                    <span>Submitted: {new Date(empSub.submitted_at).toLocaleDateString()}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Hours & Actions */}
+                          <div className="flex items-center gap-3 shrink-0">
+                            {/* Hours metrics */}
+                            <div className="hidden sm:flex items-center gap-3 text-right">
+                              <div>
+                                <div className="text-[9px] uppercase font-bold text-[var(--muted)]">Rostered</div>
+                                <div className="text-xs font-mono text-[var(--text)]">
+                                  {rosteredHrs != null ? `${rosteredHrs.toFixed(1)}h` : '—'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-[9px] uppercase font-bold text-[var(--muted)]">Actual</div>
+                                <div className="text-xs font-mono font-bold text-[var(--text)]">
+                                  {actualHrs != null ? `${actualHrs.toFixed(1)}h` : '—'}
+                                </div>
+                              </div>
+                              {varianceHrs != null && (
+                                <div>
+                                  <div className="text-[9px] uppercase font-bold text-[var(--muted)]">Variance</div>
+                                  <div className={`text-xs font-mono font-bold ${
+                                    varianceHrs > 0.05 ? 'text-amber-400' : varianceHrs < -0.05 ? 'text-rose-400' : 'text-emerald-400'
+                                  }`}>
+                                    {varianceHrs > 0 ? `+${varianceHrs.toFixed(1)}h` : `${varianceHrs.toFixed(1)}h`}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Badge */}
+                            <Badge
+                              variant={
+                                status === 'Approved' ? 'success' :
+                                status === 'Submitted' ? 'warning' :
+                                status === 'Under Review' ? 'info' :
+                                status === 'Rejected' ? 'danger' : 'outline'
+                              }
+                              size="sm"
+                            >
+                              {status}
+                            </Badge>
+
+                            {/* Inspect Shifts Button */}
+                            <button
+                              type="button"
+                              onClick={() => setInspectingEmpId(isInspecting ? null : emp.id)}
+                              title={isInspecting ? "Hide shifts breakdown" : "Inspect shift details"}
+                              className={`p-1.5 rounded-lg border text-xs transition-colors flex items-center gap-1 cursor-pointer ${
+                                isInspecting
+                                  ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40'
+                                  : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'
+                              }`}
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span className="hidden md:inline">{isInspecting ? 'Hide' : 'Inspect'}</span>
+                            </button>
+
+                            {/* Approval actions */}
+                            {(status === 'Submitted' || status === 'Under Review') && (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleApproveSubmission(emp.id, empSub?.submission_id)}
+                                  disabled={submittingAction}
+                                  className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setRejectTarget({ employee_id: emp.id, submission_id: empSub?.submission_id, full_name: emp.full_name });
+                                    setRejectionReason('');
+                                  }}
+                                  disabled={submittingAction}
+                                  className="px-2.5 py-1 text-xs font-bold rounded-lg bg-rose-600/20 text-rose-400 hover:bg-rose-600/30 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  <ThumbsDown className="w-3.5 h-3.5" /> Reject
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Rejection reason callout if rejected */}
+                        {empSub?.rejection_reason && status === 'Rejected' && (
+                          <div className="text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg italic ml-7">
+                            <span className="font-semibold not-italic">Feedback Note: </span>
+                            {empSub.rejection_reason}
+                          </div>
+                        )}
+
+                        {/* Shift Inspection Drawer */}
+                        {isInspecting && (() => {
+                          const fortnightDays = Array.from({ length: 14 }, (_, i) => {
+                            const d = new Date(activeFortnightStart.getTime() + i * 86400000);
+                            const iso = d.toISOString().split('T')[0];
+                            const dayName = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+                            const rec = records.find(r => r.employee_id === emp.id && r.record_date === iso);
+                            return { dateIso: iso, dayName, rec };
+                          });
+
+                          return (
+                            <div className="mt-2 ml-7 p-3 bg-[var(--panel-subtle)] rounded-xl border border-[var(--border)] space-y-2">
+                              <div className="text-[11px] font-bold text-[var(--muted)] uppercase tracking-wider flex justify-between items-center">
+                                <span>Daily Shift Breakdown (14 Days)</span>
+                                <span>{fnIso}</span>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-2">
+                                {fortnightDays.map(({ dateIso, dayName, rec }) => {
+                                  const segments = rec?.segments || [];
+                                  const validSegs = segments.filter(s => s.roster_in && s.roster_out);
+                                  const hasActual = segments.some(s => s.actual_in && s.actual_out);
+
+                                  return (
+                                    <div key={dateIso} className="p-2 bg-[var(--panel)] rounded-lg border border-[var(--border)] text-left flex flex-col justify-between min-h-[75px]">
+                                      <div>
+                                        <div className="flex justify-between items-center text-[10px]">
+                                          <span className="font-bold text-[var(--text)]">{dayName}</span>
+                                          <span className="text-[var(--muted)]">{dateIso.split('-').slice(1).join('/')}</span>
+                                        </div>
+
+                                        {validSegs.length > 0 ? (
+                                          validSegs.map((s, idx) => (
+                                            <div key={idx} className="mt-1 text-[10px]">
+                                              <div className="text-[var(--muted)] font-mono">
+                                                R: {s.roster_in}-{s.roster_out}
+                                              </div>
+                                              {s.actual_in && s.actual_out ? (
+                                                <div className="text-emerald-400 font-mono font-semibold">
+                                                  A: {s.actual_in}-{s.actual_out}
+                                                </div>
+                                              ) : (
+                                                <div className="text-[var(--muted)] italic text-[9px]">No clock</div>
+                                              )}
+                                              {s.notes && (
+                                                <div className="text-[9px] text-[var(--muted)] truncate italic">
+                                                  {s.notes}
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))
+                                        ) : hasActual ? (
+                                          <div className="mt-1 text-[10px] text-amber-400 font-semibold">
+                                            Unplanned shift
+                                          </div>
+                                        ) : (
+                                          <div className="mt-2 text-[10px] text-[var(--muted)] italic">Off</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-3 border-t border-[var(--border)] flex justify-between items-center">
+                <div className="text-xs text-[var(--muted)]">
+                  Total staff: <strong className="text-[var(--text)]">{employees.length}</strong> • Pending review: <strong className="text-amber-400">{submittedEmployees.length}</strong>
+                </div>
+                <button
+                  onClick={() => setShowSubmissionsModal(false)}
+                  className="px-4 py-2 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--text)] font-semibold rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Reject Timesheet Reason Modal */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+          <div className="bg-[var(--panel)] rounded-2xl w-full max-w-md border border-[var(--border)] shadow-2xl p-5">
+            <h3 className="text-base font-bold text-[var(--text)] mb-1">
+              Return Timesheet to {rejectTarget.full_name}
+            </h3>
+            <p className="text-xs text-[var(--muted)] mb-3">
+              Provide feedback explaining why the timesheet was rejected so the employee can correct their recorded hours.
+            </p>
+
+            <form onSubmit={handleRejectSubmission} className="space-y-3">
+              <textarea
+                required
+                rows={3}
+                placeholder="e.g. Overtime on Wednesday needs explanation, or incorrect meal break recorded."
+                value={rejectionReason}
+                onChange={e => setRejectionReason(e.target.value)}
+                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] outline-none focus:border-indigo-500 resize-none"
+              />
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRejectTarget(null)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAction || !rejectionReason.trim()}
+                  className="px-4 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {submittingAction ? 'Returning...' : 'Reject Timesheet'}
                 </button>
               </div>
             </form>

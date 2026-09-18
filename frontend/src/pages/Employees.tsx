@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Search, FileSpreadsheet, Plus, Phone, Mail } from 'lucide-react';
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
 
@@ -17,6 +18,9 @@ interface Employee {
 export default function Employees() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ALL');
   
   // Modals state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -86,26 +90,111 @@ export default function Employees() {
     }
   };
 
+  const handleExportStaffCsv = () => {
+    const headers = ['Full Name', 'Email', 'Phone', 'Department', 'Contracted Hours', 'Status'];
+    const rows = employees.map(e => [
+      `"${(e.full_name || '').replace(/"/g, '""')}"`,
+      `"${(e.email || '').replace(/"/g, '""')}"`,
+      `"${(e.phone || '').replace(/"/g, '""')}"`,
+      `"${(e.department || '').replace(/"/g, '""')}"`,
+      e.contracted_hours ?? 76,
+      `"${(e.status || '').replace(/"/g, '""')}"`
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `staff-directory-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const departments = Array.from(new Set(employees.map(e => e.department).filter(Boolean))) as string[];
+
+  const filteredEmployees = employees.filter(emp => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = !q || 
+      emp.full_name.toLowerCase().includes(q) || 
+      (emp.email && emp.email.toLowerCase().includes(q)) || 
+      (emp.phone && emp.phone.includes(q));
+    const matchesDept = departmentFilter === 'ALL' || emp.department === departmentFilter;
+    const matchesStatus = statusFilter === 'ALL' || emp.status === statusFilter;
+    return matchesSearch && matchesDept && matchesStatus;
+  });
+
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden">
-      <div className="flex justify-between items-center mb-6">
+    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden space-y-4">
+      {/* Header & Primary Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-[var(--text)] mb-1">Staff Registry</h2>
-          <p className="text-sm text-[var(--muted)]">Manage your employees, templates, and account access.</p>
+          <p className="text-sm text-[var(--muted)]">Manage employee profiles, phone contact records, shift templates, and portal access.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setShowAddModal(true)} className="bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 text-sm transition-colors shadow-lg shadow-[var(--primary-light)]">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            Add Employee
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button 
+            onClick={handleExportStaffCsv}
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--hover-row)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Export Staff Directory as CSV"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+            <span>Export CSV</span>
+          </button>
+
+          <button 
+            onClick={() => setShowAddModal(true)} 
+            className="bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 text-sm transition-colors shadow-lg shadow-[var(--primary-light)] cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Employee</span>
           </button>
         </div>
       </div>
 
+      {/* Filter & Search Bar */}
+      <div className="flex flex-col sm:flex-row items-center gap-3 bg-[var(--panel)] p-3 rounded-xl border border-[var(--border)]">
+        <div className="relative flex-1 w-full">
+          <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search by name, email, or phone number..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] placeholder-[var(--muted)] outline-none focus:border-indigo-500"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <select
+            value={departmentFilter}
+            onChange={e => setDepartmentFilter(e.target.value)}
+            className="px-3 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] outline-none cursor-pointer"
+          >
+            <option value="ALL">All Departments</option>
+            {departments.map(d => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            className="px-3 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] outline-none cursor-pointer"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="Active">Active</option>
+            <option value="Pending Setup">Pending Setup</option>
+            <option value="Deleted">Deleted / Inactive</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Staff Table */}
       <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-xl border border-[var(--border)] relative">
         <table className="w-full text-left border-collapse">
           <thead className="bg-[var(--table-header)] sticky top-0 z-20">
             <tr>
-              <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Name & Contact</th>
+              <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Name & Email</th>
               <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Phone Number</th>
               <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Department</th>
               <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Contract (Fortnight)</th>
@@ -114,14 +203,24 @@ export default function Employees() {
             </tr>
           </thead>
           <tbody>
-            {employees.map(emp => (
+            {filteredEmployees.map(emp => (
               <tr key={emp.id} className="hover:bg-[var(--hover-row)] border-b border-[var(--border)] group">
                 <td className="py-3 px-4">
                   <div className="font-bold text-sm text-[var(--text)]">{emp.full_name}</div>
-                  <div className="text-xs text-[var(--muted)]">{emp.email || 'No email provided'}</div>
+                  <div className="text-xs text-[var(--muted)] flex items-center gap-1 mt-0.5">
+                    <Mail className="w-3 h-3 opacity-70" />
+                    <span>{emp.email || 'No email provided'}</span>
+                  </div>
                 </td>
                 <td className="py-3 px-4">
-                  <span className="text-sm text-[var(--text)] font-medium">{emp.phone || '—'}</span>
+                  {emp.phone ? (
+                    <div className="flex items-center gap-1.5 text-sm text-[var(--text)] font-mono">
+                      <Phone className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>{emp.phone}</span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-[var(--muted)] italic">No phone recorded</span>
+                  )}
                 </td>
                 <td className="py-3 px-4">
                   <span className="text-sm text-[var(--muted)]">{emp.department || '—'}</span>
@@ -145,37 +244,40 @@ export default function Employees() {
                   )}
                 </td>
                 <td className="py-3 px-4 text-right">
-                  <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => setShowTemplateModal(emp)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--primary)] bg-[var(--primary-light)] hover:opacity-80 transition-colors">
+                  {/* Action buttons always visible and mobile-friendly */}
+                  <div className="flex justify-end gap-1.5 flex-wrap">
+                    <button onClick={() => setShowTemplateModal(emp)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--primary)] bg-[var(--primary-light)] hover:opacity-80 transition-colors touch-manipulation cursor-pointer">
                       Template
                     </button>
-                    <button onClick={() => setShowEditModal(emp)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--muted)] bg-[var(--glass-4)] hover:bg-[var(--glass-8)] transition-colors border border-[var(--border)]">
+                    <button onClick={() => setShowEditModal(emp)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--muted)] bg-[var(--glass-4)] hover:bg-[var(--glass-8)] transition-colors border border-[var(--border)] touch-manipulation cursor-pointer">
                       Edit
                     </button>
                     {(emp.status === 'Pending Setup' || !emp.user_account_id) && (
-                      <button onClick={() => handleResendInvite(emp.id)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-blue-500 bg-blue-50 hover:bg-blue-100 transition-colors dark:bg-blue-900/30 dark:hover:bg-blue-900/50">
-                        {emp.user_account_id ? 'Resend Invite' : 'Create Account & Invite'}
+                      <button onClick={() => handleResendInvite(emp.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-blue-500 bg-blue-50 hover:bg-blue-100 transition-colors dark:bg-blue-900/30 dark:hover:bg-blue-900/50 touch-manipulation cursor-pointer">
+                        {emp.user_account_id ? 'Resend Invite' : 'Invite'}
                       </button>
                     )}
                     {emp.status === 'Deleted' ? (
-                      <button onClick={() => handleReactivate(emp.id)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--success)] bg-[var(--success-light)] hover:opacity-80 transition-colors">
+                      <button onClick={() => handleReactivate(emp.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--success)] bg-[var(--success-light)] hover:opacity-80 transition-colors touch-manipulation cursor-pointer">
                         Restore
                       </button>
                     ) : (
-                      <button onClick={() => handleDeactivate(emp.id)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--warn)] bg-[var(--warn-light)] hover:opacity-80 transition-colors">
+                      <button onClick={() => handleDeactivate(emp.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--warn)] bg-[var(--warn-light)] hover:opacity-80 transition-colors touch-manipulation cursor-pointer">
                         Deactivate
                       </button>
                     )}
-                    <button onClick={() => handleDelete(emp.id, emp.full_name)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-[var(--danger)] bg-[var(--danger-light)] hover:opacity-80 transition-colors">
+                    <button onClick={() => handleDelete(emp.id, emp.full_name)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--danger)] bg-[var(--danger-light)] hover:opacity-80 transition-colors touch-manipulation cursor-pointer">
                       Delete
                     </button>
                   </div>
                 </td>
               </tr>
             ))}
-            {employees.length === 0 && !loading && (
+            {filteredEmployees.length === 0 && !loading && (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-[var(--muted)] text-sm">No employees found.</td>
+                <td colSpan={6} className="py-8 text-center text-[var(--muted)] text-sm">
+                  {searchQuery ? 'No employees match your search criteria.' : 'No employees found.'}
+                </td>
               </tr>
             )}
           </tbody>

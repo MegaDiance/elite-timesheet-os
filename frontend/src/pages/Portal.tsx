@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { jwtDecode } from 'jwt-decode';
-import { MessageSquare, Smile, Trash2, Send, ShieldAlert } from 'lucide-react';
+import { MessageSquare, Smile, Trash2, Send, ShieldAlert, Clock, AlertTriangle } from 'lucide-react';
 import api from '../services/apiClient';
 
 interface DaySummary {
@@ -124,6 +124,7 @@ export default function Portal() {
   const [chatContent, setChatContent] = useState('');
   const [chatSubmitting, setChatSubmitting] = useState(false);
   const [submittingTimesheet, setSubmittingTimesheet] = useState(false);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [expandedThreads, setExpandedThreads] = useState<Record<string, boolean>>({});
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
   const [submittingReplies, setSubmittingReplies] = useState<Record<string, boolean>>({});
@@ -598,25 +599,133 @@ export default function Portal() {
                 {portalData?.submission?.status || 'Draft'}
               </span>
             </div>
-            {portalData?.submission?.rejection_reason && (
-              <p className="text-xs text-rose-400 font-medium mt-1">
-                Feedback: {portalData.submission.rejection_reason}
-              </p>
-            )}
+            <p className="text-[11px] text-[var(--muted)] mt-0.5">
+              {portalData?.submission?.status === 'Approved'
+                ? 'Your timesheet for this fortnight has been reviewed and approved.'
+                : portalData?.submission?.status === 'Submitted' || portalData?.submission?.status === 'Under Review'
+                ? 'Submitted to management for review and approval.'
+                : portalData?.submission?.status === 'Rejected'
+                ? 'Timesheet returned for revision. Review feedback below.'
+                : 'Review your hours below before submitting for management approval.'}
+            </p>
           </div>
         </div>
 
-        {/* 1-Click Submission Action */}
+        {/* 1-Click Submission Action triggering confirmation modal */}
         {(!portalData?.submission?.status || portalData?.submission?.status === 'Draft' || portalData?.submission?.status === 'Rejected') && (
           <button
-            onClick={handleSubmitTimesheet}
-            disabled={submittingTimesheet}
+            onClick={() => setShowSubmitModal(true)}
+            disabled={submittingTimesheet || portalData?.is_timesheet_locked}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-colors shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-end sm:self-auto"
           >
             <span>{submittingTimesheet ? 'Submitting...' : 'Submit Fortnight Timesheet'}</span>
           </button>
         )}
       </div>
+
+      {/* Rejection Reason Callout Banner */}
+      {portalData?.submission?.status === 'Rejected' && (
+        <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+          <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
+            <ShieldAlert className="w-4 h-4" />
+          </div>
+          <div className="space-y-1">
+            <div className="text-sm font-black text-rose-400">Timesheet Returned for Revision</div>
+            <p className="text-xs text-[var(--text)] font-medium">
+              <span className="font-bold text-[var(--muted)]">Manager Feedback: </span>
+              {portalData?.submission?.rejection_reason || 'No specific feedback reason provided.'}
+            </p>
+            <p className="text-[11px] text-[var(--muted)]">
+              Please review your daily shift records, adjust any times if needed, and submit your timesheet again using the button above.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Fortnight Summary Card */}
+      {portalData?.summary && (
+        <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-4 shadow-sm space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
+            <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Fortnight Summary & Classification</span>
+            <span className="text-xs font-medium text-[var(--muted)]">
+              {fnIso} → {(() => {
+                const [y, m, d] = fnIso.split('-').map(Number);
+                return new Date(Date.UTC(y, m - 1, d + 13)).toISOString().split('T')[0];
+              })()}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-[var(--panel-subtle)] p-3 rounded-xl border border-[var(--border)]">
+              <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Contracted</div>
+              <div className="text-lg font-black text-[var(--text)] mt-0.5">
+                {Number(portalData.summary.contracted_hours || 0).toFixed(1)}h
+              </div>
+            </div>
+
+            <div className="bg-[var(--panel-subtle)] p-3 rounded-xl border border-[var(--border)]">
+              <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Rostered</div>
+              <div className="text-lg font-black text-[var(--text)] mt-0.5">
+                {Number(portalData.summary.rostered_hours || 0).toFixed(2)}h
+              </div>
+            </div>
+
+            <div className="bg-[var(--panel-subtle)] p-3 rounded-xl border border-[var(--border)]">
+              <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Actual Worked</div>
+              <div className="text-lg font-black text-[var(--text)] mt-0.5">
+                {Number(portalData.summary.worked_hours || 0).toFixed(2)}h
+              </div>
+            </div>
+
+            <div className="bg-[var(--panel-subtle)] p-3 rounded-xl border border-[var(--border)]">
+              <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Difference</div>
+              <div className={`text-lg font-black mt-0.5 ${
+                Number(portalData.summary.difference || 0) > 0.05
+                  ? 'text-amber-400'
+                  : Number(portalData.summary.difference || 0) < -0.05
+                    ? 'text-rose-400'
+                    : 'text-emerald-400'
+              }`}>
+                {Number(portalData.summary.difference || 0) > 0 ? `+${Number(portalData.summary.difference).toFixed(2)}h` : `${Number(portalData.summary.difference || 0).toFixed(2)}h`}
+              </div>
+            </div>
+          </div>
+
+          {portalData.summary.classified_hours && (
+            <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-[var(--muted)] uppercase tracking-wider mr-1">Classified:</span>
+              <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[var(--panel-subtle)] border border-[var(--border)] text-[var(--text)]">
+                Ordinary: {Number(portalData.summary.classified_hours.ordinary_weekday_hours || 0).toFixed(2)}h
+              </span>
+              {Number(portalData.summary.classified_hours.saturday_hours || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-500/15 border border-indigo-500/30 text-indigo-400">
+                  Sat: {Number(portalData.summary.classified_hours.saturday_hours).toFixed(2)}h
+                </span>
+              )}
+              {Number(portalData.summary.classified_hours.sunday_hours || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-purple-500/15 border border-purple-500/30 text-purple-400">
+                  Sun: {Number(portalData.summary.classified_hours.sunday_hours).toFixed(2)}h
+                </span>
+              )}
+              {Number(portalData.summary.classified_hours.public_holiday_hours || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                  Pub Hol: {Number(portalData.summary.classified_hours.public_holiday_hours).toFixed(2)}h
+                </span>
+              )}
+              {Number(portalData.summary.classified_hours.leave_hours || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                  Leave: {Number(portalData.summary.classified_hours.leave_hours).toFixed(2)}h
+                </span>
+              )}
+              {Number(portalData.summary.classified_hours.unplanned_hours || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-500/15 border border-rose-500/30 text-rose-400">
+                  Unplanned: {Number(portalData.summary.classified_hours.unplanned_hours).toFixed(2)}h
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TAB 1: MY SCHEDULE & FULL ROSTER */}
       {activeTab === 'schedule' && (
@@ -749,27 +858,56 @@ export default function Portal() {
 
               {selectedDayObj.segments && selectedDayObj.segments.length > 0 ? (
                 <div className="space-y-3">
-                  {selectedDayObj.segments.map((seg: any, i: number) => (
-                    <div key={i} className="p-4 bg-[var(--panel-subtle)] rounded-xl border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider block">Shift Segment</span>
-                        <div className="text-base font-black text-[var(--text)] mt-0.5">
-                          {seg.roster_in && seg.roster_out ? `${seg.roster_in} – ${seg.roster_out}` : 'No Rostered Times'}
+                  {selectedDayObj.segments.map((seg: any, i: number) => {
+                    const hasActual = Boolean(seg.actual_in && seg.actual_out);
+                    return (
+                      <div key={i} className="p-4 bg-[var(--panel-subtle)] rounded-xl border border-[var(--border)] space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Shift Segment #{i + 1}</span>
+                            {seg.segment_type && (
+                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/30">
+                                {seg.actual_segment_type || seg.segment_type}
+                              </span>
+                            )}
+                            {seg.is_unplanned && (
+                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                Unplanned
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        {seg.segment_type && (
-                          <span className="inline-block mt-2 px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/30">
-                            {seg.segment_type}
-                          </span>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="bg-[var(--panel)] p-3 rounded-xl border border-[var(--border)]">
+                            <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider block">Rostered Times</span>
+                            <div className="text-sm font-black text-[var(--text)] mt-0.5">
+                              {seg.roster_in && seg.roster_out ? `${seg.roster_in} – ${seg.roster_out}` : 'No Rostered Times'}
+                            </div>
+                            <span className="text-xs text-[var(--muted)] mt-1 block">
+                              Duration: {Number(seg.roster_hours || 0).toFixed(2)}h
+                            </span>
+                          </div>
+
+                          <div className="bg-[var(--panel)] p-3 rounded-xl border border-[var(--border)]">
+                            <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider block">Actual Logged Times</span>
+                            <div className={`text-sm font-black mt-0.5 ${hasActual ? 'text-emerald-400' : 'text-[var(--muted)]'}`}>
+                              {hasActual ? `${seg.actual_in} – ${seg.actual_out}` : 'Pending clock / record'}
+                            </div>
+                            <span className="text-xs text-[var(--muted)] mt-1 block">
+                              Duration: {hasActual ? `${Number(seg.actual_hours || 0).toFixed(2)}h` : '—'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {seg.notes && (
+                          <div className="text-xs text-[var(--muted)] bg-[var(--panel)] p-2.5 rounded-lg border border-[var(--border)]">
+                            <span className="font-semibold text-[var(--text)]">Notes: </span>{seg.notes}
+                          </div>
                         )}
                       </div>
-                      <div className="text-right">
-                        <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider block">Hours</span>
-                        <span className="text-xl font-black text-[var(--primary)]">
-                          {selectedDayObj.rosteredHours.toFixed(4)}h
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-center py-12 text-[var(--muted)]">
@@ -794,65 +932,103 @@ export default function Portal() {
           )}
 
           {/* WEEK VIEW */}
-          {calendarView === 'week' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-3">
-              {days.slice(0, 7).map((d) => {
-                const isWeekend = ['Sat', 'Sun'].includes(d.dayOfWeek);
-                const seg = d.segments[0] || {};
-                const isSelected = d.date === activeDateIso;
+          {calendarView === 'week' && (() => {
+            const activeIndex = days.findIndex(d => d.date === activeDateIso);
+            const isWeek2 = activeIndex >= 7;
+            const weekDays = isWeek2 ? days.slice(7, 14) : days.slice(0, 7);
 
-                return (
-                  <div
-                    key={d.date}
-                    onClick={() => setActiveDate(new Date(d.date))}
-                    className={`bg-[var(--panel)] p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between min-h-[140px] ${
-                      isSelected
-                        ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/30 shadow-md'
-                        : isWeekend
-                        ? 'border-[var(--border)] bg-[var(--panel-subtle)]/40 hover:border-[var(--muted)]'
-                        : 'border-[var(--border)] hover:border-[var(--muted)]'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className={`text-xs font-black ${isWeekend ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>
-                          {d.dayOfWeek}
-                        </span>
-                        <span className="text-[11px] text-[var(--muted)] font-medium">{d.date.split('-').slice(1).join('/')}</span>
-                      </div>
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="font-semibold text-[var(--muted)]">
+                    {isWeek2 ? 'Week 2 (Days 8–14 of Fortnight)' : 'Week 1 (Days 1–7 of Fortnight)'}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setActiveDate(new Date(days[0].date))}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        !isWeek2 
+                          ? 'bg-[var(--primary)] text-white' 
+                          : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      Week 1
+                    </button>
+                    <button
+                      onClick={() => setActiveDate(new Date(days[7].date))}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        isWeek2 
+                          ? 'bg-[var(--primary)] text-white' 
+                          : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      Week 2
+                    </button>
+                  </div>
+                </div>
 
-                      {d.isPublicHoliday && (
-                        <div className="mt-1 bg-[#ec4899]/20 text-[#ec4899] text-[9px] font-black px-1.5 py-0.5 rounded">
-                          Holiday
-                        </div>
-                      )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-3">
+                  {weekDays.map((d) => {
+                    const isWeekend = ['Sat', 'Sun'].includes(d.dayOfWeek);
+                    const isSelected = d.date === activeDateIso;
+                    const validSegments = (d.segments || []).filter(s => s.roster_in && s.roster_out);
 
-                      <div className="mt-3">
-                        {seg.roster_in && seg.roster_out ? (
-                          <div className="bg-[var(--primary-light)] border border-[var(--primary)]/30 rounded-xl p-2">
-                            <div className="text-[11px] font-bold text-[var(--primary)]">
-                              {seg.roster_in} – {seg.roster_out}
-                            </div>
-                            <div className="text-[10px] text-[var(--muted)] mt-0.5">
-                              {seg.segment_type || 'Shift'}
-                            </div>
+                    return (
+                      <div
+                        key={d.date}
+                        onClick={() => setActiveDate(new Date(d.date))}
+                        className={`bg-[var(--panel)] p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between min-h-[140px] ${
+                          isSelected
+                            ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/30 shadow-md'
+                            : isWeekend
+                            ? 'border-[var(--border)] bg-[var(--panel-subtle)]/40 hover:border-[var(--muted)]'
+                            : 'border-[var(--border)] hover:border-[var(--muted)]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className={`text-xs font-black ${isWeekend ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>
+                              {d.dayOfWeek}
+                            </span>
+                            <span className="text-[11px] text-[var(--muted)] font-medium">{d.date.split('-').slice(1).join('/')}</span>
                           </div>
-                        ) : (
-                          <div className="text-[11px] text-[var(--muted)] italic">Off</div>
+
+                          {d.isPublicHoliday && (
+                            <div className="mt-1 bg-[#ec4899]/20 text-[#ec4899] text-[9px] font-black px-1.5 py-0.5 rounded truncate">
+                              {d.holidayName || 'Holiday'}
+                            </div>
+                          )}
+
+                          <div className="mt-3 space-y-1.5">
+                            {validSegments.length > 0 ? (
+                              validSegments.map((seg, sIdx) => (
+                                <div key={sIdx} className="bg-[var(--primary-light)] border border-[var(--primary)]/30 rounded-xl p-2">
+                                  <div className="text-[11px] font-bold text-[var(--primary)]">
+                                    {seg.roster_in} – {seg.roster_out}
+                                  </div>
+                                  <div className="text-[10px] text-[var(--muted)] mt-0.5 truncate">
+                                    {seg.segment_type || 'Shift'}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-[11px] text-[var(--muted)] italic">Off</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {d.rosteredHours > 0 && (
+                          <div className="mt-2 pt-2 border-t border-[var(--border)] text-right">
+                            <span className="text-[11px] font-extrabold text-[var(--primary)]">{d.rosteredHours.toFixed(2)}h</span>
+                          </div>
                         )}
                       </div>
-                    </div>
-
-                    {d.rosteredHours > 0 && (
-                      <div className="mt-2 pt-2 border-t border-[var(--border)] text-right">
-                        <span className="text-[11px] font-extrabold text-[var(--primary)]">{d.rosteredHours.toFixed(2)}h</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* FORTNIGHT VIEW */}
           {calendarView === 'fortnight' && (
@@ -871,8 +1047,8 @@ export default function Portal() {
                 <div className="grid grid-cols-7 gap-2">
                   {days.map((d) => {
                     const isWeekend = ['Sat', 'Sun'].includes(d.dayOfWeek);
-                    const seg = d.segments[0] || {};
                     const isSelected = d.date === activeDateIso;
+                    const validSegments = (d.segments || []).filter(s => s.roster_in && s.roster_out);
 
                     return (
                       <div
@@ -893,9 +1069,13 @@ export default function Portal() {
                           )}
                         </div>
 
-                        {seg.roster_in && seg.roster_out ? (
-                          <div className="bg-[var(--primary-light)] text-[var(--primary)] rounded text-[9px] px-1 py-0.5 truncate font-bold">
-                            {seg.roster_in} - {seg.roster_out}
+                        {validSegments.length > 0 ? (
+                          <div className="space-y-1 my-1">
+                            {validSegments.map((seg, sIdx) => (
+                              <div key={sIdx} className="bg-[var(--primary-light)] text-[var(--primary)] rounded text-[9px] px-1 py-0.5 truncate font-bold">
+                                {seg.roster_in} - {seg.roster_out}
+                              </div>
+                            ))}
                           </div>
                         ) : (
                           <div className="text-[10px] text-[var(--muted)] opacity-50">—</div>
@@ -1529,6 +1709,83 @@ export default function Portal() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Submit Timesheet Confirmation Modal */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-[var(--text)]">Submit Timesheet for Review</h3>
+                <p className="text-xs text-[var(--muted)]">Fortnight starting {fnIso}</p>
+              </div>
+            </div>
+
+            <div className="bg-[var(--panel-subtle)] p-3.5 rounded-xl border border-[var(--border)] space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--muted)] font-medium">Contracted Hours:</span>
+                <span className="font-bold text-[var(--text)]">{Number(portalData?.summary?.contracted_hours || 0).toFixed(1)}h</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--muted)] font-medium">Rostered Hours:</span>
+                <span className="font-bold text-[var(--text)]">{Number(portalData?.summary?.rostered_hours || 0).toFixed(2)}h</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--muted)] font-medium">Actual Worked Hours:</span>
+                <span className="font-bold text-[var(--text)]">{Number(portalData?.summary?.worked_hours || 0).toFixed(2)}h</span>
+              </div>
+              <div className="flex justify-between items-center border-t border-[var(--border)] pt-2">
+                <span className="text-[var(--muted)] font-bold uppercase text-[10px]">Net Variance:</span>
+                <span className={`font-black ${
+                  Number(portalData?.summary?.difference || 0) > 0.05 
+                    ? 'text-amber-400' 
+                    : Number(portalData?.summary?.difference || 0) < -0.05 
+                      ? 'text-rose-400' 
+                      : 'text-emerald-400'
+                }`}>
+                  {Number(portalData?.summary?.difference || 0) > 0 ? `+${Number(portalData?.summary?.difference).toFixed(2)}h` : `${Number(portalData?.summary?.difference || 0).toFixed(2)}h`}
+                </span>
+              </div>
+            </div>
+
+            {Number(portalData?.summary?.worked_hours || 0) === 0 && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>Notice: You are submitting with 0.00 actual worked hours.</span>
+              </div>
+            )}
+
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              Once submitted, your timesheet is placed under manager review. You will not be able to edit shifts for this period unless returned by your manager.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(false)}
+                disabled={submittingTimesheet}
+                className="px-4 py-2 rounded-xl text-xs font-bold border border-[var(--border)] hover:bg-[var(--glass-4)] text-[var(--text)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={submittingTimesheet}
+                onClick={async () => {
+                  await handleSubmitTimesheet();
+                  setShowSubmitModal(false);
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black shadow-md disabled:opacity-50"
+              >
+                {submittingTimesheet ? 'Submitting...' : 'Confirm & Submit'}
+              </button>
+            </div>
           </div>
         </div>
       )}

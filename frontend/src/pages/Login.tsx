@@ -47,6 +47,25 @@ export default function Login() {
   const [searchParams] = useSearchParams();
   const isResetSuccess = searchParams.get('reset') === 'success';
   const isSetupSuccess = searchParams.get('setup') === 'success';
+  const reasonParam = searchParams.get('reason');
+
+  const getReasonNotice = () => {
+    if (reasonParam === 'inactivity') {
+      return { text: 'You were signed out due to 15 minutes of inactivity for your data protection.', variant: 'warning' };
+    }
+    if (reasonParam === 'deactivated') {
+      return { text: 'Your account has been deactivated. Please contact your company administrator.', variant: 'danger' };
+    }
+    if (reasonParam === 'revoked') {
+      return { text: 'Your session has ended or was revoked from another device.', variant: 'warning' };
+    }
+    if (reasonParam === 'logout') {
+      return { text: 'You have been securely signed out.', variant: 'info' };
+    }
+    return null;
+  };
+
+  const reasonNotice = getReasonNotice();
 
   const [recentSlug, setRecentSlug] = useState<string | null>(null);
   const [recentName, setRecentName] = useState<string | null>(null);
@@ -108,6 +127,11 @@ export default function Login() {
         email: email.trim(), 
         password 
       });
+
+      if (response.data.require_login_verification) {
+        navigate(`/verify-login?email=${encodeURIComponent(response.data.email || email.trim())}`);
+        return;
+      }
 
       if (response.data.require_2fa) {
         setTempToken(response.data.temp_token);
@@ -256,6 +280,19 @@ export default function Login() {
         </div>
 
         {/* Notices */}
+        {reasonNotice && (
+          <div className={`p-3 rounded-md text-xs flex items-center gap-2 border ${
+            reasonNotice.variant === 'warning'
+              ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+              : reasonNotice.variant === 'danger'
+              ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+              : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300'
+          }`}>
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{reasonNotice.text}</span>
+          </div>
+        )}
+
         {(isResetSuccess || isSetupSuccess) && (
           <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 p-3 rounded-md text-xs flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />

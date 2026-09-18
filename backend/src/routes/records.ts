@@ -1,10 +1,12 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
 import { calcHours } from '../services/timeParser';
+import { getFortnightStartIso } from '../services/periodUtils';
 
 const router = Router();
+router.use(requireAuth, requireTenantContext);
 
 function rangesOverlap(s1: number, e1: number, s2: number, e2: number): boolean {
     if (e1 <= s1) e1 += 24 * 60;
@@ -23,13 +25,7 @@ async function checkLocks(req: AuthRequest, res: Response, next: any) {
     const { record_date } = req.body;
     if (!record_date) return next();
 
-    const parts = record_date.split('-');
-    const dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 0, 0, 0, 0);
-    const ref = new Date(2026, 2, 29, 0, 0, 0, 0);
-    const diff = Math.floor((dt.getTime() - ref.getTime()) / 86400000);
-    const offset = Math.floor(diff / 14);
-    const fnStart = new Date(ref.getTime() + offset * 14 * 86400000);
-    const fnIso = `${fnStart.getFullYear()}-${String(fnStart.getMonth() + 1).padStart(2, '0')}-${String(fnStart.getDate()).padStart(2, '0')}`;
+    const fnIso = getFortnightStartIso(record_date);
 
     const lockResult = await query('SELECT * FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [req.user?.organisation_id, fnIso]);
     const lock = lockResult.rows[0];
@@ -40,6 +36,23 @@ async function checkLocks(req: AuthRequest, res: Response, next: any) {
         }
         if (lock.timesheet_locked) {
             return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheets are locked for this period.' } });
+        }
+    }
+
+    const { employee_id } = req.body;
+    if (employee_id && fnIso) {
+        const subRes = await query(
+            'SELECT status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3',
+            [req.user?.organisation_id, employee_id, fnIso]
+        );
+        if (subRes.rows.length > 0 && ['Approved', 'Locked'].includes(subRes.rows[0].status)) {
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'TIMESHEET_ALREADY_APPROVED',
+                    message: 'The timesheet for this employee is approved. Modifications to approved shifts are prohibited.'
+                }
+            });
         }
     }
     next();
@@ -70,6 +83,14 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
             return res.status(404).json({ success: false, error: { message: 'Employee profile not found for this user.' }});
         }
 
+        // Validate that requested employee belongs to the caller's organisation
+        if (isManager && empId !== myEmpId) {
+            const empCheck = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL', [empId, orgId]);
+            if (empCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, error: { message: 'Employee not found in your organisation.' } });
+            }
+        }
+
         const [year, month, day] = start_date.split('-');
         const dt = new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0);
 
@@ -85,12 +106,48 @@ router.get('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Ad
     try {
         const orgId = req.user?.organisation_id;
         if (!orgId) return res.status(400).json({ error: 'Missing orgId' });
-        const result = await query('SELECT * FROM daily_records WHERE org_id = $1', [orgId]);
+
+        const { start_date, end_date, employee_id } = req.query;
+
+        let sql = 'SELECT * FROM daily_records WHERE org_id = $1';
+        const params: any[] = [orgId];
+
+        if (start_date) {
+            params.push(start_date);
+            sql += ` AND record_date >= $${params.length}`;
+        }
+        if (end_date) {
+            params.push(end_date);
+            sql += ` AND record_date <= $${params.length}`;
+        }
+        if (employee_id) {
+            params.push(employee_id);
+            sql += ` AND employee_id = $${params.length}`;
+        }
+
+        sql += ' ORDER BY record_date ASC';
+
+        const result = await query(sql, params);
         const records = result.rows;
 
+        if (records.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+
+        // Single batch fetch for all shift segments (eliminates N+1 query)
+        const recordIds = records.map((r: any) => r.id);
+        const placeholders = recordIds.map((_: string, i: number) => `$${i + 1}`).join(', ');
+        const segResult = await query(`SELECT * FROM shift_segments WHERE record_id IN (${placeholders})`, recordIds);
+
+        const segmentsByRecord = new Map<string, any[]>();
+        for (const seg of segResult.rows) {
+            const list = segmentsByRecord.get(seg.record_id) || [];
+            list.push(seg);
+            segmentsByRecord.set(seg.record_id, list);
+        }
+
         for (const rec of records) {
-            const segResult = await query('SELECT * FROM shift_segments WHERE record_id = $1', [rec.id]);
-            rec.segments = segResult.rows;
+            rec.segments = segmentsByRecord.get(rec.id) || [];
         }
 
         res.json({ success: true, data: records });
@@ -109,9 +166,18 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
             return res.status(400).json({ success: false, error: { message: 'employee_id and record_date are required' } });
         }
 
-        const empCheck = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2', [employee_id, orgId]);
+        const empCheck = await query(
+            'SELECT id, is_active, deleted_at FROM employees WHERE id = $1 AND org_id = $2',
+            [employee_id, orgId]
+        );
         if (empCheck.rows.length === 0) {
-            return res.status(400).json({ success: false, error: { message: 'Employee does not belong to your organisation' } });
+            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee does not belong to your organisation' } });
+        }
+        if (!empCheck.rows[0].is_active || empCheck.rows[0].deleted_at) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'EMPLOYEE_INACTIVE', message: 'Cannot record shifts or hours for an inactive or deleted employee.' }
+            });
         }
 
         if (segments && Array.isArray(segments)) {

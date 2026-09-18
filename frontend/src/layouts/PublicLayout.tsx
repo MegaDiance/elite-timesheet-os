@@ -122,7 +122,7 @@ export const PublicLayout: React.FC = () => {
             <ul className="space-y-2 text-xs text-[var(--muted)]">
               <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Shift Rostering</Link></li>
               <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Break Deductions</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Payroll Export (CSV / PDF)</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Payroll Export (CSV / Print)</Link></li>
               <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Xero Integration</Link></li>
             </ul>
           </div>

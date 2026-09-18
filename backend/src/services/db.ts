@@ -14,7 +14,7 @@ export async function initDB(dbUrl: string) {
             name: 'gen_random_uuid',
             args: [],
             returns: DataType.uuid,
-            implementation: () => '123e4567-e89b-12d3-a456-' + Math.floor(Math.random() * 1000000),
+            implementation: () => crypto.randomUUID(),
         });
         
         // Execute migrations
@@ -118,6 +118,8 @@ export async function initDB(dbUrl: string) {
                 timestamp TIMESTAMPTZ DEFAULT NOW(),
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 actor_id UUID,
+                user_id UUID,
+                ip_address TEXT,
                 action TEXT NOT NULL,
                 entity_type TEXT,
                 entity_id UUID,
@@ -240,6 +242,54 @@ export async function initDB(dbUrl: string) {
                 content TEXT NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL,
+                org_id UUID,
+                token_hash TEXT NOT NULL UNIQUE,
+                ip_address TEXT,
+                approx_location TEXT,
+                user_agent TEXT,
+                device_info TEXT,
+                last_active_at TIMESTAMPTZ DEFAULT NOW(),
+                expires_at TIMESTAMPTZ NOT NULL,
+                revoked_at TIMESTAMPTZ,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS login_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID,
+                org_id UUID,
+                email TEXT NOT NULL,
+                status TEXT NOT NULL,
+                ip_address TEXT,
+                approx_location TEXT,
+                user_agent TEXT,
+                device_info TEXT,
+                auth_method TEXT,
+                session_id UUID,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS login_verification_challenges (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL,
+                org_id UUID,
+                role TEXT,
+                token_hash TEXT NOT NULL UNIQUE,
+                verification_code TEXT,
+                attempts INTEGER DEFAULT 0,
+                ip_address TEXT,
+                approx_location TEXT,
+                user_agent TEXT,
+                device_info TEXT,
+                expires_at TIMESTAMPTZ NOT NULL,
+                consumed BOOLEAN DEFAULT false,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
         `);
 
         // Seed initial admin & organisation
@@ -317,7 +367,11 @@ export async function initDB(dbUrl: string) {
             process.on('SIGTERM', () => { clearInterval(dumpInterval); saveSnapshot(); process.exit(0); });
         }
     } else {
-        const isSslDisabled = process.env.DB_SSL === 'false';
+        // Railway's private network (*.railway.internal) and local Postgres do not
+        // speak TLS, so SSL is off for those unless DB_SSL=true forces it on.
+        const isInternalHost = /(^|@|\/\/)([^/@]*\.railway\.internal|localhost|127\.0\.0\.1)(:|\/|$)/.test(dbUrl);
+        const isSslDisabled = process.env.DB_SSL === 'false'
+            || (process.env.DB_SSL !== 'true' && isInternalHost);
         pool = new Pool({
             connectionString: dbUrl,
             ssl: isSslDisabled ? false : { rejectUnauthorized: false },
@@ -332,8 +386,33 @@ export function setPool(mockPool: any) {
     pool = mockPool;
 }
 
+export function getPool() {
+    return pool;
+}
+
 export function query(text: string, params?: any[]) {
     return pool.query(text, params);
+}
+
+export async function withTransaction<T>(fn: (queryFn: (text: string, params?: any[]) => Promise<any>) => Promise<T>): Promise<T> {
+    if (pool && typeof pool.connect === 'function') {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const res = await fn((text: string, params?: any[]) => client.query(text, params));
+            await client.query('COMMIT');
+            return res;
+        } catch (err) {
+            try { await client.query('ROLLBACK'); } catch {}
+            throw err;
+        } finally {
+            if (typeof client.release === 'function') {
+                client.release();
+            }
+        }
+    } else {
+        return fn((text: string, params?: any[]) => query(text, params));
+    }
 }
 
 export async function seedOrgDefaults(_orgId: string) {

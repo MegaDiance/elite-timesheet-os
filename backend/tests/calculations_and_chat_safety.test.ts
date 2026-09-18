@@ -189,7 +189,6 @@ describe('Calculations Accuracy, Team Chat & Multi-Tenant Safety Integration Tes
                 .post('/api/announcements')
                 .set('Authorization', `Bearer ${empAToken}`)
                 .send({ content: 'Message to delete' });
-
             const msgId = postRes.body.data.id;
 
             const delRes = await request(app)

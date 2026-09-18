@@ -54,7 +54,7 @@ export async function calculateRosterStats(orgId: string, employeeId: string, fo
         }
     }
 
-    const empRes = await query('SELECT contracted_hours FROM employees WHERE id = $1', [employeeId]);
+    const empRes = await query('SELECT contracted_hours FROM employees WHERE id = $1 AND org_id = $2', [employeeId, orgId]);
     const contracted = Number(empRes.rows[0]?.contracted_hours || 76);
 
     return { rostered, actual, contracted, variance: actual - contracted, leave };
@@ -77,9 +77,26 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
 
     const emps = await query('SELECT id FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL', [orgId]);
     const targetDays = selectedDays && selectedDays.length > 0 ? selectedDays : Array.from({ length: 14 }, (_, i) => i);
+    const startIso = fmtISO(fortnightStart);
+
+    // Identify employees with approved/locked timesheets for this fortnight to protect them from mutation
+    let lockedEmpIds = new Set<string>();
+    try {
+        const approvedSubs = await query(
+            "SELECT employee_id FROM timesheet_submissions WHERE org_id = $1 AND start_date = $2 AND status IN ('Approved', 'Locked')",
+            [orgId, startIso]
+        );
+        lockedEmpIds = new Set(approvedSubs.rows.map((r: any) => r.employee_id));
+    } catch {
+        // Safe fallback if table not yet migrated in mock environments
+    }
     
     for (const emp of emps.rows) {
         const empId = emp.id;
+        if (lockedEmpIds.has(empId)) {
+            // Strictly preserve approved timesheet records
+            continue;
+        }
         const templates = await query('SELECT * FROM roster_templates WHERE employee_id = $1', [empId]);
         const hasTemplates = templates.rows.some((t: any) => t.roster_in && t.roster_out);
 
@@ -141,7 +158,7 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
     if (actorId) {
         await query(
             `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, details) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), actorId, 'AUTO_ROSTER', `Applied templates for fortnight starting ${fmtISO(fortnightStart)}`]
+            [crypto.randomUUID(), orgId, new Date().toISOString(), actorId, 'AUTO_ROSTER', JSON.stringify({ message: `Applied templates for fortnight starting ${fmtISO(fortnightStart)}` })]
         );
     }
 }
@@ -149,9 +166,25 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
 export async function autoLogAll(orgId: string, fortnightStart: Date, selectedDays?: number[], actorId?: string) {
     const emps = await query('SELECT id FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL', [orgId]);
     const targetDays = selectedDays && selectedDays.length > 0 ? selectedDays : Array.from({ length: 14 }, (_, i) => i);
+    const startIso = fmtISO(fortnightStart);
+
+    let lockedEmpIds = new Set<string>();
+    try {
+        const approvedSubs = await query(
+            "SELECT employee_id FROM timesheet_submissions WHERE org_id = $1 AND start_date = $2 AND status IN ('Approved', 'Locked')",
+            [orgId, startIso]
+        );
+        lockedEmpIds = new Set(approvedSubs.rows.map((r: any) => r.employee_id));
+    } catch {
+        // Safe fallback if table not yet migrated
+    }
     
     for (const emp of emps.rows) {
         const empId = emp.id;
+        if (lockedEmpIds.has(empId)) {
+            // Strictly preserve approved timesheet records
+            continue;
+        }
         for (const i of targetDays) {
             const dateIso = fmtISO(addDays(fortnightStart, i));
             const existing = await query('SELECT id, has_actuals FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [orgId, empId, dateIso]);
@@ -182,7 +215,7 @@ export async function autoLogAll(orgId: string, fortnightStart: Date, selectedDa
     if (actorId) {
         await query(
             `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, details) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), actorId, 'AUTO_LOG', `Auto-logged all shifts for fortnight starting ${fmtISO(fortnightStart)}`]
+            [crypto.randomUUID(), orgId, new Date().toISOString(), actorId, 'AUTO_LOG', JSON.stringify({ message: `Auto-logged all shifts for fortnight starting ${fmtISO(fortnightStart)}` })]
         );
     }
 }

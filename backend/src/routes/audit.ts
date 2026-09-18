@@ -23,19 +23,15 @@ router.get('/', requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manage
     }
 });
 
-router.delete('/clear', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin']), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        await query('DELETE FROM audit_logs WHERE org_id = $1', [orgId]);
-        await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, details) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'CLEARED_LOGS', 'Admin cleared all audit logs']
-        );
-        res.json({ success: true });
-    } catch (err: any) {
-        console.error('[AUDIT CLEAR ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to clear audit logs.' } });
-    }
+// Audit logs are immutable and tamper-evident for compliance and cannot be cleared.
+router.delete('/clear', requireAuth, async (req: AuthRequest, res: Response) => {
+    return res.status(403).json({
+        success: false,
+        error: {
+            code: 'IMMUTABLE_AUDIT_LOG',
+            message: 'Statutory compliance requires that all audit logs remain immutable. Destruction of audit records is prohibited.'
+        }
+    });
 });
 
 export default router;

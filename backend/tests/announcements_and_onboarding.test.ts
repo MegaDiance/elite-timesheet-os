@@ -17,7 +17,7 @@ describe('Announcements, Assisted Setup, and Roster Publication Integration Test
             name: 'gen_random_uuid',
             args: [],
             returns: DataType.uuid,
-            implementation: () => '123e4567-e89b-12d3-a456-' + Math.floor(Math.random() * 10000000),
+            implementation: () => crypto.randomUUID(),
         });
 
         db.public.none(`

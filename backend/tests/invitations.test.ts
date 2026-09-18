@@ -164,9 +164,6 @@ describe('Organization & User Invitation Integration Tests', () => {
             const res = await request(app)
                 .get(`/api/platform/verify-invite?token=${inviteToken}`);
 
-            if (res.status !== 200) {
-                console.error('[VERIFY INVITE FAILED]', res.status, res.body, 'inviteToken:', inviteToken);
-            }
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.data.email).toBe(targetEmail);

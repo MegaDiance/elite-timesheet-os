@@ -286,14 +286,19 @@ export default function LeaveRequests() {
               Decline leave for <span className="font-bold text-[var(--text)]">{rejectModalItem.employee_name}</span> ({rejectModalItem.start_date} → {rejectModalItem.end_date}).
             </p>
             <div>
-              <label className="text-xs font-bold text-[var(--muted)] block mb-1">Reason for declining (Optional)</label>
+              <label className="text-xs font-bold text-[var(--muted)] block mb-1">
+                Reason for declining <span className="text-red-400">*</span>
+              </label>
               <textarea
                 rows={3}
-                placeholder="e.g. Insufficient coverage during this period"
+                placeholder="e.g. Insufficient staffing coverage during this period"
                 value={rejectionReason}
                 onChange={e => setRejectionReason(e.target.value)}
-                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] font-medium"
+                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] font-medium focus:outline-none focus:ring-1 focus:ring-red-500"
               />
+              {!rejectionReason.trim() && (
+                <p className="text-[11px] text-red-400 mt-1">Please provide a reason for declining.</p>
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button
@@ -305,9 +310,9 @@ export default function LeaveRequests() {
               </button>
               <button
                 type="button"
-                disabled={actionLoadingId === rejectModalItem.id}
-                onClick={() => handleReview(rejectModalItem.id, 'Rejected', rejectionReason)}
-                className="px-4 py-2 bg-[#ef4444] text-white rounded-xl text-xs font-black hover:bg-red-600 transition-colors shadow-sm disabled:opacity-50"
+                disabled={actionLoadingId === rejectModalItem.id || !rejectionReason.trim()}
+                onClick={() => handleReview(rejectModalItem.id, 'Rejected', rejectionReason.trim())}
+                className="px-4 py-2 bg-[#ef4444] text-white rounded-xl text-xs font-black hover:bg-red-600 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Confirm Decline
               </button>

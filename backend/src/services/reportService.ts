@@ -73,6 +73,26 @@ export async function generatePayrollReport(orgId: string, startDate: string): P
     const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, startDate]);
     const isTimesheetLocked = lockRes.rows[0]?.timesheet_locked || false;
 
+    // Single batch fetch of all daily records and shift segments for this fortnight (eliminates N+1 query)
+    const batchRecordsRes = await query(
+        `SELECT dr.id as record_id, dr.employee_id, dr.record_date, dr.has_actuals,
+                ss.id as segment_id, ss.segment_type, ss.roster_in, ss.roster_out, ss.roster_hours,
+                ss.actual_in, ss.actual_out, ss.actual_hours, ss.actual_segment_type, ss.is_unplanned
+         FROM daily_records dr
+         JOIN shift_segments ss ON ss.record_id = dr.id
+         WHERE dr.org_id = $1 AND dr.record_date >= $2 AND dr.record_date <= $3`,
+        [orgId, startDate, endDateIso]
+    );
+
+    const segmentsByEmpAndDate = new Map<string, any[]>();
+    for (const row of batchRecordsRes.rows) {
+        const rawDate = String(row.record_date).split('T')[0];
+        const key = `${row.employee_id}_${rawDate}`;
+        const list = segmentsByEmpAndDate.get(key) || [];
+        list.push(row);
+        segmentsByEmpAndDate.set(key, list);
+    }
+
     const employeesSummary: EmployeePayrollSummary[] = [];
 
     const totals = {
@@ -108,46 +128,38 @@ export async function generatePayrollReport(orgId: string, startDate: string): P
             const weekday = getWeekdayName(dateIso);
             const isPublicHoliday = holidayMap.has(dateIso);
 
-            const recRes = await query(
-                'SELECT id, has_actuals FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3',
-                [orgId, emp.id, dateIso]
-            );
+            const daySegments = segmentsByEmpAndDate.get(`${emp.id}_${dateIso}`) || [];
 
-            if (recRes.rows.length > 0) {
-                const rec = recRes.rows[0];
-                const segRes = await query('SELECT * FROM shift_segments WHERE record_id = $1', [rec.id]);
+            for (const seg of daySegments) {
+                const rHours = Number(seg.roster_hours || 0);
+                const aHours = Number(seg.actual_hours || 0);
+                rostered += rHours;
+                actual += aHours;
 
-                for (const seg of segRes.rows) {
-                    const rHours = Number(seg.roster_hours || 0);
-                    const aHours = Number(seg.actual_hours || 0);
-                    rostered += rHours;
-                    actual += aHours;
+                const effectiveType = seg.actual_segment_type || seg.segment_type || 'WORK';
+                const activeHours = (seg.actual_in && seg.actual_out) ? aHours : rHours;
 
-                    const effectiveType = seg.actual_segment_type || seg.segment_type || 'WORK';
-                    const activeHours = (seg.actual_in && seg.actual_out) ? aHours : rHours;
+                if (seg.actual_in && seg.actual_out) {
+                    const classified = await classifyShiftHours(orgId, dateIso, seg.actual_in, seg.actual_out, effectiveType);
+                    classified.forEach(c => {
+                        normal += c.normalHours;
+                        sat += c.saturdayHours;
+                        sun += c.sundayHours;
+                        holiday += c.publicHolidayHours;
+                    });
+                } else if (effectiveType === 'WORK') {
+                    if (isPublicHoliday) holiday += activeHours;
+                    else if (weekday === 'Sat') sat += activeHours;
+                    else if (weekday === 'Sun') sun += activeHours;
+                    else normal += activeHours;
+                }
 
-                    if (seg.actual_in && seg.actual_out) {
-                        const classified = await classifyShiftHours(orgId, dateIso, seg.actual_in, seg.actual_out, effectiveType);
-                        classified.forEach(c => {
-                            normal += c.normalHours;
-                            sat += c.saturdayHours;
-                            sun += c.sundayHours;
-                            holiday += c.publicHolidayHours;
-                        });
-                    } else if (effectiveType === 'WORK') {
-                        if (isPublicHoliday) holiday += activeHours;
-                        else if (weekday === 'Sat') sat += activeHours;
-                        else if (weekday === 'Sun') sun += activeHours;
-                        else normal += activeHours;
-                    }
+                if (effectiveType === 'Sick') sick += activeHours;
+                else if (effectiveType === 'Annual') annual += activeHours;
+                else if (effectiveType === 'TIL') til += activeHours;
 
-                    if (effectiveType === 'Sick') sick += activeHours;
-                    else if (effectiveType === 'Annual') annual += activeHours;
-                    else if (effectiveType === 'TIL') til += activeHours;
-
-                    if (seg.is_unplanned) {
-                        unplanned += activeHours;
-                    }
+                if (seg.is_unplanned) {
+                    unplanned += activeHours;
                 }
             }
         }
@@ -232,8 +244,12 @@ export function convertReportToCsv(report: PayrollReport): string {
 
     const escapeCsv = (val: any) => {
         if (val === null || val === undefined) return '""';
-        const str = String(val);
-        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        let str = String(val);
+        // Neutralize CSV / Spreadsheet Formula Injection (=, +, -, @, \t, \r)
+        if (/^[=+\-@\t\r]/.test(str)) {
+            str = `'${str}`;
+        }
+        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
             return `"${str.replace(/"/g, '""')}"`;
         }
         return `"${str}"`;

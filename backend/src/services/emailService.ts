@@ -396,3 +396,95 @@ export function buildTwoFactorEmailTemplate(params: { code: string, recipientEma
     return { subject, html, text };
 }
 
+/**
+ * Generates branded HTML template for Suspicious / Unrecognised Login Verification
+ */
+export function buildSuspiciousLoginVerificationTemplate(params: {
+    recipientEmail: string;
+    verifyLink: string;
+    verificationCode: string;
+    approxLocation: string;
+    deviceInfo: string;
+}): { subject: string; html: string; text: string } {
+    const subject = 'Security Alert: Confirm Sign-In from New Location or Device';
+    const text = `Elite Timesheet OS Security Confirmation\n\nWe noticed a sign-in attempt to your account (${params.recipientEmail}) from an unrecognised location or device:\n\nApprox. Location: ${params.approxLocation}\nDevice: ${params.deviceInfo}\n\nTo confirm this sign-in, enter the following code on your sign-in screen:\n${params.verificationCode}\n\nOr click this confirmation link:\n${params.verifyLink}\n\nThis verification link and code will expire in 15 minutes.\n\nIf you did not attempt to sign in, do not confirm this request. Change your password immediately to secure your account.`;
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 40px 20px; }
+        .card { max-width: 560px; margin: 0 auto; background-color: #1e293b; border-radius: 20px; border: 1px solid #334155; padding: 36px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
+        .brand { font-size: 20px; font-weight: 800; color: #6366f1; letter-spacing: -0.5px; margin-bottom: 24px; }
+        .alert-badge { display: inline-block; background: #7f1d1d; color: #fca5a5; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 9999px; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px; }
+        .title { font-size: 24px; font-weight: 800; color: #ffffff; margin-bottom: 12px; line-height: 1.3; }
+        .desc { font-size: 14px; line-height: 1.6; color: #94a3b8; margin-bottom: 20px; }
+        .meta-table { width: 100%; background-color: #0f172a; border-radius: 12px; padding: 16px; margin: 20px 0; border: 1px solid #334155; }
+        .meta-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+        .meta-label { color: #64748b; font-weight: 600; }
+        .meta-value { color: #f1f5f9; font-weight: 700; }
+        .code-box { background-color: #0f172a; border: 2px solid #6366f1; border-radius: 14px; padding: 18px; text-align: center; margin: 24px 0; }
+        .code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #a5b4fc; }
+        .btn { display: inline-block; background-color: #6366f1; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 12px; font-weight: 700; font-size: 14px; text-align: center; margin-top: 8px; }
+        .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #334155; font-size: 12px; color: #64748b; line-height: 1.5; }
+        .warning { color: #f87171; font-weight: 600; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="brand">ELITE TIMESHEET OS</div>
+        <span class="alert-badge">⚠️ Suspicious Sign-In Detected</span>
+        <div class="title">Confirm Sign-In From New Location</div>
+        <p class="desc">
+          We detected an attempt to sign in to your account (<strong style="color: #ffffff;">${params.recipientEmail}</strong>) from a new or unrecognised location:
+        </p>
+
+        <div class="meta-table">
+          <div class="meta-row">
+            <span class="meta-label">Approx. Location:</span>
+            <span class="meta-value">${params.approxLocation}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">Device & Browser:</span>
+            <span class="meta-value">${params.deviceInfo}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">Time:</span>
+            <span class="meta-value">Just now</span>
+          </div>
+        </div>
+
+        <p class="desc">
+          To complete your sign-in, enter this 6-digit confirmation code on your screen:
+        </p>
+
+        <div class="code-box">
+          <div class="code">${params.verificationCode}</div>
+        </div>
+
+        <div style="text-align: center; margin: 24px 0;">
+          <a href="${params.verifyLink}" class="btn">Authorise and Sign In Now →</a>
+        </div>
+
+        <p class="desc" style="font-size: 13px; color: #94a3b8;">
+          ⏱️ This challenge will expire in <strong>15 minutes</strong> and can only be used once.
+        </p>
+
+        <p class="desc" style="font-size: 12px; color: #64748b;">
+          <span class="warning">Wasn't you?</span> If you did not attempt this sign-in, someone may have obtained your password. We strongly recommend changing your password immediately.
+        </p>
+
+        <div class="footer">
+          Elite Timesheet OS Security Infrastructure &bull; Automated security challenge
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+
+    return { subject, html, text };
+}
+
+

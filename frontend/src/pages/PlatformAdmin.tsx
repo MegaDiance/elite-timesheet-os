@@ -8,8 +8,6 @@ export default function PlatformAdmin() {
 
   // Security Lock & Invite Modal State
   const [showInviteModal, setShowInviteModal] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [isUnlocked, setIsUnlocked] = useState(true);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [inviteResult, setInviteResult] = useState<{
@@ -46,16 +44,6 @@ export default function PlatformAdmin() {
   useEffect(() => {
     fetchOrgsAndInvites();
   }, []);
-
-  const handleUnlockPin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pinInput === 'admin123' || pinInput === 'password123') {
-      setIsUnlocked(true);
-      setModalError('');
-    } else {
-      setModalError('Invalid security password. Access denied.');
-    }
-  };
 
   const handleSendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,8 +128,6 @@ export default function PlatformAdmin() {
 
   const closeInviteModal = () => {
     setShowInviteModal(false);
-    setIsUnlocked(false);
-    setPinInput('');
     setRecipientEmail('');
     setInviteResult({ status: 'idle', email: '' });
     setModalError('');
@@ -386,26 +372,7 @@ export default function PlatformAdmin() {
               </div>
             )}
 
-            {!isUnlocked ? (
-              <form onSubmit={handleUnlockPin} className="space-y-4">
-                <p className="text-xs text-[var(--muted)]">Security Authentication Required. Enter master password to access organisation provisioning.</p>
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">Master Password / PIN</label>
-                  <input 
-                    required 
-                    type="password" 
-                    placeholder="Enter password (e.g. admin123)" 
-                    value={pinInput} 
-                    onChange={e => setPinInput(e.target.value)} 
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] outline-none focus:border-[var(--primary)] text-sm" 
-                  />
-                </div>
-                <div className="flex justify-end gap-3 mt-6">
-                  <button type="button" onClick={closeInviteModal} className="px-4 py-2 rounded-xl text-sm font-bold text-[var(--muted)] cursor-pointer">Cancel</button>
-                  <button type="submit" className="px-6 py-2 rounded-xl text-sm font-bold bg-[var(--primary)] text-white hover:bg-[var(--primary-h)] transition-colors cursor-pointer">Authenticate</button>
-                </div>
-              </form>
-            ) : inviteResult.status === 'sent' ? (
+            {inviteResult.status === 'sent' ? (
               /* Success Card */
               <div className="space-y-5 py-2">
                 <div className="p-4 bg-[var(--success-light)] border border-[var(--success)]/30 rounded-2xl text-center space-y-2">

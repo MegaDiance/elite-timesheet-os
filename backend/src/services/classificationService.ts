@@ -91,9 +91,33 @@ export async function classifyShiftHours(
         slices.push({ date: nextDate, minutes: day2Minutes });
     }
 
-    // Typical break deduction: If total shift >= 6h, deduct 30 min (0.5h) proportionally from slices
+    // Query organization break configurations with safe defaults
+    let breakMinsWeekday = 30;
+    let breakMinsWeekend = 0;
+    let breakThresholdHours = 6;
+    try {
+        const orgRes = await query(
+            'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
+            [orgId]
+        );
+        if (orgRes && orgRes.rows && orgRes.rows.length > 0) {
+            const row = orgRes.rows[0];
+            breakMinsWeekday = Number(row.break_mins_weekday ?? 30);
+            breakMinsWeekend = Number(row.break_mins_weekend ?? 0);
+            breakThresholdHours = Number(row.break_threshold_hours ?? 6);
+        }
+    } catch {
+        // Fallback to defaults if table or columns not yet seeded
+    }
+
+    const startWeekday = getWeekdayName(recordDate);
+    const isHoliday = holidayMap.has(recordDate);
+    const isWeekend = !isHoliday && ['Sat', 'Sun'].includes(startWeekday);
+    const configuredBreakMins = isWeekend ? breakMinsWeekend : breakMinsWeekday;
+    const thresholdMinutes = breakThresholdHours * 60;
+
     const totalMinutes = slices.reduce((acc, s) => acc + s.minutes, 0);
-    const breakDeductionM = totalMinutes >= 360 ? 30 : 0;
+    const breakDeductionM = totalMinutes >= thresholdMinutes ? configuredBreakMins : 0;
     
     return slices.map((s, idx) => {
         // Deduct break from the longer slice

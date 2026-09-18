@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { query } from '../services/db';
 import { hashPassword, comparePassword } from '../services/auth';
 import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { getFortnightStartIso, fmtISO } from '../services/periodUtils';
 
 const router = Router();
 
@@ -245,19 +246,100 @@ router.post('/leave-requests/:id/review', requireAuth, requireTenantContext, req
             return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Status must be Approved or Rejected' } });
         }
 
+        if (status === 'Rejected' && (!rejection_reason || !rejection_reason.trim())) {
+            return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A rejection reason is required when declining leave.' } });
+        }
+
+        const existingLeave = await query('SELECT * FROM leave_requests WHERE id = $1 AND org_id = $2', [id, orgId]);
+        if (existingLeave.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Leave request not found in your organisation.' } });
+        }
+        const leaveItem = existingLeave.rows[0];
+        if (['Approved', 'Rejected'].includes(leaveItem.status)) {
+            return res.status(409).json({
+                success: false,
+                error: { code: 'ALREADY_REVIEWED', message: `This leave request has already been ${leaveItem.status.toLowerCase()}.` }
+            });
+        }
+
+        // Check if either start_date or end_date falls into a timesheet-locked fortnight
+        const startFnIso = getFortnightStartIso(leaveItem.start_date);
+        const endFnIso = getFortnightStartIso(leaveItem.end_date);
+
+        const lockRes = await query(
+            'SELECT start_date, timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date IN ($2, $3) AND timesheet_locked = true',
+            [orgId, startFnIso, endFnIso]
+        );
+        if (lockRes.rows.length > 0) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'TIMESHEET_LOCKED', message: 'Cannot review leave for a fortnight that is timesheet locked.' }
+            });
+        }
+
+        const cleanReason = status === 'Rejected' ? rejection_reason.trim() : null;
+
         const updateRes = await query(
             `UPDATE leave_requests
              SET status = $1, reviewed_by = $2, reviewed_at = NOW(), rejection_reason = $3
              WHERE id = $4 AND org_id = $5
              RETURNING *`,
-            [status, req.user?.id, rejection_reason || null, id, orgId]
+            [status, req.user?.id, cleanReason, id, orgId]
         );
 
-        if (updateRes.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Leave request not found' } });
-        }
-
         const leave = updateRes.rows[0];
+
+        // When approved, automatically generate corresponding daily records and shift segments
+        if (status === 'Approved') {
+            const [sy, sm, sd] = String(leaveItem.start_date).split('T')[0].split('-').map(Number);
+            const [ey, em, ed] = String(leaveItem.end_date).split('T')[0].split('-').map(Number);
+            const curDate = new Date(Date.UTC(sy, sm - 1, sd));
+            const endDate = new Date(Date.UTC(ey, em - 1, ed));
+
+            const dates: string[] = [];
+            while (curDate.getTime() <= endDate.getTime()) {
+                dates.push(fmtISO(curDate));
+                curDate.setUTCDate(curDate.getUTCDate() + 1);
+            }
+
+            const totalHours = Number(leaveItem.hours);
+            const daysCount = dates.length || 1;
+            const dailyHours = Math.round((totalHours / daysCount) * 100) / 100;
+
+            for (const dIso of dates) {
+                let recId: string;
+                const recRes = await query(
+                    'SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3',
+                    [orgId, leaveItem.employee_id, dIso]
+                );
+
+                if (recRes.rows.length > 0) {
+                    recId = recRes.rows[0].id;
+                    await query('UPDATE daily_records SET has_actuals = true WHERE id = $1', [recId]);
+                } else {
+                    recId = crypto.randomUUID();
+                    await query(
+                        'INSERT INTO daily_records (id, org_id, employee_id, record_date, has_actuals) VALUES ($1, $2, $3, $4, true)',
+                        [recId, orgId, leaveItem.employee_id, dIso]
+                    );
+                }
+
+                // Insert leave shift segment
+                await query(
+                    `INSERT INTO shift_segments (id, record_id, segment_type, roster_hours, actual_hours, actual_segment_type, notes)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [
+                        crypto.randomUUID(),
+                        recId,
+                        leaveItem.leave_type,
+                        dailyHours,
+                        dailyHours,
+                        leaveItem.leave_type,
+                        `Approved leave request: ${leaveItem.reason || leaveItem.leave_type}`
+                    ]
+                );
+            }
+        }
 
         // Audit log
         await query(

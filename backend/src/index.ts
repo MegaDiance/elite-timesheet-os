@@ -27,7 +27,7 @@ const keyCandidates = [
     path.join(__dirname, '../../key.rtf'),
 ];
 
-for (const kPath of keyCandidates) {
+for (const kPath of process.env.NODE_ENV === 'production' ? [] : keyCandidates) {
     if (fs.existsSync(kPath) && !process.env.RESEND_API_KEY) {
         const content = fs.readFileSync(kPath, 'utf8');
         const match = content.match(/re_[a-zA-Z0-9_]+/);
@@ -42,8 +42,12 @@ for (const kPath of keyCandidates) {
 const app = express();
 
 // Secure CORS configuration
+const publicUrl = process.env.PUBLIC_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined);
+
 const allowedOrigins = [
     process.env.FRONTEND_URL,
+    publicUrl,
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:3002',
@@ -66,7 +70,7 @@ app.use(cors({
         return callback(new Error('Cross-Origin Request Blocked by Security Policy'));
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
@@ -81,6 +85,10 @@ app.use((_req, res, next) => {
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' http://localhost:* http://127.0.0.1:* https:;"
+    );
     next();
 });
 
@@ -92,9 +100,16 @@ import reportsRoutes from './routes/reports';
 import xeroRoutes from './routes/xero';
 import auditRoutes from './routes/audit';
 import announcementsRoutes from './routes/announcements';
+import dashboardRoutes from './routes/dashboard';
+
+// Health check (used by Railway to decide the deploy succeeded)
+app.get('/health', (_req, res) => {
+    res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/employees', employeesRoutes);
 app.use('/api/records', recordsRoutes);
 app.use('/api/locks', locksRoutes);
@@ -109,6 +124,38 @@ app.use('/api/xero', xeroRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/announcements', announcementsRoutes);
 
+// Serve the built frontend from this same service (single-service deployment).
+// In local development Vite serves the frontend on :3000, so this is skipped.
+const frontendDist = path.join(__dirname, '../../frontend/dist');
+const frontendIndex = path.join(frontendDist, 'index.html');
+
+if (fs.existsSync(frontendIndex)) {
+    app.use(express.static(frontendDist, {
+        index: false,
+        setHeaders: (res, filePath) => {
+            // Hashed asset filenames are safe to cache hard; index.html must not be.
+            if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+                res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            }
+        },
+    }));
+
+    // Anything that is not an API call falls through to the SPA so client-side
+    // routes like /roster and /login/:slug work on a hard refresh.
+    app.use((req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+        if (req.path.startsWith('/api/') || req.path === '/health') return next();
+        res.sendFile(frontendIndex);
+    });
+} else {
+    console.warn('[STARTUP] No frontend build found at frontend/dist - serving API only.');
+}
+
+// Unmatched API routes should be JSON, not HTML
+app.use('/api', (_req, res) => {
+    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Endpoint not found' } });
+});
+
 // Error handling
 app.use((err: any, req: any, res: any, next: any) => {
     console.error('[ERROR]', err);
@@ -122,8 +169,9 @@ async function start() {
     const dbUrl = process.env.DATABASE_URL;
     if (dbUrl) {
         await initDB(dbUrl);
-        app.listen(PORT, () => {
-            console.log(`Backend listening on port ${PORT}`);
+        app.listen(Number(PORT), '0.0.0.0', () => {
+            console.log(`Server listening on port ${PORT}`);
+            if (publicUrl) console.log(`Public URL: ${publicUrl}`);
         });
     } else {
         console.error('DATABASE_URL is required');
