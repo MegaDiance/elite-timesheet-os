@@ -24,6 +24,7 @@ import {
   Tabs, 
   EmptyState 
 } from '../components/ui';
+import { getFortnightStart, addDays, formatFortnightLabel, fmtISO } from '../utils/fortnight';
 
 interface EmployeePayrollSummary {
   employee_id: string;
@@ -67,37 +68,9 @@ interface PayrollReport {
   };
 }
 
-// Calculate fortnight start date from reference anchor 2026-03-29
-function getFortnightStart(d: Date): Date {
-  const y = d.getUTCFullYear();
-  const m = d.getUTCMonth();
-  const dateNum = d.getUTCDate();
-  const utcDate = new Date(Date.UTC(y, m, dateNum));
-  const ref = new Date(Date.UTC(2026, 2, 29)); // 2026-03-29 reference anchor
-  const diff = Math.floor((utcDate.getTime() - ref.getTime()) / 86400000);
-  const offset = Math.floor(diff / 14);
-  return new Date(ref.getTime() + offset * 14 * 86400000);
-}
-
-function formatDateStr(d: Date): string {
-  return d.toISOString().split('T')[0];
-}
-
-function addDays(d: Date, days: number): Date {
-  return new Date(d.getTime() + days * 86400000);
-}
-
-function formatPeriodLabel(startDateIso: string): string {
-  const [y, m, d] = startDateIso.split('-').map(Number);
-  const start = new Date(Date.UTC(y, m - 1, d));
-  const end = addDays(start, 13);
-  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' };
-  return `${start.toLocaleDateString('en-AU', options)} – ${end.toLocaleDateString('en-AU', options)}`;
-}
-
 export default function Reports() {
   const [selectedStartDate, setSelectedStartDate] = useState<string>(() => {
-    return formatDateStr(getFortnightStart(new Date()));
+    return fmtISO(getFortnightStart(new Date()));
   });
   const [report, setReport] = useState<PayrollReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -107,6 +80,12 @@ export default function Reports() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedDept, setSelectedDept] = useState<string>('ALL');
   const [error, setError] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 3500);
+  };
 
   // Generate a list of recent and upcoming pay periods (6 past, current, 4 future)
   const payPeriods = useMemo(() => {
@@ -114,11 +93,11 @@ export default function Reports() {
     const periods: { value: string; label: string }[] = [];
     for (let i = -6; i <= 4; i++) {
       const pStart = addDays(currentFn, i * 14);
-      const iso = formatDateStr(pStart);
-      const isCurrent = iso === formatDateStr(currentFn);
+      const iso = fmtISO(pStart);
+      const isCurrent = iso === fmtISO(currentFn);
       periods.push({
         value: iso,
-        label: `${formatPeriodLabel(iso)}${isCurrent ? ' (Current)' : ''}`,
+        label: `${formatFortnightLabel(iso)}${isCurrent ? ' (Current)' : ''}`,
       });
     }
     return periods;
@@ -149,13 +128,13 @@ export default function Reports() {
   const handlePrevFortnight = () => {
     const [y, m, d] = selectedStartDate.split('-').map(Number);
     const prev = addDays(new Date(Date.UTC(y, m - 1, d)), -14);
-    setSelectedStartDate(formatDateStr(prev));
+    setSelectedStartDate(fmtISO(prev));
   };
 
   const handleNextFortnight = () => {
     const [y, m, d] = selectedStartDate.split('-').map(Number);
     const next = addDays(new Date(Date.UTC(y, m - 1, d)), 14);
-    setSelectedStartDate(formatDateStr(next));
+    setSelectedStartDate(fmtISO(next));
   };
 
   const handleExportCsv = async () => {
@@ -173,9 +152,10 @@ export default function Reports() {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
+      showToast('Payroll CSV downloaded successfully');
     } catch (err) {
       console.error('Failed to export CSV:', err);
-      alert('Could not export CSV file.');
+      showToast('Could not export CSV file.');
     } finally {
       setExportingCsv(false);
     }
@@ -192,7 +172,7 @@ export default function Reports() {
       }
     } catch (err) {
       console.error('Failed to export PDF preview:', err);
-      alert('Could not load print preview.');
+      showToast('Could not load print preview.');
     } finally {
       setExportingPdf(false);
     }
@@ -257,12 +237,19 @@ export default function Reports() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
       {/* Header & Controls */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Workforce Reports</h1>
-            <Badge variant="purple" size="sm">Stage 4 Operations</Badge>
+            <Badge variant="info" size="sm">Payroll & Compliance</Badge>
           </div>
           <p className="text-xs text-[var(--muted)] mt-1">
             Authoritative payroll hours, shift classification breakdown, submission status, and export compliance.

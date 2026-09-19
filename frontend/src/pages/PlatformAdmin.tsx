@@ -325,9 +325,10 @@ export default function PlatformAdmin() {
                           <button
                             onClick={() => {
                               navigator.clipboard.writeText(inviteUrl);
-                              alert('Debug Link copied:\n\n' + inviteUrl);
+                              setActionNotice({ type: 'success', message: `Emergency Link copied to clipboard: ${inviteUrl}` });
+                              setTimeout(() => setActionNotice(null), 4000);
                             }}
-                            className="px-2 py-1 rounded text-[11px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)]"
+                            className="px-2 py-1 rounded text-[11px] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] cursor-pointer"
                           >
                             Copy Link
                           </button>

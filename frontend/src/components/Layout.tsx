@@ -54,6 +54,7 @@ export default function Layout() {
 
   // Modals state
   const [showOrgSwitchModal, setShowOrgSwitchModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Inactivity timeout & multi-tab session management
   const {
@@ -132,7 +133,8 @@ export default function Layout() {
         window.location.reload();
       }
     } catch {
-      alert('Failed to switch organisation');
+      setToastMessage('Failed to switch organisation');
+      setTimeout(() => setToastMessage(null), 3500);
     } finally {
       setSwitching(false);
     }
@@ -456,6 +458,13 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-20 right-6 z-50 bg-[var(--danger)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
       {/* Global Modals & Utilities */}
       <OrgSwitchModal

@@ -133,7 +133,7 @@ export default function Announcements() {
       showToast('Message removed');
       setAnnouncements(prev => prev.filter(a => a.id !== id));
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to delete message');
+      showToast(err.response?.data?.error?.message || 'Failed to delete message');
     }
   };
 
@@ -188,7 +188,7 @@ export default function Announcements() {
         showToast('Reply added');
       }
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to post reply');
+      showToast(err.response?.data?.error?.message || 'Failed to post reply');
     } finally {
       setSubmittingReplies(prev => ({ ...prev, [announcementId]: false }));
     }
@@ -212,7 +212,7 @@ export default function Announcements() {
       }));
       showToast('Reply removed');
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to delete reply');
+      showToast(err.response?.data?.error?.message || 'Failed to delete reply');
     }
   };
 
@@ -228,7 +228,7 @@ export default function Announcements() {
         fetchAnnouncements();
       }
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to update chat permissions');
+      showToast(err.response?.data?.error?.message || 'Failed to update chat permissions');
     } finally {
       setTogglingPermission(false);
     }

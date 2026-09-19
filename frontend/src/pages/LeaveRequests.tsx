@@ -70,7 +70,7 @@ export default function LeaveRequests() {
       }
       fetchLeaveRequests();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || `Failed to update leave request`);
+      showToast(err.response?.data?.error?.message || `Failed to update leave request`);
     } finally {
       setActionLoadingId(null);
     }
