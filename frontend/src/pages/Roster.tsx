@@ -3,6 +3,7 @@ import { FileCheck2, CheckCircle2, X, ThumbsDown, Search, Eye, CheckSquare, Squa
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
 import { Badge } from '../components/ui/Badge';
+import { getFortnightStart, fmtISO, addDays, formatFortnightLabel } from '../utils/fortnight';
 
 interface Segment {
   id?: string;
@@ -82,19 +83,8 @@ export default function Roster() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const getFortnightStart = (d: Date) => {
-    const y = d.getUTCFullYear();
-    const m = d.getUTCMonth();
-    const dateNum = d.getUTCDate();
-    const utcDate = new Date(Date.UTC(y, m, dateNum));
-    const ref = new Date(Date.UTC(2026, 2, 29)); 
-    const diff = Math.floor((utcDate.getTime() - ref.getTime()) / 86400000);
-    const offset = Math.floor(diff / 14);
-    return new Date(ref.getTime() + offset * 14 * 86400000);
-  };
-
   const activeFortnightStart = getFortnightStart(activeDate);
-  const fnIso = activeFortnightStart.toISOString().split('T')[0];
+  const fnIso = fmtISO(activeFortnightStart);
 
   const fetchData = async () => {
     try {
@@ -136,7 +126,7 @@ export default function Roster() {
       showToast('Timesheet approved successfully.');
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to approve timesheet');
+      showToast(err.response?.data?.error?.message || 'Failed to approve timesheet');
     } finally {
       setSubmittingAction(false);
     }
@@ -156,7 +146,7 @@ export default function Roster() {
         fetchData();
       }
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to bulk approve timesheets');
+      showToast(err.response?.data?.error?.message || 'Failed to bulk approve timesheets');
     } finally {
       setSubmittingAction(false);
     }
@@ -178,7 +168,7 @@ export default function Roster() {
       setRejectionReason('');
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to reject timesheet');
+      showToast(err.response?.data?.error?.message || 'Failed to reject timesheet');
     } finally {
       setSubmittingAction(false);
     }
@@ -192,7 +182,7 @@ export default function Roster() {
       setIsPublished(nextState);
       showToast(nextState ? 'Roster pushed & published to employees!' : 'Roster unpublished');
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to update roster publication');
+      showToast(err.response?.data?.error?.message || 'Failed to update roster publication');
     } finally {
       setPublishing(false);
     }
@@ -275,21 +265,30 @@ export default function Roster() {
   };
 
   const openAutoRosterModal = () => {
-    if (rosterLocked) return alert("Roster is locked");
+    if (rosterLocked) {
+      showToast("Roster is locked for editing.");
+      return;
+    }
     setSingleEmpTarget(null);
     setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
     setShowAutoRosterModal(true);
   };
 
   const openAutoLogModal = () => {
-    if (timesheetLocked) return alert("Timesheets are locked");
+    if (timesheetLocked) {
+      showToast("Timesheets are locked for editing.");
+      return;
+    }
     setSingleEmpTarget(null);
     setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
     setShowAutoLogModal(true);
   };
 
   const handleConfirmAutoRoster = async () => {
-      if (selectedDays.length === 0) return alert("Please select at least one day to roster");
+      if (selectedDays.length === 0) {
+        showToast("Please select at least one day to roster");
+        return;
+      }
       setShowAutoRosterModal(false);
       setLoadingAction(true);
       try {
@@ -344,7 +343,7 @@ export default function Roster() {
             showToast(`Roster templates applied for ${selectedDays.length} selected days`);
           }
       } catch (err: any) {
-          alert(err.response?.data?.error?.message || 'Failed to Auto-Roster');
+          showToast(err.response?.data?.error?.message || 'Failed to Auto-Roster');
       } finally {
           setLoadingAction(false);
           setSingleEmpTarget(null);
@@ -352,7 +351,10 @@ export default function Roster() {
   };
 
   const handleConfirmAutoLog = async () => {
-      if (selectedDays.length === 0) return alert("Please select at least one day to log");
+      if (selectedDays.length === 0) {
+        showToast("Please select at least one day to log");
+        return;
+      }
       setShowAutoLogModal(false);
       setLoadingAction(true);
       try {
@@ -383,7 +385,7 @@ export default function Roster() {
             showToast(`All rostered shifts logged for ${selectedDays.length} selected days`);
           }
       } catch (err: any) {
-          alert(err.response?.data?.error?.message || 'Failed to Auto-Log');
+          showToast(err.response?.data?.error?.message || 'Failed to Auto-Log');
       } finally {
           setLoadingAction(false);
           setSingleEmpTarget(null);
@@ -392,21 +394,30 @@ export default function Roster() {
 
   // Single Employee Actions
   const handleSingleEmployeeRoster = (emp: Employee) => {
-    if (rosterLocked) return alert("Roster is locked");
+    if (rosterLocked) {
+      showToast("Roster is locked for editing.");
+      return;
+    }
     setSingleEmpTarget(emp);
     setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
     setShowAutoRosterModal(true);
   };
 
   const handleSingleEmployeeLogAll = (empId: string, empName: string) => {
-    if (timesheetLocked) return alert("Timesheets are locked");
+    if (timesheetLocked) {
+      showToast("Timesheets are locked for editing.");
+      return;
+    }
     setSingleEmpTarget({ id: empId, full_name: empName });
     setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
     setShowAutoLogModal(true);
   };
 
   const handleSingleEmployeeClear = async (empId: string, empName: string) => {
-    if (rosterLocked || timesheetLocked) return alert("Period is locked");
+    if (rosterLocked || timesheetLocked) {
+      showToast("Period is locked.");
+      return;
+    }
     if (!confirm(`Clear all shifts for ${empName} for this fortnight?`)) return;
     setLoadingAction(true);
     try {
@@ -422,7 +433,7 @@ export default function Roster() {
       await fetchData();
       showToast(`Shifts cleared for ${empName}`);
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to clear shifts');
+      showToast(err.response?.data?.error?.message || 'Failed to clear shifts');
     } finally {
       setLoadingAction(false);
     }
@@ -441,7 +452,7 @@ export default function Roster() {
       link.remove();
       showToast('Payroll CSV downloaded');
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to export CSV');
+      showToast(err.response?.data?.error?.message || 'Failed to export CSV');
     }
   };
 
@@ -454,16 +465,10 @@ export default function Roster() {
         printWindow.document.close();
       }
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to generate printable report');
+      showToast(err.response?.data?.error?.message || 'Failed to generate printable report');
     }
   };
 
-  const addDays = (d: Date, n: number) => {
-    return new Date(d.getTime() + n * 86400000);
-  };
-
-  const fmtISO = (d: Date) => d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
-  
   const days = Array.from({ length: 14 }).map((_, i) => addDays(activeFortnightStart, i));
   const fnEnd = days[13];
 
@@ -531,18 +536,34 @@ export default function Roster() {
       )}
 
       {/* Top Toolbar */}
-      <div className="flex justify-between items-center bg-[var(--panel)] p-3 rounded-t-xl border border-[var(--border)] border-b-0">
-        <div className="flex items-center gap-3">
-          <button onClick={openAutoRosterModal} disabled={loadingAction} className="bg-[#f59e0b] hover:bg-[#d97706] text-black font-bold py-2 px-4 rounded-xl flex items-center gap-2 text-sm transition-colors shadow-lg disabled:opacity-50">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--panel)] p-3 rounded-t-xl border border-[var(--border)] border-b-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={openAutoRosterModal}
+            disabled={loadingAction}
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+            title="Auto-fill roster from employee schedule templates"
+          >
             Auto-Roster All
           </button>
-          <button onClick={openAutoLogModal} disabled={loadingAction} className="bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 text-sm transition-colors shadow-lg shadow-[var(--primary-light)] disabled:opacity-50">
+          <button
+            onClick={openAutoLogModal}
+            disabled={loadingAction}
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-[var(--primary)] hover:bg-[var(--primary-h)] active:scale-[0.98] text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+            title="Auto-populate timesheets from rostered shifts"
+          >
             Auto-Log All
           </button>
           
           {/* Calendar Fortnight Date Picker */}
-          <div className="flex items-center gap-1 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-xl ml-4 p-1">
-            <button onClick={handlePrev} className="px-3 py-1.5 text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] rounded-lg font-bold">←</button>
+          <div className="flex items-center gap-1 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5 ml-1">
+            <button
+              onClick={handlePrev}
+              className="px-2.5 py-1 text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] rounded-md transition-colors"
+              title="Previous fortnight"
+            >
+              ←
+            </button>
             <button 
               type="button"
               onClick={() => {
@@ -552,7 +573,8 @@ export default function Roster() {
                   dateInputRef.current?.focus();
                 }
               }}
-              className="relative px-3 py-1 text-sm font-bold flex items-center justify-center gap-2 text-[var(--text)] hover:bg-[var(--glass-4)] rounded-lg cursor-pointer transition-colors"
+              className="relative px-3 py-1 text-xs font-semibold flex items-center justify-center gap-1.5 text-[var(--text)] hover:bg-[var(--glass-4)] rounded-md cursor-pointer transition-colors"
+              title="Click to select specific date"
             >
               <span>{activeFortnightStart.getDate()} {activeFortnightStart.toLocaleString('default', { month: 'short' })} — {fnEnd.getDate()} {fnEnd.toLocaleString('default', { month: 'short' })} {fnEnd.getFullYear()}</span>
               <input 
@@ -568,24 +590,21 @@ export default function Roster() {
                 className="absolute inset-0 opacity-0 pointer-events-none w-0 h-0"
               />
             </button>
-            <button onClick={handleNext} className="px-3 py-1.5 text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] rounded-lg font-bold">→</button>
+            <button
+              onClick={handleNext}
+              className="px-2.5 py-1 text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] rounded-md transition-colors"
+              title="Next fortnight"
+            >
+              →
+            </button>
           </div>
-        </div>
-
-        {/* Shift Type Legend */}
-        <div className="hidden lg:flex items-center gap-3 text-[0.7rem] font-bold">
-          <span className="flex items-center gap-1 text-[var(--primary)]"><span className="w-2.5 h-2.5 rounded-full bg-[var(--primary)]"></span> Normal Work</span>
-          <span className="flex items-center gap-1 text-[#10b981]"><span className="w-2.5 h-2.5 rounded-full bg-[#10b981]"></span> TIL</span>
-          <span className="flex items-center gap-1 text-[#f59e0b]"><span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]"></span> Sick</span>
-          <span className="flex items-center gap-1 text-[#a855f7]"><span className="w-2.5 h-2.5 rounded-full bg-[#a855f7]"></span> Annual</span>
-          <span className="flex items-center gap-1 text-[#ef4444]"><span className="w-2.5 h-2.5 rounded-full bg-[#ef4444]"></span> Unplanned</span>
         </div>
         
         <div className="flex items-center gap-2 flex-wrap">
           {/* Timesheet Review Action */}
           <button 
             onClick={() => setShowSubmissionsModal(true)} 
-            className="px-3 py-2 rounded-xl text-xs font-semibold bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-2 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
             title="Review employee submitted timesheets"
           >
             <FileCheck2 className="w-3.5 h-3.5" />
@@ -594,7 +613,7 @@ export default function Roster() {
 
           <button 
             onClick={handleExportCsv} 
-            className="px-3 py-2 rounded-xl text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors"
+            className="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
             title="Download Accountant Payroll CSV"
           >
             <span>Export CSV</span>
@@ -602,7 +621,7 @@ export default function Roster() {
 
           <button 
             onClick={handlePrintPdf} 
-            className="px-3 py-2 rounded-xl text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors"
+            className="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
             title="Print or Save PDF Report"
           >
             <span>Print / PDF</span>
@@ -611,10 +630,10 @@ export default function Roster() {
           <button 
             onClick={handlePushRosterClick}
             disabled={publishing}
-            className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md ${
+            className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ${
               isPublished 
-                ? 'bg-[#10b981] hover:bg-[#059669] text-white' 
-                : 'bg-[#3b82f6] hover:bg-[#2563eb] text-white'
+                ? 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white' 
+                : 'bg-[var(--primary)] hover:bg-[var(--primary-h)] active:scale-[0.98] text-white'
             }`}
             title={isPublished ? "Roster is visible to employees. Click to unpublish." : "Push roster shifts to Employee Portal"}
           >
@@ -633,7 +652,15 @@ export default function Roster() {
             <span>{publishing ? 'Updating...' : isPublished ? 'Published' : 'Push Roster'}</span>
           </button>
 
-          <button onClick={() => openLockModal('roster')} className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 ${rosterLocked ? 'bg-[var(--warn-light)] text-[var(--warn)] border-[var(--warn)]' : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'}`}>
+          <button
+            onClick={() => openLockModal('roster')}
+            className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 cursor-pointer ${
+              rosterLocked 
+                ? 'bg-[var(--warn-light)] text-[var(--warn)] border-[var(--warn)]/40' 
+                : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'
+            }`}
+            title={rosterLocked ? "Roster locked. Click to unlock." : "Roster open. Click to lock."}
+          >
             <span>Roster</span>
             {rosterLocked ? (
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -647,7 +674,16 @@ export default function Roster() {
               </svg>
             )}
           </button>
-          <button onClick={() => openLockModal('timesheet')} className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 ${timesheetLocked ? 'bg-[var(--warn-light)] text-[var(--warn)] border-[var(--warn)]' : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'}`}>
+
+          <button
+            onClick={() => openLockModal('timesheet')}
+            className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 cursor-pointer ${
+              timesheetLocked 
+                ? 'bg-[var(--danger-light)] text-[var(--danger)] border-[var(--danger)]/40' 
+                : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'
+            }`}
+            title={timesheetLocked ? "Timesheets locked. Click to unlock." : "Timesheets open. Click to lock."}
+          >
             <span>Timesheet</span>
             {timesheetLocked ? (
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -664,12 +700,60 @@ export default function Roster() {
         </div>
       </div>
 
+      {/* Fortnight Status Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-[var(--panel-subtle)] border border-[var(--border)] border-t-0 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--muted)] font-medium">Fortnight Cycle:</span>
+          <span className="font-semibold text-[var(--text)]">
+            {formatFortnightLabel(activeFortnightStart)}
+          </span>
+          <span className="text-[var(--muted)] font-mono text-[11px]">
+            ({fnIso} to {fmtISO(fnEnd)})
+          </span>
+        </div>
+
+        {/* Shift Type Legend */}
+        <div className="hidden lg:flex items-center gap-3 text-[11px] font-medium text-[var(--muted)]">
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--primary)]"></span> Normal</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#10b981]"></span> TIL</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#f59e0b]"></span> Sick</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#a855f7]"></span> Annual</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#ef4444]"></span> Unplanned</span>
+        </div>
+
+        {/* State Badges */}
+        <div className="flex items-center gap-2">
+          {isPublished ? (
+            <Badge variant="success" size="sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Published
+            </Badge>
+          ) : (
+            <Badge variant="warning" size="sm">
+              Draft
+            </Badge>
+          )}
+
+          {rosterLocked ? (
+            <Badge variant="warning" size="sm">Roster: Locked</Badge>
+          ) : (
+            <Badge variant="outline" size="sm">Roster: Open</Badge>
+          )}
+
+          {timesheetLocked ? (
+            <Badge variant="danger" size="sm">Timesheets: Locked</Badge>
+          ) : (
+            <Badge variant="outline" size="sm">Timesheets: Open</Badge>
+          )}
+        </div>
+      </div>
+
       {/* Roster Grid Table */}
       <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-b-xl border border-[var(--border)] relative">
         <table className="ag-table border-none">
           <thead>
             <tr>
-              <th className="name-col py-3 text-[var(--muted)] font-bold text-xs uppercase tracking-wider">Elite Professional Workspace</th>
+              <th className="name-col py-3 text-[var(--muted)] font-bold text-xs uppercase tracking-wider">Staff Member</th>
               {days.map((d, i) => (
                 <th key={i} className={`py-3 text-center ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}>
                   <div className="flex flex-col items-center gap-1">
