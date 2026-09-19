@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import { MessageSquare, Smile, Trash2, Send, ShieldAlert, Clock, AlertTriangle } from 'lucide-react';
 import api from '../services/apiClient';
+import { getFortnightStart, fmtISO } from '../utils/fortnight';
 
 interface DaySummary {
   date: string;
@@ -177,19 +178,8 @@ export default function Portal() {
     setTimeout(() => setToastMsg(null), 3500);
   };
 
-  const getFortnightStart = (d: Date) => {
-    const y = d.getUTCFullYear();
-    const m = d.getUTCMonth();
-    const dateNum = d.getUTCDate();
-    const utcDate = new Date(Date.UTC(y, m, dateNum));
-    const ref = new Date(Date.UTC(2026, 2, 29)); 
-    const diff = Math.floor((utcDate.getTime() - ref.getTime()) / 86400000);
-    const offset = Math.floor(diff / 14);
-    return new Date(ref.getTime() + offset * 14 * 86400000);
-  };
-
   const activeFortnightStart = getFortnightStart(activeDate);
-  const fnIso = activeFortnightStart.toISOString().split('T')[0];
+  const fnIso = fmtISO(activeFortnightStart);
 
   const fetchPortal = async () => {
     setLoading(true);
@@ -281,7 +271,7 @@ export default function Portal() {
         showToast('Reply added');
       }
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to post reply');
+      showToast(err.response?.data?.error?.message || 'Failed to post reply');
     } finally {
       setSubmittingReplies(prev => ({ ...prev, [announcementId]: false }));
     }
@@ -305,7 +295,7 @@ export default function Portal() {
       }));
       showToast('Reply removed');
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to delete reply');
+      showToast(err.response?.data?.error?.message || 'Failed to delete reply');
     }
   };
 
@@ -354,7 +344,7 @@ export default function Portal() {
       setLeaveReason('');
       fetchLeaveRequests();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to submit leave request');
+      showToast(err.response?.data?.error?.message || 'Failed to submit leave request');
     } finally {
       setLeaveSubmitting(false);
     }
@@ -370,7 +360,7 @@ export default function Portal() {
       showToast('Message posted to Team Chat');
       fetchAnnouncements();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to post message');
+      showToast(err.response?.data?.error?.message || 'Failed to post message');
     } finally {
       setChatSubmitting(false);
     }
@@ -383,7 +373,7 @@ export default function Portal() {
       showToast('Message deleted');
       setAnnouncements(prev => prev.filter(a => a.id !== id));
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to delete message');
+      showToast(err.response?.data?.error?.message || 'Failed to delete message');
     }
   };
 
@@ -396,7 +386,7 @@ export default function Portal() {
         fetchPortal();
       }
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to submit timesheet');
+      showToast(err.response?.data?.error?.message || 'Failed to submit timesheet');
     } finally {
       setSubmittingTimesheet(false);
     }
