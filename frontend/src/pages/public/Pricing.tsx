@@ -64,7 +64,7 @@ export const Pricing: React.FC = () => {
           Simple, Transparent Workforce Plans
         </h1>
         <p className="text-base text-[var(--muted)] leading-relaxed">
-          Elite Timesheet OS is provisioned directly through authorized platform administrators. Every tier includes our complete database schema, break engine, and security layer.
+          Simple Hours is provisioned directly through authorized platform administrators. Every tier includes our complete database schema, break engine, and security layer.
         </p>
       </div>
 
@@ -119,11 +119,11 @@ export const Pricing: React.FC = () => {
                   className="w-full"
                   rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
                 >
-                  Go to Portal
+                  Workspace Sign In
                 </Button>
               </Link>
-              <p className="text-[11px] text-center text-[var(--muted)]">
-                Access via your organization portal
+              <p className="text-xs text-center text-[var(--muted)]">
+                Access via your organisation workspace URL
               </p>
             </div>
           </Card>
@@ -134,7 +134,7 @@ export const Pricing: React.FC = () => {
       <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-8 max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-emerald-500" />
+            <ShieldCheck className="w-5 h-5 text-[var(--success)]" />
             <h3 className="font-semibold text-base text-[var(--text)]">Need a New Tenant Provisioned?</h3>
           </div>
           <p className="text-xs text-[var(--muted)] max-w-xl leading-relaxed">
@@ -144,7 +144,7 @@ export const Pricing: React.FC = () => {
         <div className="flex items-center gap-3 shrink-0">
           <Link to="/portal-access">
             <Button variant="outline" size="sm" leftIcon={<Building2 className="w-4 h-4" />}>
-              Go to Portal
+              Sign In
             </Button>
           </Link>
           <Link to="/setup-org">

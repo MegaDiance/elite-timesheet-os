@@ -23,7 +23,7 @@ export const Features: React.FC = () => {
           Technical Specifications & Architecture
         </h1>
         <p className="text-base text-[var(--muted)] leading-relaxed">
-          A granular look into the underlying algorithms, compliance models, and security guarantees built into Elite Timesheet OS Pro.
+          A granular look into the underlying algorithms, compliance models, and security guarantees built into Simple Hours.
         </p>
       </div>
 
@@ -241,7 +241,7 @@ export const Features: React.FC = () => {
       <div className="text-center pt-8">
         <Link to="/portal-access">
           <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            Go to Portal
+            Workspace Sign In
           </Button>
         </Link>
       </div>

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Clock, ShieldCheck, ArrowRight, Building2 } from 'lucide-react';
+import { Clock, ShieldCheck, ArrowRight, Menu, X } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export const PublicLayout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [buildClicks, setBuildClicks] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -19,6 +20,10 @@ export const PublicLayout: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   const handleBuildClick = () => {
     const next = buildClicks + 1;
@@ -33,7 +38,6 @@ export const PublicLayout: React.FC = () => {
     { label: 'Overview', path: '/' },
     { label: 'Features', path: '/features' },
     { label: 'Pricing', path: '/pricing' },
-    { label: 'Portal', path: '/portal-access' },
   ];
 
   const isActive = (path: string) => {
@@ -42,11 +46,11 @@ export const PublicLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)] selection:bg-indigo-500/20 selection:text-indigo-400">
-      {/* Top Banner / Announcement */}
-      <div className="border-b border-[var(--border)] bg-[var(--panel-subtle)]/50 px-4 py-1.5 text-xs text-center text-[var(--muted)] flex items-center justify-center gap-2">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-        <span>Elite Timesheet OS 2.0 — Production Workforce & Compliance Management</span>
+    <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
+      {/* Top Banner */}
+      <div className="border-b border-[var(--border)] bg-[var(--panel-subtle)]/70 px-4 py-1.5 text-xs text-center text-[var(--muted)] flex items-center justify-center gap-2">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--success)] animate-pulse" />
+        <span>Simple Hours — Precision scheduling and timesheet compliance for shift teams</span>
       </div>
 
       {/* Main Navbar */}
@@ -54,19 +58,18 @@ export const PublicLayout: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm group-hover:bg-indigo-500 transition-colors">
-              <Clock className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-lg bg-[var(--primary)] flex items-center justify-center text-white shadow-xs group-hover:bg-[var(--primary-h)] transition-colors">
+              <Clock className="w-4 h-4" />
             </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-tight text-[var(--text)] flex items-center gap-1.5">
-                Elite Timesheet <span className="text-[10px] font-semibold tracking-wide uppercase px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">OS Pro</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold text-base tracking-tight text-[var(--text)]">
+                Simple Hours
               </span>
-              <span className="text-[11px] text-[var(--muted)] font-mono">Workforce & Compliance</span>
             </div>
           </Link>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-1 bg-[var(--panel-subtle)]/60 p-1 rounded-lg border border-[var(--border)]">
+          <nav className="hidden md:flex items-center gap-1 bg-[var(--panel-subtle)]/70 px-2 py-1 rounded-lg border border-[var(--border)]">
             {navLinks.map((link) => (
               <Link
                 key={link.path}
@@ -82,15 +85,49 @@ export const PublicLayout: React.FC = () => {
             ))}
           </nav>
 
-          {/* Action CTAs */}
+          {/* Action CTAs & Mobile Toggle */}
           <div className="flex items-center gap-2.5">
             <Link to="/portal-access">
               <Button variant="primary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                Go to Portal
+                Workspace Sign In
               </Button>
             </Link>
+
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] border border-[var(--border)] transition-colors"
+              aria-label="Toggle navigation menu"
+            >
+              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4 text-[var(--text)]" />}
+            </button>
           </div>
         </div>
+
+        {/* Mobile Dropdown Nav */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[var(--border)] bg-[var(--panel)] px-4 py-3 space-y-1 shadow-lg">
+            {navLinks.map((link) => (
+              <Link
+                key={link.path}
+                to={link.path}
+                className={`block px-3 py-2 rounded-md text-sm font-medium ${
+                  isActive(link.path)
+                    ? 'bg-[var(--primary-light)] text-[var(--primary)] font-semibold'
+                    : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
+                }`}
+              >
+                {link.label}
+              </Link>
+            ))}
+            <div className="pt-2 border-t border-[var(--border)]">
+              <Link to="/portal-access" className="block">
+                <Button variant="outline" size="sm" className="w-full">
+                  Workspace Sign In
+                </Button>
+              </Link>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content Area */}
@@ -103,65 +140,65 @@ export const PublicLayout: React.FC = () => {
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           <div className="md:col-span-1 space-y-3">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-md bg-indigo-600 flex items-center justify-center text-white">
+              <div className="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-white">
                 <Clock className="w-4 h-4" />
               </div>
-              <span className="font-semibold text-sm">Elite Timesheet OS</span>
+              <span className="font-semibold text-sm text-[var(--text)]">Simple Hours</span>
             </div>
             <p className="text-xs text-[var(--muted)] leading-relaxed">
-              Industrial-grade workforce management, fortnight rostering, and Fair Work compliance for modern distributed teams.
+              Workforce scheduling, automated break rules, and timesheet compliance designed for shift-based businesses.
             </p>
-            <div className="flex items-center gap-2 text-[11px] text-[var(--muted)]">
-              <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              <span>SOC2 & Fair Work Audit Ready</span>
+            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+              <ShieldCheck className="w-4 h-4 text-[var(--success)]" />
+              <span>Isolated Tenant Architecture & 2FA</span>
             </div>
           </div>
 
           <div>
             <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Product</h4>
             <ul className="space-y-2 text-xs text-[var(--muted)]">
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Shift Rostering</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Break Deductions</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Payroll Export (CSV / Print)</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Xero Integration</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">14-Day Roster Grid</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Automated Meal Deductions</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Dual Fortnight Locks</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">RFC 4180 Payroll Exports</Link></li>
             </ul>
           </div>
 
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Access & Security</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Compliance & Security</h4>
             <ul className="space-y-2 text-xs text-[var(--muted)]">
-              <li><Link to="/portal-access" className="hover:text-[var(--text)] transition-colors">Workplace Portal</Link></li>
-              <li><Link to="/portal-access" className="hover:text-[var(--text)] transition-colors">Locate Workplace Portal</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Immutable Audit Ledger</Link></li>
               <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Two-Factor Authentication</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Fortnight Lock Passwords</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Session Security & Timeout</Link></li>
+              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Tenant Isolation</Link></li>
             </ul>
           </div>
 
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Workplace Access</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Workspace Access</h4>
             <p className="text-xs text-[var(--muted)] leading-relaxed mb-3">
-              Access your organisation's dedicated timesheet and rostering instance.
+              Access your organisation's dedicated environment via your private workplace URL.
             </p>
             <Link to="/portal-access">
-              <Button variant="outline" size="sm" className="w-full justify-start" leftIcon={<Building2 className="w-3.5 h-3.5" />}>
-                Go to Portal
+              <Button variant="outline" size="sm" className="w-full">
+                Go to Workspace Login
               </Button>
             </Link>
           </div>
         </div>
 
         <div className="max-w-7xl mx-auto pt-6 border-t border-[var(--border)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--muted)]">
-          <p>© {new Date().getFullYear()} Elite Timesheet OS Pro. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Simple Hours. All rights reserved.</p>
           <div className="flex items-center gap-4">
             <span 
               onClick={handleBuildClick}
-              className={`select-none cursor-default transition-colors ${buildClicks > 0 ? 'text-indigo-400 font-medium' : ''}`}
-              title="System Build Status"
+              className={`select-none cursor-default transition-colors ${buildClicks > 0 ? 'text-[var(--primary)] font-medium' : ''}`}
+              title="Build Information"
             >
-              Production Build v2.4.0
+              Simple Hours v3.0
             </span>
             <span>•</span>
-            <span>PostgreSQL & Supabase Ready</span>
+            <span>Production Grade B2B SaaS</span>
           </div>
         </div>
       </footer>
