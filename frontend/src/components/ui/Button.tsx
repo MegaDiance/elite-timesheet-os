@@ -32,11 +32,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(({
   };
 
   const variantStyles = {
-    primary: 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm focus:ring-indigo-500 border border-transparent',
-    secondary: 'bg-[var(--panel-subtle)] hover:bg-[var(--hover-row)] text-[var(--text)] border border-[var(--border)] focus:ring-indigo-500',
-    outline: 'border border-[var(--border)] hover:border-[var(--border-hover)] bg-transparent hover:bg-[var(--glass-4)] text-[var(--text)] focus:ring-indigo-500',
-    ghost: 'hover:bg-[var(--glass-8)] text-[var(--muted)] hover:text-[var(--text)] focus:ring-indigo-500',
-    danger: 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm focus:ring-rose-500 border border-transparent',
+    primary: 'bg-[var(--primary)] hover:bg-[var(--primary-h)] active:scale-[0.98] text-white shadow-xs focus:ring-[var(--primary)] border border-transparent',
+    secondary: 'bg-[var(--panel-subtle)] hover:bg-[var(--hover-row)] active:scale-[0.98] text-[var(--text)] border border-[var(--border)] focus:ring-[var(--primary)]',
+    outline: 'border border-[var(--border)] hover:border-[var(--border-hover)] bg-transparent hover:bg-[var(--glass-4)] active:scale-[0.98] text-[var(--text)] focus:ring-[var(--primary)]',
+    ghost: 'hover:bg-[var(--glass-8)] active:scale-[0.98] text-[var(--muted)] hover:text-[var(--text)] focus:ring-[var(--primary)]',
+    danger: 'bg-[var(--danger)] hover:opacity-90 active:scale-[0.98] text-white shadow-xs focus:ring-[var(--danger)] border border-transparent',
   };
 
   return (

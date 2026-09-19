@@ -20,11 +20,11 @@ export const Badge: React.FC<BadgeProps> = ({
   const variantStyles = {
     default: 'bg-[var(--glass-8)] text-[var(--muted)] border border-[var(--border)]',
     outline: 'bg-transparent text-[var(--muted)] border border-[var(--border)]',
-    success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20',
-    warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20',
-    danger: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20',
-    info: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20',
-    purple: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20',
+    success: 'bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/25',
+    warning: 'bg-[var(--warn-light)] text-[var(--warn)] border border-[var(--warn)]/25',
+    danger: 'bg-[var(--danger-light)] text-[var(--danger)] border border-[var(--danger)]/25',
+    info: 'bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/25',
+    purple: 'bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/25',
   };
 
   return (
