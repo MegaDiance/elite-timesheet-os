@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Clock, ShieldCheck, ArrowRight, Menu, X } from 'lucide-react';
-import { Button } from '../components/ui/Button';
+import { Clock, ShieldCheck, Menu, X } from 'lucide-react';
 
 export const PublicLayout: React.FC = () => {
   const location = useLocation();
@@ -85,17 +84,11 @@ export const PublicLayout: React.FC = () => {
             ))}
           </nav>
 
-          {/* Action CTAs & Mobile Toggle */}
-          <div className="flex items-center gap-2.5">
-            <Link to="/portal-access">
-              <Button variant="primary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                Workspace Sign In
-              </Button>
-            </Link>
-
+          {/* Mobile Toggle */}
+          <div className="flex items-center gap-2.5 md:hidden">
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] border border-[var(--border)] transition-colors"
+              className="p-2 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] border border-[var(--border)] transition-colors"
               aria-label="Toggle navigation menu"
             >
               {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4 text-[var(--text)]" />}
@@ -119,13 +112,6 @@ export const PublicLayout: React.FC = () => {
                 {link.label}
               </Link>
             ))}
-            <div className="pt-2 border-t border-[var(--border)]">
-              <Link to="/portal-access" className="block">
-                <Button variant="outline" size="sm" className="w-full">
-                  Workspace Sign In
-                </Button>
-              </Link>
-            </div>
           </div>
         )}
       </header>
@@ -175,15 +161,10 @@ export const PublicLayout: React.FC = () => {
           </div>
 
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Workspace Access</h4>
-            <p className="text-xs text-[var(--muted)] leading-relaxed mb-3">
-              Access your organisation's dedicated environment via your private workplace URL.
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Enterprise Standards</h4>
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              Designed for Australian Fair Work compliance, automated award meal breaks, and dual-gate fortnight locks.
             </p>
-            <Link to="/portal-access">
-              <Button variant="outline" size="sm" className="w-full">
-                Go to Workspace Login
-              </Button>
-            </Link>
           </div>
         </div>
 

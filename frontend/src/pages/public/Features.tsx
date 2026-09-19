@@ -239,9 +239,9 @@ export const Features: React.FC = () => {
 
       {/* Bottom CTA */}
       <div className="text-center pt-8">
-        <Link to="/portal-access">
+        <Link to="/pricing">
           <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            Workspace Sign In
+            View Plans & Pricing
           </Button>
         </Link>
       </div>

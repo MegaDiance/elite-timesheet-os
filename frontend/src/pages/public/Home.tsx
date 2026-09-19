@@ -72,14 +72,14 @@ export const Home: React.FC = () => {
 
           {/* Hero CTAs */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-            <Link to="/portal-access" className="w-full sm:w-auto">
+            <Link to="/features" className="w-full sm:w-auto">
               <Button variant="primary" size="lg" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                Go to Workspace Login
+                Explore Product Features
               </Button>
             </Link>
-            <Link to="/features" className="w-full sm:w-auto">
+            <Link to="/pricing" className="w-full sm:w-auto">
               <Button variant="secondary" size="lg" className="w-full">
-                Explore Product Features
+                View Pricing & Plans
               </Button>
             </Link>
           </div>
@@ -395,14 +395,14 @@ export const Home: React.FC = () => {
               Ready to streamline your team's scheduling?
             </h2>
             <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
-              Sign in with your organisation's dedicated workspace URL, or contact your administrator for your invitation.
+              Discover how Simple Hours simplifies fortnight rosters, meal break deductions, and award compliance.
             </p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-            <Link to="/portal-access" className="w-full sm:w-auto">
+            <Link to="/pricing" className="w-full sm:w-auto">
               <Button variant="primary" size="lg" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                Workspace Sign In
+                View Plans & Pricing
               </Button>
             </Link>
             <Link to="/features" className="w-full sm:w-auto">

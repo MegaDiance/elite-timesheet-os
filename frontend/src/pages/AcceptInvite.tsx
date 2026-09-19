@@ -95,7 +95,7 @@ export default function AcceptInvite() {
               </div>
               <Link to="/portal-access" className="block">
                 <Button variant="secondary" size="md" className="w-full">
-                  Return to Workspace Sign In
+                  Return to Sign In
                 </Button>
               </Link>
             </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Building2, ArrowRight, ShieldCheck, Mail } from 'lucide-react';
+import { Check, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -112,47 +112,22 @@ export const Pricing: React.FC = () => {
             </div>
 
             <div className="pt-8 mt-8 border-t border-[var(--border)] space-y-3">
-              <Link to="/portal-access" className="block w-full">
+              <Link to="/features" className="block w-full">
                 <Button 
                   variant={tier.popular ? 'primary' : 'secondary'} 
                   size="md" 
                   className="w-full"
                   rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
                 >
-                  Workspace Sign In
+                  {tier.name.includes('Enterprise') ? 'Contact Sales' : 'Get Started'}
                 </Button>
               </Link>
               <p className="text-xs text-center text-[var(--muted)]">
-                Access via your organisation workspace URL
+                {tier.name.includes('Enterprise') ? 'Custom onboarding & compliance' : '14-day free trial • No credit card required'}
               </p>
             </div>
           </Card>
         ))}
-      </div>
-
-      {/* Enterprise Provisioning Notice */}
-      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-8 max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[var(--success)]" />
-            <h3 className="font-semibold text-base text-[var(--text)]">Need a New Tenant Provisioned?</h3>
-          </div>
-          <p className="text-xs text-[var(--muted)] max-w-xl leading-relaxed">
-            Platform administrators issue secure organization invitation tokens directly to founding team administrators. If you received an invitation token, you can complete setup immediately.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <Link to="/portal-access">
-            <Button variant="outline" size="sm" leftIcon={<Building2 className="w-4 h-4" />}>
-              Sign In
-            </Button>
-          </Link>
-          <Link to="/setup-org">
-            <Button variant="primary" size="sm" leftIcon={<Mail className="w-4 h-4" />}>
-              Claim Invite Token
-            </Button>
-          </Link>
-        </div>
       </div>
     </div>
   );
