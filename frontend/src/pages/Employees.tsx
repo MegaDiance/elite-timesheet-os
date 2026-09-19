@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, FileSpreadsheet, Plus, Phone, Mail } from 'lucide-react';
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
+import { getFortnightStartIso } from '../utils/fortnight';
 
 interface Employee {
   id: string;
@@ -27,6 +28,13 @@ export default function Employees() {
   const [showEditModal, setShowEditModal] = useState<Employee | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState<Employee | null>(null);
   const [showHolidaysModal, setShowHolidaysModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [inviteModalData, setInviteModalData] = useState<{ name: string; link: string } | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   const fetchEmployees = async () => {
     try {
@@ -50,9 +58,10 @@ export default function Employees() {
     if (confirm(`Permanently delete employee "${name}"? This action cannot be undone.`)) {
       try {
         await api.delete(`/employees/${id}`);
+        showToast(`Employee "${name}" deleted.`);
         await fetchEmployees();
       } catch (err: any) {
-        alert(err.response?.data?.error?.message || 'Failed to delete employee');
+        showToast(err.response?.data?.error?.message || 'Failed to delete employee');
       }
     }
   };
@@ -61,9 +70,10 @@ export default function Employees() {
     if (confirm('Deactivate employee?')) {
       try {
         await api.post(`/employees/${id}/deactivate`);
+        showToast('Employee deactivated.');
         await fetchEmployees();
       } catch (err: any) {
-        alert(err.response?.data?.error?.message || 'Failed to deactivate');
+        showToast(err.response?.data?.error?.message || 'Failed to deactivate');
       }
     }
   };
@@ -72,9 +82,10 @@ export default function Employees() {
     if (confirm('Reactivate employee?')) {
       try {
         await api.post(`/employees/${id}/reactivate`);
+        showToast('Employee reactivated.');
         await fetchEmployees();
       } catch (err: any) {
-        alert(err.response?.data?.error?.message || 'Failed to reactivate');
+        showToast(err.response?.data?.error?.message || 'Failed to reactivate');
       }
     }
   };
@@ -82,11 +93,20 @@ export default function Employees() {
   const handleResendInvite = async (id: string) => {
     try {
       const res = await api.post(`/employees/${id}/send-invitation`);
-      const msg = res.data.data.message || 'Invitation email dispatched successfully!';
-      alert(msg);
+      const msg = res.data?.data?.message || 'Invitation email dispatched successfully!';
+      showToast(msg);
       fetchEmployees();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to send invite');
+      showToast(err.response?.data?.error?.message || 'Failed to send invite');
+    }
+  };
+
+  const handleEmployeeSaved = (link?: string, name?: string) => {
+    fetchEmployees();
+    if (link) {
+      setInviteModalData({ name: name || 'Employee', link });
+    } else {
+      showToast('Employee details saved successfully.');
     }
   };
 
@@ -253,7 +273,7 @@ export default function Employees() {
                       Edit
                     </button>
                     {(emp.status === 'Pending Setup' || !emp.user_account_id) && (
-                      <button onClick={() => handleResendInvite(emp.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-blue-500 bg-blue-50 hover:bg-blue-100 transition-colors dark:bg-blue-900/30 dark:hover:bg-blue-900/50 touch-manipulation cursor-pointer">
+                      <button onClick={() => handleResendInvite(emp.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--primary)] bg-[var(--primary-light)] hover:opacity-80 transition-colors border border-[var(--primary)]/20 touch-manipulation cursor-pointer">
                         {emp.user_account_id ? 'Resend Invite' : 'Invite'}
                       </button>
                     )}
@@ -284,10 +304,85 @@ export default function Employees() {
         </table>
       </div>
 
-      {showAddModal && <EmployeeFormModal onClose={() => setShowAddModal(false)} onSave={fetchEmployees} />}
-      {showEditModal && <EmployeeFormModal employee={showEditModal} onClose={() => setShowEditModal(null)} onSave={fetchEmployees} />}
-      {showTemplateModal && <TemplateModal employee={showTemplateModal} onClose={() => setShowTemplateModal(null)} onSave={fetchEmployees} />}
-      {showHolidaysModal && <HolidaysModal onClose={() => setShowHolidaysModal(false)} />}
+      {showAddModal && (
+        <EmployeeFormModal
+          onClose={() => setShowAddModal(false)}
+          onSave={(link?: string, name?: string) => handleEmployeeSaved(link, name)}
+        />
+      )}
+      {showEditModal && (
+        <EmployeeFormModal
+          employee={showEditModal}
+          onClose={() => setShowEditModal(null)}
+          onSave={() => handleEmployeeSaved()}
+        />
+      )}
+      {showTemplateModal && (
+        <TemplateModal
+          employee={showTemplateModal}
+          onClose={() => setShowTemplateModal(null)}
+          onSave={fetchEmployees}
+        />
+      )}
+      {showHolidaysModal && (
+        <HolidaysModal
+          onClose={() => setShowHolidaysModal(false)}
+        />
+      )}
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Employee Account Invite Modal */}
+      {inviteModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[var(--panel)] rounded-2xl w-full max-w-md border border-[var(--border)] shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-base font-bold text-[var(--text)]">Employee Invite Link</h3>
+              <button
+                onClick={() => setInviteModalData(null)}
+                className="w-7 h-7 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-[var(--muted)]">
+              Account created for <span className="font-bold text-[var(--text)]">{inviteModalData.name}</span>. Share this private activation link with them:
+            </p>
+            <div className="flex items-center gap-2 bg-[var(--panel-subtle)] p-2 rounded-xl border border-[var(--border)]">
+              <input
+                type="text"
+                readOnly
+                value={inviteModalData.link}
+                className="w-full bg-transparent text-xs text-[var(--text)] font-mono outline-none select-all"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(inviteModalData.link);
+                  showToast('Invite link copied to clipboard!');
+                }}
+                className="px-3 py-1.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white text-xs font-semibold rounded-lg shrink-0 cursor-pointer"
+              >
+                Copy
+              </button>
+            </div>
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setInviteModalData(null)}
+                className="px-4 py-2 bg-[var(--panel-subtle)] hover:bg-[var(--glass-4)] text-[var(--text)] text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -298,13 +393,15 @@ function HolidaysModal({ onClose }: { onClose: () => void }) {
   const [date, setDate] = useState('');
   const [name, setName] = useState('');
   const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchHolidays = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.get('/organisation/holidays');
       if (res.data?.data) setHolidays(res.data.data);
-    } catch (err) {
+    } catch (err: any) {
       console.warn(err);
     } finally {
       setLoading(false);
@@ -319,13 +416,14 @@ function HolidaysModal({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     if (!date || !name.trim()) return;
     setAdding(true);
+    setError(null);
     try {
       await api.post('/organisation/holidays', { holiday_date: date, name: name.trim() });
       setDate('');
       setName('');
       fetchHolidays();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to add holiday');
+      setError(err.response?.data?.error?.message || 'Failed to add holiday');
     } finally {
       setAdding(false);
     }
@@ -333,11 +431,12 @@ function HolidaysModal({ onClose }: { onClose: () => void }) {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Remove this public holiday?')) return;
+    setError(null);
     try {
       await api.delete(`/organisation/holidays/${id}`);
       fetchHolidays();
     } catch (err: any) {
-      alert(err.response?.data?.error?.message || 'Failed to delete');
+      setError(err.response?.data?.error?.message || 'Failed to delete holiday');
     }
   };
 
@@ -349,13 +448,19 @@ function HolidaysModal({ onClose }: { onClose: () => void }) {
             <h3 className="text-xl font-black text-[var(--text)]">Configured Public Holidays</h3>
             <p className="text-xs text-[var(--muted)]">Automatic Public Holiday time categorization</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)]">
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] cursor-pointer">
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
           </button>
         </div>
+
+        {error && (
+          <div className="text-xs text-[var(--danger)] bg-[var(--danger-light)] p-2.5 rounded-lg border border-[var(--danger)]/20">
+            {error}
+          </div>
+        )}
 
         {/* Add Holiday Form */}
         <form onSubmit={handleAdd} className="bg-[var(--input-bg)] p-4 rounded-xl border border-[var(--border)] space-y-3">
@@ -438,7 +543,7 @@ function HolidaysModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function EmployeeFormModal({ employee, onClose, onSave }: { employee?: Employee, onClose: () => void, onSave: () => void }) {
+function EmployeeFormModal({ employee, onClose, onSave }: { employee?: Employee, onClose: () => void, onSave: (inviteLink?: string, name?: string) => void }) {
   const [formData, setFormData] = useState({
     full_name: employee?.full_name || '',
     email: employee?.email || '',
@@ -515,17 +620,16 @@ function EmployeeFormModal({ employee, onClose, onSave }: { employee?: Employee,
           await api.post(`/employees/${newEmpId}/templates`, { templates: validTemplates });
         }
 
-        onSave();
-        onClose();
-        if (res.data?.data?.inviteLink) {
-          const link = res.data.data.inviteLink;
+        const link = res.data?.data?.inviteLink;
+        if (link) {
           try {
             await navigator.clipboard.writeText(link);
           } catch (clipErr) {
             console.warn('Clipboard write failed:', clipErr);
           }
-          alert('Employee created successfully with custom schedule template. Invite link:\n\n' + link);
         }
+        onSave(link, formData.full_name);
+        onClose();
       }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to save employee');
@@ -686,13 +790,7 @@ function TemplateModal({ employee, onClose, onSave }: { employee: Employee, onCl
       }));
       await api.post(`/employees/${employee.id}/templates`, { templates: valid });
       if (applyToRoster) {
-        const dt = new Date();
-        const utcDate = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
-        const ref = new Date(Date.UTC(2026, 2, 29)); 
-        const diff = Math.floor((utcDate.getTime() - ref.getTime()) / 86400000);
-        const offset = Math.floor(diff / 14);
-        const activeFortnightStart = new Date(ref.getTime() + offset * 14 * 86400000);
-        const fnIso = activeFortnightStart.toISOString().split('T')[0];
+        const fnIso = getFortnightStartIso();
         await api.post('/roster/auto-roster', { start_date: fnIso });
       }
       onSave();
