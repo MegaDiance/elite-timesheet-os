@@ -9,10 +9,10 @@ const router = Router();
 
 /**
  * GET /api/organisation/discover
- * Public endpoint for safe organisation discovery during login/onboarding.
+ * Authenticated endpoint for organisation lookup. Public access disabled to prevent org enumeration.
  * Strict query length check, and zero exposure of sensitive fields.
  */
-router.get('/discover', async (req: any, res: Response) => {
+router.get('/discover', requireAuth, async (req: any, res: Response) => {
     try {
         const queryStr = (req.query.q as string || '').trim();
 

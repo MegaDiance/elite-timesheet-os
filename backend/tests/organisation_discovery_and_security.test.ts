@@ -220,16 +220,26 @@ describe('Organisation Discovery & Security Hardening Tests', () => {
         });
     });
 
-    describe('Public Safe Organisation Discovery', () => {
-        it('rejects searches with fewer than 2 characters', async () => {
-            const res = await request(app).get('/api/organisation/discover?q=a');
+    describe('Public Safe Organisation Discovery & Directory Elimination', () => {
+        it('rejects unauthenticated discovery requests with 401', async () => {
+            const res = await request(app).get('/api/organisation/discover?q=apex');
+            expect(res.status).toBe(401);
+            expect(res.body.success).toBe(false);
+        });
+
+        it('rejects searches with fewer than 2 characters when authenticated', async () => {
+            const res = await request(app)
+                .get('/api/organisation/discover?q=a')
+                .set('Authorization', `Bearer ${orgAAdminToken}`);
             expect(res.status).toBe(400);
             expect(res.body.success).toBe(false);
             expect(res.body.error.code).toBe('QUERY_TOO_SHORT');
         });
 
-        it('returns matching organisations safely with zero credential leaks', async () => {
-            const res = await request(app).get('/api/organisation/discover?q=apex');
+        it('returns matching organisations safely with zero credential leaks when authenticated', async () => {
+            const res = await request(app)
+                .get('/api/organisation/discover?q=apex')
+                .set('Authorization', `Bearer ${orgAAdminToken}`);
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.data.length).toBeGreaterThanOrEqual(1);
