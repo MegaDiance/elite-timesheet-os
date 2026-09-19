@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { jwtDecode } from 'jwt-decode';
 import { 
@@ -9,29 +9,21 @@ import {
   FileText, 
   ShieldCheck, 
   Building2, 
-  ChevronDown, 
   LogOut, 
   Moon, 
   Sun, 
-  Lock, 
   Sliders, 
-  KeyRound,
-  User as UserIcon,
-  Layers,
   MessageSquare,
   LayoutDashboard,
   BarChart3,
   Menu,
-  X
+  X,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import api from '../services/apiClient';
-import { Badge } from './ui/Badge';
-import { BreakSettingsModal } from './modals/BreakSettingsModal';
-import { LockPasswordsModal } from './modals/LockPasswordsModal';
-import { TwoFactorModal } from './modals/TwoFactorModal';
 import { OrgSwitchModal, type OrganisationMembership } from './modals/OrgSwitchModal';
 import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
-import { AccountSecurityModal } from './modals/AccountSecurityModal';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
 
 interface DecodedToken {
@@ -41,28 +33,27 @@ interface DecodedToken {
   role?: string;
 }
 
+interface NavItem {
+  label: string;
+  path: string;
+  icon: React.ReactNode;
+  badge?: string;
+}
+
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
 
   const [user, setUser] = useState<DecodedToken | null>(null);
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [organisations, setOrganisations] = useState<OrganisationMembership[]>([]);
   const [currentOrgName, setCurrentOrgName] = useState<string>('My Organisation');
   const [switching, setSwitching] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Modals state
-  const [showBreakModal, setShowBreakModal] = useState(false);
-  const [showLockModal, setShowLockModal] = useState(false);
-  const [show2FAModal, setShow2FAModal] = useState(false);
-  const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showOrgSwitchModal, setShowOrgSwitchModal] = useState(false);
-
-  // Close mobile navigation on route change
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [location.pathname]);
 
   // Inactivity timeout & multi-tab session management
   const {
@@ -73,9 +64,16 @@ export default function Layout() {
     logoutNow,
   } = useSessionTimeout();
 
-  // Profile menu dropdown
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const profileMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Auto-collapse sidebar on roster grid to maximise horizontal room
+  useEffect(() => {
+    if (location.pathname === '/roster') {
+      setSidebarCollapsed(true);
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -101,17 +99,6 @@ export default function Layout() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  // Click outside to close profile dropdown
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
-        setShowProfileMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
   const fetchOrganisations = async () => {
     try {
       const res = await api.get('/auth/organisations');
@@ -119,7 +106,6 @@ export default function Layout() {
         const orgsList: OrganisationMembership[] = res.data.data;
         setOrganisations(orgsList);
 
-        // Find active organization name
         const currentToken = localStorage.getItem('token');
         if (currentToken) {
           const decoded = jwtDecode<DecodedToken>(currentToken);
@@ -145,7 +131,7 @@ export default function Layout() {
         window.dispatchEvent(new Event('auth-change'));
         window.location.reload();
       }
-    } catch (err) {
+    } catch {
       alert('Failed to switch organisation');
     } finally {
       setSwitching(false);
@@ -171,504 +157,307 @@ export default function Layout() {
   const role = user?.role || 'Employee';
   const isManagerOrAdmin = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
   const isPlatformAdmin = role === 'Platform Admin';
-  const isFluid = location.pathname === '/roster' || location.pathname === '/' || location.pathname === '/portal';
 
   const isActive = (path: string) => {
     if (path === '/dashboard') return location.pathname === '/dashboard';
     if (path === '/roster') return location.pathname === '/roster';
     if (path === '/portal') return location.pathname === '/portal';
+    if (path === '/settings') return location.pathname === '/settings';
     return location.pathname.startsWith(path);
   };
 
-  const homePath = isPlatformAdmin ? '/platform' : '/dashboard';
+  // Construct Role-Based Nav Items
+  let navItems: NavItem[] = [];
+
+  if (isPlatformAdmin) {
+    navItems = [
+      { label: 'Platform Console', path: '/platform', icon: <ShieldCheck className="w-4 h-4" /> },
+      { label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> },
+    ];
+  } else if (isManagerOrAdmin) {
+    navItems = [
+      { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { label: 'Roster', path: '/roster', icon: <Calendar className="w-4 h-4" /> },
+      { label: 'Staff', path: '/employees', icon: <Users className="w-4 h-4" /> },
+      { label: 'Leave', path: '/leave-requests', icon: <Plane className="w-4 h-4" /> },
+      { label: 'Reports', path: '/reports', icon: <BarChart3 className="w-4 h-4" /> },
+      { label: 'Team Chat', path: '/announcements', icon: <MessageSquare className="w-4 h-4" /> },
+      { label: 'My Portal', path: '/portal', icon: <Clock className="w-4 h-4" /> },
+      ...(role !== 'Manager' ? [{ label: 'Audit', path: '/audit', icon: <FileText className="w-4 h-4" /> }] : []),
+      { label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> },
+    ];
+  } else {
+    // Employee Navigation: significantly simpler
+    navItems = [
+      { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { label: 'My Timesheet & Shifts', path: '/portal', icon: <Clock className="w-4 h-4" /> },
+      { label: 'Team Chat', path: '/announcements', icon: <MessageSquare className="w-4 h-4" /> },
+      { label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> },
+    ];
+  }
+
+  const isFluid = location.pathname === '/roster';
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
-      {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-md">
-        <div className={`w-full mx-auto px-4 sm:px-6 lg:px-8 h-15 flex items-center justify-between ${isFluid ? 'max-w-none' : 'max-w-7xl'}`}>
-          {/* Left: Brand + Organisation Context */}
-          <div className="flex items-center gap-6">
-            <Link to={homePath} className="flex items-center gap-2 group">
-              <div className="w-8 h-8 rounded-md bg-indigo-600 flex items-center justify-center text-white shadow-xs group-hover:bg-indigo-500 transition-colors">
-                <Clock className="w-4 h-4" />
-              </div>
-              <span className="font-bold text-sm tracking-tight text-[var(--text)] hidden sm:inline">
-                Elite Timesheet <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">OS</span>
-              </span>
-            </Link>
-
-            {/* Active Organisation Context Tag (Non-clickable) — hidden for Platform Admins */}
-            {!isPlatformAdmin && (
-              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] font-medium">
-                <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span className="max-w-[160px] truncate text-[var(--text)] font-semibold">{currentOrgName}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Center: Role-Based Main Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1">
-            {isPlatformAdmin ? (
-              /* Platform Admin: only show the Platform admin tab */
-              <Link
-                to="/platform"
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                  isActive('/platform')
-                    ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                    : 'text-indigo-400 hover:bg-indigo-500/10'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Platform Admin</span>
-              </Link>
-            ) : isManagerOrAdmin ? (
-              <>
-                <Link
-                  to="/dashboard"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/dashboard')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <LayoutDashboard className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Command Centre</span>
-                </Link>
-
-                <Link
-                  to="/roster"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/roster')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Roster</span>
-                </Link>
-
-                <Link
-                  to="/employees"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/employees')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>Staff</span>
-                </Link>
-
-                <Link
-                  to="/leave-requests"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/leave-requests')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <Plane className="w-3.5 h-3.5" />
-                  <span>Leave</span>
-                </Link>
-
-                <Link
-                  to="/reports"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/reports')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <BarChart3 className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Reports</span>
-                </Link>
-
-                <Link
-                  to="/announcements"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/announcements')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Team Chat</span>
-                </Link>
-
-                <Link
-                  to="/portal"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/portal')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>My Portal</span>
-                </Link>
-
-                {role !== 'Manager' && (
-                  <Link
-                    to="/audit"
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                      isActive('/audit')
-                        ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                        : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                    }`}
-                  >
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>Audit</span>
-                  </Link>
-                )}
-              </>
-            ) : (
-              <>
-                <Link
-                  to="/dashboard"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/dashboard')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <LayoutDashboard className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Command Centre</span>
-                </Link>
-
-                <Link
-                  to="/portal"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/portal')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>My Timesheet</span>
-                </Link>
-
-                <Link
-                  to="/announcements"
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
-                    isActive('/announcements')
-                      ? 'bg-[var(--panel-subtle)] text-[var(--text)] font-semibold border border-[var(--border)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                  }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Team Chat</span>
-                </Link>
-              </>
-            )}
-          </nav>
-
-          {/* Right: Actions & User Profile Menu */}
-          <div className="flex items-center gap-2">
-            {/* Mobile Menu Hamburger Toggle Button */}
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] border border-[var(--border)] transition-colors cursor-pointer"
-              aria-label="Toggle navigation"
-            >
-              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-            </button>
-
-            {/* Profile Dropdown */}
-            <div className="relative" ref={profileMenuRef}>
-              <button
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-[var(--panel-subtle)] border border-transparent hover:border-[var(--border)] transition-colors cursor-pointer select-none"
-                aria-expanded={showProfileMenu}
-              >
-              <div className="w-7 h-7 rounded-md bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs">
-                {user?.email?.charAt(0).toUpperCase() || <UserIcon className="w-3.5 h-3.5" />}
-              </div>
-              <div className="hidden sm:flex flex-col text-left">
-                <span className="text-xs font-semibold text-[var(--text)] max-w-[130px] truncate">
-                  {user?.email?.split('@')[0]}
-                </span>
-                <span className="text-[10px] text-[var(--muted)]">{role}</span>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 text-[var(--muted)]" />
-            </button>
-
-            {/* Dropdown Menu */}
-            {showProfileMenu && (
-              <div className="absolute right-0 mt-2 w-64 rounded-xl bg-[var(--panel)] border border-[var(--border)] shadow-xl py-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 divide-y divide-[var(--border)]">
-                {/* Header item */}
-                <div className="px-4 py-2.5">
-                  <div className="font-semibold text-sm text-[var(--text)] truncate">{user?.email}</div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <Badge variant={role === 'Employee' ? 'default' : 'purple'} size="sm">
-                      {role}
-                    </Badge>
-                    <span className="text-[10px] text-[var(--muted)] truncate">{currentOrgName}</span>
-                  </div>
+    <div className="min-h-screen flex bg-[var(--bg)] text-[var(--text)]">
+      {/* ========================================================================= */}
+      {/* DESKTOP LEFT SIDEBAR NAVIGATION (BambooHR / Modern SaaS Inspired)           */}
+      {/* ========================================================================= */}
+      <aside 
+        className={`hidden md:flex flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)] transition-all duration-200 sticky top-0 h-screen z-30 shrink-0 select-none ${
+          sidebarCollapsed ? 'w-18' : 'w-60'
+        }`}
+      >
+        {/* Brand Header */}
+        <div className="h-16 px-4 flex items-center justify-between border-b border-[var(--sidebar-border)]">
+          <Link to={isPlatformAdmin ? '/platform' : isManagerOrAdmin ? '/dashboard' : '/portal'} className="flex items-center gap-2.5 overflow-hidden">
+            <div className="w-8 h-8 rounded-lg bg-[var(--primary)] flex items-center justify-center text-white shrink-0 shadow-xs">
+              <Clock className="w-4 h-4" />
+            </div>
+            {!sidebarCollapsed && (
+              <div className="min-w-0">
+                <div className="font-bold text-sm tracking-tight text-white truncate">
+                  Simple Hours
                 </div>
-
-                {/* Account Security for All Users */}
-                <div className="py-1">
-                  <button
-                    onClick={() => { setShowSecurityModal(true); setShowProfileMenu(false); }}
-                    className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Account Security & Sessions</span>
-                  </button>
-                  <button
-                    onClick={() => { setShow2FAModal(true); setShowProfileMenu(false); }}
-                    className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
-                  >
-                    <KeyRound className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Two-Factor Authentication</span>
-                  </button>
-                </div>
-
-                {/* Manager / Admin Operational Settings — not shown to Platform Admins */}
-                {isManagerOrAdmin && !isPlatformAdmin && (
-                  <div className="py-1">
-                    <div className="px-4 py-1 text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider">
-                      Workplace Controls
-                    </div>
-                    <button
-                      onClick={() => { setShowBreakModal(true); setShowProfileMenu(false); }}
-                      className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <Sliders className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Break Deduction Rules</span>
-                    </button>
-                    <button
-                      onClick={() => { setShowLockModal(true); setShowProfileMenu(false); }}
-                      className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <Lock className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Fortnight Lock Passwords</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* Switch Organisation — not shown to Platform Admins unless in an org */}
-                {organisations.length > 1 && !isPlatformAdmin && (
-
-                  <div className="py-1">
-                    <button
-                      onClick={() => { setShowOrgSwitchModal(true); setShowProfileMenu(false); }}
-                      className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Switch Organisation ({organisations.length})</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* Theme & Logout */}
-                <div className="py-1">
-                  <button
-                    onClick={toggleTheme}
-                    className="w-full px-4 py-2 text-left text-[var(--text)] hover:bg-[var(--hover-row)] flex items-center justify-between cursor-pointer"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-                      <span>Theme</span>
-                    </span>
-                    <span className="text-[10px] uppercase text-[var(--muted)] font-mono">{theme}</span>
-                  </button>
-
-                  <button
-                    onClick={handleLogout}
-                    className="w-full px-4 py-2 text-left text-rose-500 hover:bg-rose-500/10 flex items-center gap-2.5 cursor-pointer font-medium"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign Out</span>
-                  </button>
+                <div className="text-[10px] text-[var(--sidebar-text)] font-medium truncate">
+                  Workforce & Scheduling
                 </div>
               </div>
             )}
-          </div>
+          </Link>
+
+          {/* Collapse Toggle Button */}
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="p-1 rounded text-[var(--sidebar-text)] hover:text-white hover:bg-white/5 transition-colors"
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
         </div>
-      </div>
 
-        {/* Mobile Navigation Drawer */}
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-[var(--border)] bg-[var(--panel)] px-4 py-3 space-y-2 animate-in slide-in-from-top-2 duration-150 shadow-xl">
-            {!isPlatformAdmin && (
-              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Building2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                  <span className="font-semibold text-[var(--text)] truncate">{currentOrgName}</span>
-                </div>
-                <Badge variant="purple" size="sm">{role}</Badge>
+        {/* Organisation Context Chip (When not collapsed) */}
+        {!sidebarCollapsed && !isPlatformAdmin && (
+          <div className="px-3 pt-3 pb-1">
+            <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/8 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <Building2 className="w-3.5 h-3.5 text-[var(--primary)] shrink-0" />
+                <span className="font-semibold text-white truncate">{currentOrgName}</span>
               </div>
-            )}
-
-            <div className="space-y-1">
-              {isPlatformAdmin ? (
-                <Link
-                  to="/platform"
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                    isActive('/platform')
-                      ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                      : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                  }`}
+              {organisations.length > 1 && (
+                <button
+                  onClick={() => setShowOrgSwitchModal(true)}
+                  className="text-[10px] text-[var(--primary)] hover:underline shrink-0"
+                  title="Switch organisation"
                 >
-                  <ShieldCheck className="w-4 h-4 text-indigo-400" />
-                  <span>Platform Admin</span>
-                </Link>
-              ) : isManagerOrAdmin ? (
-                <>
-                  <Link
-                    to="/dashboard"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/dashboard')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <LayoutDashboard className="w-4 h-4 text-indigo-400" />
-                    <span>Command Centre</span>
-                  </Link>
-
-                  <Link
-                    to="/roster"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/roster')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <Calendar className="w-4 h-4 text-indigo-400" />
-                    <span>Roster Grid</span>
-                  </Link>
-
-                  <Link
-                    to="/employees"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/employees')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <Users className="w-4 h-4 text-indigo-400" />
-                    <span>Staff Directory</span>
-                  </Link>
-
-                  <Link
-                    to="/leave-requests"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/leave-requests')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <Plane className="w-4 h-4 text-indigo-400" />
-                    <span>Leave Approvals</span>
-                  </Link>
-
-                  <Link
-                    to="/reports"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/reports')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <BarChart3 className="w-4 h-4 text-indigo-400" />
-                    <span>Reports & Payroll</span>
-                  </Link>
-
-                  <Link
-                    to="/announcements"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/announcements')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4 text-indigo-400" />
-                    <span>Team Chat</span>
-                  </Link>
-
-                  <Link
-                    to="/portal"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/portal')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4 text-indigo-400" />
-                    <span>My Personal Portal</span>
-                  </Link>
-
-                  {role !== 'Manager' && (
-                    <Link
-                      to="/audit"
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                        isActive('/audit')
-                          ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                          : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                      }`}
-                    >
-                      <FileText className="w-4 h-4 text-indigo-400" />
-                      <span>Audit Logs</span>
-                    </Link>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Link
-                    to="/dashboard"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/dashboard')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <LayoutDashboard className="w-4 h-4 text-indigo-400" />
-                    <span>Command Centre</span>
-                  </Link>
-
-                  <Link
-                    to="/portal"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/portal')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4 text-indigo-400" />
-                    <span>My Timesheet & Shifts</span>
-                  </Link>
-
-                  <Link
-                    to="/announcements"
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                      isActive('/announcements')
-                        ? 'bg-indigo-600/15 text-indigo-400 font-semibold border border-indigo-500/30'
-                        : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4 text-indigo-400" />
-                    <span>Team Chat</span>
-                  </Link>
-                </>
+                  Switch
+                </button>
               )}
             </div>
           </div>
         )}
-      </header>
 
-      {/* Main Content Area */}
-      <main className={`flex-1 w-full mx-auto ${isFluid ? 'max-w-none px-2 sm:px-3 lg:px-4 py-2 sm:py-2.5' : 'max-w-7xl px-4 sm:px-6 lg:px-8 py-6'}`}>
-        <Outlet />
-      </main>
+        {/* Navigation Links */}
+        <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
+          {navItems.map((item) => {
+            const active = isActive(item.path);
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                title={sidebarCollapsed ? item.label : undefined}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors group relative ${
+                  active
+                    ? 'bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] font-semibold'
+                    : 'text-[var(--sidebar-text)] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                {/* Active Indicator Strip */}
+                {active && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-[var(--primary)]" />
+                )}
+                <span className={`shrink-0 ${active ? 'text-[var(--primary)]' : 'group-hover:text-white'}`}>
+                  {item.icon}
+                </span>
+                {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+              </Link>
+            );
+          })}
+        </nav>
 
-      {/* Extracted Clean Modals */}
-      <BreakSettingsModal isOpen={showBreakModal} onClose={() => setShowBreakModal(false)} />
-      <LockPasswordsModal isOpen={showLockModal} onClose={() => setShowLockModal(false)} />
-      <TwoFactorModal isOpen={show2FAModal} onClose={() => setShow2FAModal(false)} />
-      <AccountSecurityModal isOpen={showSecurityModal} onClose={() => setShowSecurityModal(false)} />
+        {/* User Footer & Quick Actions */}
+        <div className="p-3 border-t border-[var(--sidebar-border)] space-y-2">
+          {!sidebarCollapsed ? (
+            <div className="p-2 rounded-lg bg-white/5 flex items-center justify-between text-xs">
+              <div className="min-w-0 pr-2">
+                <div className="font-semibold text-white truncate text-xs">
+                  {user?.email?.split('@')[0]}
+                </div>
+                <div className="text-[10px] text-[var(--sidebar-text)] flex items-center gap-1.5 mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)]" />
+                  <span>{role}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={toggleTheme}
+                  className="p-1.5 rounded hover:bg-white/10 text-[var(--sidebar-text)] hover:text-white transition-colors"
+                  title={`Toggle theme (Current: ${theme})`}
+                >
+                  {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="p-1.5 rounded hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-colors"
+                  title="Sign out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <button
+                onClick={toggleTheme}
+                className="p-2 rounded hover:bg-white/10 text-[var(--sidebar-text)] hover:text-white"
+                title={`Toggle theme (Current: ${theme})`}
+              >
+                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={handleLogout}
+                className="p-2 rounded hover:bg-rose-500/20 text-rose-400"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {/* ========================================================================= */}
+      {/* MAIN CONTENT WRAPPER + MOBILE TOP BAR                                     */}
+      {/* ========================================================================= */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Mobile Header Bar */}
+        <header className="md:hidden border-b border-[var(--border)] bg-[var(--panel)] px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="p-1.5 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)]"
+              aria-label="Open menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2 font-bold text-sm text-[var(--text)]">
+              <div className="w-6 h-6 rounded bg-[var(--primary)] flex items-center justify-center text-white text-xs font-bold">
+                SH
+              </div>
+              <span>Simple Hours</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-[var(--muted)] truncate max-w-[120px]">
+              {currentOrgName}
+            </span>
+            <button
+              onClick={handleLogout}
+              className="p-1.5 rounded text-rose-400 hover:bg-rose-500/10"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* Mobile Drawer Navigation Overlay */}
+        {mobileMenuOpen && (
+          <div className="md:hidden fixed inset-0 z-50 flex">
+            <div 
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs" 
+              onClick={() => setMobileMenuOpen(false)} 
+            />
+            <div className="relative w-72 max-w-[80%] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)] flex flex-col h-full z-10 shadow-2xl">
+              {/* Drawer Header */}
+              <div className="p-4 border-b border-[var(--sidebar-border)] flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-sm text-white">
+                  <div className="w-7 h-7 rounded-lg bg-[var(--primary)] flex items-center justify-center text-white">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <span>Simple Hours</span>
+                </div>
+                <button
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-1 rounded text-[var(--sidebar-text)] hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Org Context */}
+              {!isPlatformAdmin && (
+                <div className="p-3 border-b border-[var(--sidebar-border)] bg-white/5">
+                  <div className="text-[10px] uppercase text-[var(--sidebar-text)] font-semibold">Active Workspace</div>
+                  <div className="font-bold text-sm text-white truncate">{currentOrgName}</div>
+                </div>
+              )}
+
+              {/* Drawer Links */}
+              <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+                {navItems.map((item) => {
+                  const active = isActive(item.path);
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                        active
+                          ? 'bg-[var(--sidebar-active-bg)] text-white font-semibold'
+                          : 'text-[var(--sidebar-text)] hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <span className={active ? 'text-[var(--primary)]' : ''}>{item.icon}</span>
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+
+              {/* Drawer Footer */}
+              <div className="p-4 border-t border-[var(--sidebar-border)] space-y-3">
+                <div className="text-xs text-[var(--sidebar-text)] truncate">{user?.email}</div>
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={toggleTheme}
+                    className="flex items-center gap-2 text-xs text-[var(--sidebar-text)] hover:text-white"
+                  >
+                    {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                    <span>Theme</span>
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-1.5 text-xs text-rose-400 font-medium"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Page Content Container */}
+        <main className={`flex-1 w-full ${isFluid ? 'p-2 sm:p-3 lg:p-4' : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8'}`}>
+          <Outlet />
+        </main>
+      </div>
+
+      {/* Global Modals & Utilities */}
       <OrgSwitchModal
         isOpen={showOrgSwitchModal}
         onClose={() => setShowOrgSwitchModal(false)}
@@ -678,7 +467,6 @@ export default function Layout() {
         switching={switching}
       />
 
-      {/* 15-Minute Session Inactivity Timeout Modal */}
       <SessionTimeoutModal
         isOpen={showWarning}
         remainingSeconds={remainingSeconds}

@@ -25,6 +25,7 @@ import Announcements from './pages/Announcements';
 import LeaveRequests from './pages/LeaveRequests';
 import Dashboard from './pages/Dashboard';
 import Reports from './pages/Reports';
+import Settings from './pages/Settings';
 
 import { jwtDecode } from 'jwt-decode';
 
@@ -47,6 +48,7 @@ function AppHomeRedirect() {
   const role = getRole();
   if (!role) return <Navigate to="/portal-access" replace />;
   if (role === 'Platform Admin') return <Navigate to="/platform" replace />;
+  if (role === 'Employee') return <Navigate to="/portal" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -166,6 +168,14 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['Platform Admin']}>
                 <PlatformAdmin />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/settings" 
+            element={
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+                <Settings />
               </ProtectedRoute>
             } 
           />
