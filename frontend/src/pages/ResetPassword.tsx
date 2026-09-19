@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../services/apiClient';
+import { Card } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
+import { Clock, AlertCircle, ArrowLeft } from 'lucide-react';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -73,73 +76,71 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[var(--bg)] text-[var(--text)] font-['Inter',sans-serif] p-4">
-      <div className="w-full max-w-md p-8 bg-[var(--panel)] rounded-2xl border border-[var(--border)] shadow-2xl">
-        
-        {checkingToken ? (
-          <div className="text-center py-12">
-            <div className="w-10 h-10 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-sm font-medium text-[var(--muted)]">Verifying password reset link...</p>
+    <div className="flex items-center justify-center min-h-screen bg-[var(--bg)] text-[var(--text)] p-4">
+      <div className="w-full max-w-md space-y-6">
+        {/* Brand Header */}
+        <div className="text-center space-y-2">
+          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center mx-auto">
+            <Clock className="w-5 h-5" />
           </div>
-        ) : !tokenValid ? (
-          <div className="text-center py-6 space-y-4">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-[var(--danger-light)] text-[var(--danger)] rounded-2xl mb-2">
-              <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="15" y1="9" x2="9" y2="15"></line>
-                <line x1="9" y1="9" x2="15" y2="15"></line>
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-[var(--text)]">Invalid or Expired Link</h2>
-            <p className="text-xs text-[var(--muted)] leading-relaxed">
-              This password reset link is invalid or has already expired. Password reset links are single-use and valid for 1 hour.
-            </p>
-            <div className="pt-4 space-y-2">
-              <Link 
-                to="/forgot-password" 
-                className="block w-full bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-3 rounded-xl text-sm transition-colors text-center"
-              >
-                Request a New Reset Link
-              </Link>
-              <Link 
-                to="/login" 
-                className="block w-full text-center text-xs font-semibold text-[var(--muted)] hover:text-[var(--text)] py-2"
-              >
-                Return to Login
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div className="text-center mb-6">
-              <div className="inline-flex items-center justify-center w-14 h-14 bg-[var(--primary-light)] text-[var(--primary)] rounded-2xl mb-4 border border-[var(--primary)]/20">
-                <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                </svg>
-              </div>
-              <h2 className="text-2xl font-black text-[var(--text)]">Create New Password</h2>
-              {accountEmail && (
-                <p className="text-xs text-[var(--muted)] mt-1">
-                  For account <strong className="text-[var(--text)]">{accountEmail}</strong>
-                </p>
-              )}
-            </div>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
+            Create New Password
+          </h1>
+          <p className="text-xs text-[var(--muted)]">
+            Set a new secure password for your Simple Hours account
+          </p>
+        </div>
 
-            {error && (
-              <div className="bg-[var(--danger-light)] border border-[var(--danger)]/20 text-[var(--danger)] p-3 rounded-xl mb-4 text-xs font-semibold">
-                {error}
+        <Card className="p-6 sm:p-8 space-y-5">
+          {checkingToken ? (
+            <div className="text-center py-10 space-y-3">
+              <Clock className="w-6 h-6 animate-spin text-[var(--primary)] mx-auto" />
+              <p className="text-xs font-medium text-[var(--muted)]">Verifying password reset link...</p>
+            </div>
+          ) : !tokenValid ? (
+            <div className="text-center py-4 space-y-4">
+              <div className="w-12 h-12 rounded-full bg-[var(--danger-light)] text-[var(--danger)] flex items-center justify-center mx-auto">
+                <AlertCircle className="w-6 h-6" />
               </div>
-            )}
-
+              <h2 className="text-lg font-bold text-[var(--text)]">Invalid or Expired Link</h2>
+              <p className="text-xs text-[var(--muted)] leading-relaxed">
+                This password reset link is invalid or has already expired. Password reset links are single-use and expire in 1 hour.
+              </p>
+              <div className="pt-2 space-y-2">
+                <Link to="/forgot-password" className="block">
+                  <Button variant="primary" size="md" className="w-full">
+                    Request a New Reset Link
+                  </Button>
+                </Link>
+                <Link to="/login" className="block">
+                  <Button variant="ghost" size="sm" className="w-full">
+                    Return to Sign In
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">New Password</label>
+              {accountEmail && (
+                <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)]">
+                  Account: <strong className="text-[var(--text)]">{accountEmail}</strong>
+                </div>
+              )}
+
+              {error && (
+                <div className="p-3 rounded-lg bg-[var(--danger-light)] border border-[var(--danger)]/25 text-[var(--danger)] text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-semibold text-[var(--text)]">New Password</label>
                   <button 
                     type="button" 
                     onClick={() => setShowPassword(!showPassword)}
-                    className="text-xs font-semibold text-[var(--primary)] hover:underline focus:outline-none"
+                    className="text-xs text-[var(--primary)] hover:underline focus:outline-none"
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
@@ -148,68 +149,44 @@ export default function ResetPassword() {
                   type={showPassword ? 'text' : 'password'} 
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="At least 8 characters (letters & numbers)" 
-                  className="w-full px-4 py-2.5 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl text-[var(--text)] outline-none focus:border-[var(--primary)] text-sm"
+                  placeholder="At least 8 characters"
                   required
+                  className="w-full px-3.5 py-2 bg-[var(--input-bg)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] focus:outline-none focus:border-[var(--primary)]"
                 />
+                <p className="text-[11px] text-[var(--muted)] mt-1">Must contain both letters and numbers</p>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Confirm New Password</label>
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text)] mb-1">Confirm New Password</label>
                 <input 
                   type={showPassword ? 'text' : 'password'} 
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter password" 
-                  className="w-full px-4 py-2.5 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl text-[var(--text)] outline-none focus:border-[var(--primary)] text-sm"
+                  placeholder="Re-enter new password"
                   required
+                  className="w-full px-3.5 py-2 bg-[var(--input-bg)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] focus:outline-none focus:border-[var(--primary)]"
                 />
               </div>
 
-              <div className="text-[11px] text-[var(--muted)] space-y-1 pt-1">
-                <div className="flex items-center gap-1.5">
-                  <span className={password.length >= 8 ? 'text-[var(--success)] font-bold flex items-center gap-1' : 'text-[var(--muted)] flex items-center gap-1'}>
-                    {password.length >= 8 ? (
-                      <svg className="w-3.5 h-3.5 text-[var(--success)] inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    ) : (
-                      <span>-</span>
-                    )}
-                    At least 8 characters
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className={(password && /[A-Za-z]/.test(password) && /[0-9]/.test(password)) ? 'text-[var(--success)] font-bold flex items-center gap-1' : 'text-[var(--muted)] flex items-center gap-1'}>
-                    {(password && /[A-Za-z]/.test(password) && /[0-9]/.test(password)) ? (
-                      <svg className="w-3.5 h-3.5 text-[var(--success)] inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    ) : (
-                      <span>-</span>
-                    )}
-                    Contains letters and numbers
-                  </span>
-                </div>
-              </div>
-
-              <button 
+              <Button 
                 type="submit" 
-                disabled={isSubmitting || password.length < 8}
-                className="w-full bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-3 rounded-xl shadow-lg transition-colors text-sm cursor-pointer disabled:opacity-50 mt-2"
+                variant="primary"
+                size="md"
+                className="w-full"
+                loading={isSubmitting}
               >
-                {isSubmitting ? 'Updating Password...' : 'Set New Password'}
-              </button>
+                Reset Password
+              </Button>
 
               <div className="text-center pt-2">
-                <Link to="/login" className="text-xs font-semibold text-[var(--muted)] hover:text-[var(--text)] hover:underline">
-                  Back to Login
+                <Link to="/login" className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]">
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Sign In</span>
                 </Link>
               </div>
             </form>
-          </div>
-        )}
-
+          )}
+        </Card>
       </div>
     </div>
   );

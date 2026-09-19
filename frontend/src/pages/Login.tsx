@@ -265,17 +265,17 @@ export default function Login() {
         {/* Brand Header */}
         <div className="text-center space-y-2">
           <Link to="/" className="inline-flex items-center gap-2 group">
-            <div className="w-10 h-10 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm group-hover:bg-indigo-500 transition-colors">
+            <div className="w-10 h-10 rounded-xl bg-[var(--primary)] flex items-center justify-center text-white shadow-xs group-hover:bg-[var(--primary-h)] transition-colors">
               <Clock className="w-5 h-5" />
             </div>
           </Link>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-            Elite Timesheet OS <span className="text-indigo-400 font-mono text-xs uppercase px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20">Pro</span>
+            Simple Hours
           </h1>
           <p className="text-xs text-[var(--muted)]">
             {step === 'select_org'
               ? 'Choose your organisation to continue'
-              : 'Sign in to access your organisation portal'}
+              : 'Sign in to access your organisation workspace'}
           </p>
         </div>
 
@@ -345,8 +345,8 @@ export default function Login() {
               )}
 
               <div className="text-center pb-1">
-                <Link to="/portal-access" className="text-xs text-indigo-400 hover:underline inline-flex items-center gap-1 font-medium">
-                  <span>Locate your organisation portal</span>
+                <Link to="/portal-access" className="text-xs text-[var(--primary)] hover:underline inline-flex items-center gap-1 font-medium">
+                  <span>Sign in with your workspace identifier</span>
                   <ArrowRight className="w-3 h-3" />
                 </Link>
               </div>
@@ -376,7 +376,7 @@ export default function Login() {
                   leftIcon={<Lock className="w-4 h-4" />}
                 />
                 <div className="flex justify-end mt-1.5">
-                  <Link to="/forgot-password" className="text-xs text-indigo-400 hover:underline">
+                  <Link to="/forgot-password" className="text-xs text-[var(--primary)] hover:underline">
                     Forgot password?
                   </Link>
                 </div>

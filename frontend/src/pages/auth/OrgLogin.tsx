@@ -264,18 +264,21 @@ export const OrgLogin: React.FC = () => {
 
         {/* Branded Header */}
         <div className="text-center space-y-2">
-          <div className="w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-md mx-auto">
+          <div className="w-12 h-12 rounded-xl bg-[var(--primary)] flex items-center justify-center text-white font-bold text-xl shadow-xs mx-auto">
             {org?.logo_url ? (
-              <img src={org.logo_url} alt={org.name} className="w-full h-full object-cover rounded-2xl" />
+              <img src={org.logo_url} alt={org.name} className="w-full h-full object-cover rounded-xl" />
             ) : (
-              (org?.name || 'T').charAt(0).toUpperCase()
+              (org?.name || 'S').charAt(0).toUpperCase()
             )}
+          </div>
+          <div className="text-[11px] font-semibold tracking-wider uppercase text-[var(--primary)]">
+            Simple Hours Workspace
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
             {org?.name}
           </h1>
           <p className="text-xs text-[var(--muted)]">
-            Timesheet & Workforce Management Portal
+            Sign in to access your roster, timesheet, and leave
           </p>
         </div>
 
@@ -333,7 +336,7 @@ export const OrgLogin: React.FC = () => {
                   leftIcon={<Lock className="w-4 h-4" />}
                 />
                 <div className="flex justify-end mt-1.5">
-                  <Link to="/forgot-password" className="text-xs text-indigo-400 hover:underline">
+                  <Link to="/forgot-password" className="text-xs text-[var(--primary)] hover:underline">
                     Forgot password?
                   </Link>
                 </div>
@@ -354,7 +357,7 @@ export const OrgLogin: React.FC = () => {
             /* Step 2: 2FA Verification Form */
             <form onSubmit={handle2FASubmit} className="space-y-5">
               <div className="text-center space-y-1">
-                <div className="w-10 h-10 rounded-full bg-indigo-600/10 text-indigo-400 flex items-center justify-center mx-auto">
+                <div className="w-10 h-10 rounded-full bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center mx-auto">
                   <KeyRound className="w-5 h-5" />
                 </div>
                 <h3 className="text-sm font-semibold text-[var(--text)]">Two-Factor Authentication</h3>
@@ -397,7 +400,7 @@ export const OrgLogin: React.FC = () => {
                     type="button"
                     onClick={handleResend2FA}
                     disabled={resendLoading}
-                    className="text-indigo-400 hover:underline disabled:opacity-50"
+                    className="text-[var(--primary)] hover:underline disabled:opacity-50"
                   >
                     {resendLoading ? 'Sending...' : 'Resend Code'}
                   </button>
@@ -407,8 +410,8 @@ export const OrgLogin: React.FC = () => {
           )}
 
           {/* Tenant Isolation Info */}
-          <div className="pt-4 border-t border-[var(--border)] flex items-center justify-center gap-1.5 text-[11px] text-[var(--muted)]">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+          <div className="pt-4 border-t border-[var(--border)] flex items-center justify-center gap-1.5 text-xs text-[var(--muted)]">
+            <ShieldCheck className="w-3.5 h-3.5 text-[var(--success)]" />
             <span>End-to-end encrypted tenant session</span>
           </div>
         </Card>

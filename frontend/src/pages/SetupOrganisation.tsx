@@ -104,12 +104,15 @@ export default function SetupOrganisation() {
       <div className="w-full max-w-xl p-8 bg-[var(--panel)] rounded-3xl border border-[var(--border)] shadow-2xl space-y-6">
         {/* Header */}
         <div className="border-b border-[var(--border)] pb-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--primary)] mb-1">
+            Simple Hours
+          </div>
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-2xl font-black tracking-tight text-[var(--text)]">Organisation Setup Wizard</h2>
-              <p className="text-xs text-[var(--muted)] mt-1">Configure your corporate workspace, security locks, and shift policies</p>
+              <h2 className="text-2xl font-bold tracking-tight text-[var(--text)]">Organisation Setup</h2>
+              <p className="text-xs text-[var(--muted)] mt-0.5">Configure your workspace, security locks, and shift policies</p>
             </div>
-            <span className="text-xs font-bold px-3 py-1 bg-[var(--primary-light)] text-[var(--primary)] rounded-full uppercase tracking-wider">
+            <span className="text-xs font-semibold px-3 py-1 bg-[var(--primary-light)] text-[var(--primary)] rounded-full uppercase tracking-wider">
               Step {step} of 3
             </span>
           </div>
