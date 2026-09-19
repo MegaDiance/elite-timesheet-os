@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
 import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
-import { calcHours } from '../services/timeParser';
+import { calcHours, parseSmartTime } from '../services/timeParser';
 import { sendTransactionalEmail, buildEmployeeInviteEmailTemplate } from '../services/emailService';
 import { revokeAllUserSessions } from '../services/sessionService';
 
@@ -370,12 +370,37 @@ router.post('/:id/templates', requireAuth, requireRole(['Admin', 'Company Admin'
 
         await query('DELETE FROM roster_templates WHERE employee_id = $1', [empId]);
 
+        let orgSettings = { break_mins_weekday: 30, break_mins_weekend: 0, break_threshold_hours: 6 };
+        try {
+            const orgRes = await query(
+                'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
+                [orgId]
+            );
+            if (orgRes.rows[0]) {
+                orgSettings = {
+                    break_mins_weekday: orgRes.rows[0].break_mins_weekday ?? 30,
+                    break_mins_weekend: orgRes.rows[0].break_mins_weekend ?? 0,
+                    break_threshold_hours: orgRes.rows[0].break_threshold_hours ?? 6
+                };
+            }
+        } catch {}
+
         for (const t of templates) {
-            const h = (t.roster_in && t.roster_out) ? (t.roster_hours || calcHours(t.roster_in, t.roster_out) || 7.5) : 0;
+            const rIn = t.roster_in ? (parseSmartTime(t.roster_in) || null) : null;
+            const rOut = t.roster_out ? (parseSmartTime(t.roster_out) || null) : null;
+            const isWeekend = (t.day_index % 7 === 0 || t.day_index % 7 === 6);
+            const breakOptions = {
+                breakMins: isWeekend ? Number(orgSettings.break_mins_weekend) : Number(orgSettings.break_mins_weekday),
+                breakThresholdHours: Number(orgSettings.break_threshold_hours)
+            };
+            const h = (rIn && rOut) 
+                ? calcHours(rIn, rOut, breakOptions) 
+                : Math.max(0, Math.round(Number(t.roster_hours || 0) * 100) / 100);
+
             await query(`
                 INSERT INTO roster_templates (id, employee_id, day_index, segment_type, roster_in, roster_out, roster_hours)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-            `, [crypto.randomUUID(), empId, t.day_index, t.segment_type || 'WORK', t.roster_in || null, t.roster_out || null, h]);
+            `, [crypto.randomUUID(), empId, t.day_index, t.segment_type || 'WORK', rIn, rOut, h]);
         }
 
         res.json({ success: true });

@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
 import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
-import { calcHours } from '../services/timeParser';
+import { calcHours, parseSmartTime } from '../services/timeParser';
 import { getFortnightStartIso } from '../services/periodUtils';
 
 const router = Router();
@@ -198,6 +198,31 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
             }
         }
 
+        let orgSettings = { break_mins_weekday: 30, break_mins_weekend: 0, break_threshold_hours: 6 };
+        try {
+            const orgRes = await query(
+                'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
+                [orgId]
+            );
+            if (orgRes.rows[0]) {
+                orgSettings = {
+                    break_mins_weekday: orgRes.rows[0].break_mins_weekday ?? 30,
+                    break_mins_weekend: orgRes.rows[0].break_mins_weekend ?? 0,
+                    break_threshold_hours: orgRes.rows[0].break_threshold_hours ?? 6
+                };
+            }
+        } catch {
+            // Fallback to defaults
+        }
+
+        const [ry, rm, rd] = record_date.split('-').map(Number);
+        const recordDayOfWeek = new Date(Date.UTC(ry, rm - 1, rd)).getUTCDay();
+        const isWeekend = (recordDayOfWeek === 0 || recordDayOfWeek === 6);
+        const breakOptions = {
+            breakMins: isWeekend ? Number(orgSettings.break_mins_weekend) : Number(orgSettings.break_mins_weekday),
+            breakThresholdHours: Number(orgSettings.break_threshold_hours)
+        };
+
         let recResult = await query('SELECT * FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [orgId, employee_id, record_date]);
         let recId: string;
 
@@ -212,9 +237,22 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
         let has_actuals = false;
         if (segments && Array.isArray(segments)) {
             for (const seg of segments) {
-                const rosterH = (seg.roster_in && seg.roster_out) ? (seg.roster_hours || calcHours(seg.roster_in, seg.roster_out)) : (seg.roster_hours || 0);
-                const actualH = (seg.actual_in && seg.actual_out) ? (seg.actual_hours || calcHours(seg.actual_in, seg.actual_out)) : (seg.actual_hours || 0);
-                if (actualH > 0 || (seg.actual_in && seg.actual_out)) has_actuals = true;
+                const rIn = seg.roster_in ? (parseSmartTime(seg.roster_in) || null) : null;
+                const rOut = seg.roster_out ? (parseSmartTime(seg.roster_out) || null) : null;
+                const aIn = seg.actual_in ? (parseSmartTime(seg.actual_in) || null) : null;
+                const aOut = seg.actual_out ? (parseSmartTime(seg.actual_out) || null) : null;
+
+                const rosterH = (rIn && rOut) 
+                    ? calcHours(rIn, rOut, breakOptions) 
+                    : Math.max(0, Math.round(Number(seg.roster_hours || 0) * 100) / 100);
+
+                const actualH = (aIn && aOut) 
+                    ? calcHours(aIn, aOut, breakOptions) 
+                    : Math.max(0, Math.round(Number(seg.actual_hours || 0) * 100) / 100);
+
+                if (actualH > 0 || (aIn && aOut) || seg.actual_segment_type) {
+                    has_actuals = true;
+                }
 
                 await query(
                     `INSERT INTO shift_segments (
@@ -227,11 +265,11 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
                         recId,
                         seg.segment_type || 'WORK',
                         seg.is_unplanned ? true : false,
-                        seg.roster_in || null,
-                        seg.roster_out || null,
+                        rIn,
+                        rOut,
                         rosterH,
-                        seg.actual_in || null,
-                        seg.actual_out || null,
+                        aIn,
+                        aOut,
                         actualH,
                         seg.actual_segment_type || null,
                         seg.notes || null

@@ -319,13 +319,13 @@ export default function Dashboard() {
                         <div className="flex items-center gap-4 text-xs shrink-0 self-end sm:self-center">
                           <div className="text-right font-mono">
                             <div className="text-[var(--text)] font-semibold text-xs">
-                              {primarySegment?.roster_in || '--:--'} - {primarySegment?.roster_out || '--:--'}
+                              {(primarySegment?.roster_in ? primarySegment.roster_in.split(':').slice(0, 2).join(':') : '--:--')} - {(primarySegment?.roster_out ? primarySegment.roster_out.split(':').slice(0, 2).join(':') : '--:--')}
                               <span className="text-[10px] text-[var(--muted)] ml-1 font-sans">
-                                ({primarySegment?.roster_hours || 0}h)
+                                ({Math.round(Number(primarySegment?.roster_hours || 0) * 100) / 100}h)
                               </span>
                             </div>
                             <div className="text-[10px] text-[var(--muted)]">
-                              Actual: {primarySegment?.actual_in || '--:--'} - {primarySegment?.actual_out || '--:--'}
+                              Actual: {(primarySegment?.actual_in ? primarySegment.actual_in.split(':').slice(0, 2).join(':') : '--:--')} - {(primarySegment?.actual_out ? primarySegment.actual_out.split(':').slice(0, 2).join(':') : '--:--')}
                             </div>
                           </div>
 
@@ -523,17 +523,17 @@ export default function Dashboard() {
                         <div className="p-2 rounded bg-[var(--bg)] border border-[var(--border)]">
                           <div className="text-[10px] text-[var(--muted)] uppercase font-sans">Rostered</div>
                           <div className="font-bold text-[var(--text)] text-sm">
-                            {s.roster_in || '--:--'} - {s.roster_out || '--:--'}
+                            {(s.roster_in ? s.roster_in.split(':').slice(0, 2).join(':') : '--:--')} - {(s.roster_out ? s.roster_out.split(':').slice(0, 2).join(':') : '--:--')}
                           </div>
-                          <div className="text-[10px] text-[var(--muted)]">{s.roster_hours || 0} hrs</div>
+                          <div className="text-[10px] text-[var(--muted)]">{Math.round(Number(s.roster_hours || 0) * 100) / 100} hrs</div>
                         </div>
 
                         <div className="p-2 rounded bg-[var(--bg)] border border-[var(--border)]">
                           <div className="text-[10px] text-[var(--muted)] uppercase font-sans">Recorded Actual</div>
                           <div className="font-bold text-[var(--text)] text-sm">
-                            {s.actual_in || '--:--'} - {s.actual_out || '--:--'}
+                            {(s.actual_in ? s.actual_in.split(':').slice(0, 2).join(':') : '--:--')} - {(s.actual_out ? s.actual_out.split(':').slice(0, 2).join(':') : '--:--')}
                           </div>
-                          <div className="text-[10px] text-[var(--muted)]">{s.actual_hours || 0} hrs</div>
+                          <div className="text-[10px] text-[var(--muted)]">{Math.round(Number(s.actual_hours || 0) * 100) / 100} hrs</div>
                         </div>
                       </div>
                     </div>

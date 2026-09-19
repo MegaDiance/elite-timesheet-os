@@ -33,7 +33,7 @@ export async function calculateRosterStats(orgId: string, employeeId: string, fo
                 }
                 
                 const type = seg.actual_segment_type || seg.segment_type;
-                const hrs = (rec.has_actuals ? Number(seg.actual_hours || seg.roster_hours) : Number(seg.roster_hours || 0));
+                const hrs = (rec.has_actuals ? Number(seg.actual_hours || 0) : Number(seg.roster_hours || 0));
 
                 if (['Normal', 'WORK'].includes(type)) {
                     leave.Normal += hrs;
@@ -57,7 +57,20 @@ export async function calculateRosterStats(orgId: string, employeeId: string, fo
     const empRes = await query('SELECT contracted_hours FROM employees WHERE id = $1 AND org_id = $2', [employeeId, orgId]);
     const contracted = Number(empRes.rows[0]?.contracted_hours || 76);
 
-    return { rostered, actual, contracted, variance: actual - contracted, leave };
+    const rRostered = Math.round(rostered * 100) / 100;
+    const rActual = Math.round(actual * 100) / 100;
+    const rVariance = Math.round((rActual - contracted) * 100) / 100;
+    const rLeave = {
+        Normal: Math.round(leave.Normal * 100) / 100,
+        Weekdays: Math.round(leave.Weekdays * 100) / 100,
+        Weekends: Math.round(leave.Weekends * 100) / 100,
+        Sick: Math.round(leave.Sick * 100) / 100,
+        Annual: Math.round(leave.Annual * 100) / 100,
+        TIL: Math.round(leave.TIL * 100) / 100,
+        Unplanned: Math.round(leave.Unplanned * 100) / 100
+    };
+
+    return { rostered: rRostered, actual: rActual, contracted, variance: rVariance, leave: rLeave };
 }
 
 export async function autoRosterAll(orgId: string, fortnightStart: Date, selectedDays?: number[], actorId?: string) {
@@ -144,10 +157,10 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
                         t.segment_type || 'WORK', 
                         t.roster_in, 
                         t.roster_out, 
-                        Math.round(Number(t.roster_hours || defaultHours) * 10000) / 10000,
+                        Math.round(Number(t.roster_hours || defaultHours) * 100) / 100,
                         prevAct.actual_in || null,
                         prevAct.actual_out || null,
-                        Math.round(Number(prevAct.actual_hours || 0) * 10000) / 10000,
+                        Math.round(Number(prevAct.actual_hours || 0) * 100) / 100,
                         prevAct.actual_segment_type || null
                     ]);
                 }

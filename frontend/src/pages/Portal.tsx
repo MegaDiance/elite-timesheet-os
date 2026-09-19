@@ -1235,13 +1235,13 @@ export default function Portal() {
                                         <div
                                           key={sIdx}
                                           className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-md px-1 py-0.5 text-[9px] shadow-xs"
-                                          title={`${seg.segment_type}: ${seg.roster_in} - ${seg.roster_out} (${seg.roster_hours}h)`}
+                                          title={`${seg.segment_type}: ${seg.roster_in.split(':').slice(0, 2).join(':')} - ${seg.roster_out.split(':').slice(0, 2).join(':')} (${(Math.round(Number(seg.roster_hours || 0) * 100) / 100)}h)`}
                                         >
                                           <div className="font-bold text-[var(--text)] whitespace-nowrap text-[9px] leading-tight">
-                                            {seg.roster_in.replace(/^0/, '')}-{seg.roster_out.replace(/^0/, '')}
+                                            {seg.roster_in.split(':').slice(0, 2).join(':').replace(/^0/, '')}-{seg.roster_out.split(':').slice(0, 2).join(':').replace(/^0/, '')}
                                           </div>
                                           <div className="text-[8px] text-indigo-400 font-semibold leading-tight truncate">
-                                            {seg.roster_hours}h
+                                            {Math.round(Number(seg.roster_hours || 0) * 100) / 100}h
                                           </div>
                                         </div>
                                       ))}

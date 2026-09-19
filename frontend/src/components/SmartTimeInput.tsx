@@ -10,15 +10,46 @@ interface SmartTimeInputProps {
 
 export const parseSmartTime = (raw: string): string => {
   if (!raw) return '';
-  let str = raw.trim().toLowerCase();
+  let str = raw.trim().toLowerCase().replace(/\s/g, '');
+  if (!str) return '';
 
-  // If already HH:MM
+  // If it's standard ISO or SQL TIME like "09:00:00" or "09:00:00.0000"
+  if (/^\d{2}:\d{2}:\d{2}/.test(str)) {
+    return str.substring(0, 5);
+  }
   if (/^\d{2}:\d{2}$/.test(str)) return str;
 
-  let isPM = str.includes('p');
-  let isAM = str.includes('a');
-  str = str.replace(/[^\d:]/g, '');
+  let isPM = str.includes('p') || str.includes('pm');
+  let isAM = str.includes('a') || str.includes('am');
 
+  // Handle periods/dots: e.g. 9.30 (9:30), 9.5 (9:30), 9.00 (9:00)
+  if (str.includes('.')) {
+    const dotParts = str.replace(/[^\d.]/g, '').split('.');
+    const hoursNum = parseInt(dotParts[0], 10) || 0;
+    const decStr = dotParts[1] || '';
+
+    let mins = 0;
+    if (decStr.length === 1) {
+      mins = Math.round(Number('0.' + decStr) * 60);
+    } else if (decStr === '25') {
+      mins = 15;
+    } else if (decStr === '50') {
+      mins = 30;
+    } else if (decStr === '75') {
+      mins = 45;
+    } else {
+      mins = parseInt(decStr.substring(0, 2), 10) || 0;
+    }
+
+    let h = hoursNum;
+    if (isPM && h < 12) h += 12;
+    if (isAM && h === 12) h = 0;
+    if (h > 23) h = 23;
+    if (mins > 59) mins = 59;
+    return `${String(h).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+  }
+
+  str = str.replace(/[^\d:]/g, '');
   if (!str) return '';
 
   let hours = 0;
@@ -28,7 +59,7 @@ export const parseSmartTime = (raw: string): string => {
     const parts = str.split(':');
     hours = parseInt(parts[0], 10) || 0;
     minutes = parseInt(parts[1], 10) || 0;
-  } else if (str.length === 4) {
+  } else if (str.length >= 4) {
     hours = parseInt(str.substring(0, 2), 10) || 0;
     minutes = parseInt(str.substring(2, 4), 10) || 0;
   } else if (str.length === 3) {

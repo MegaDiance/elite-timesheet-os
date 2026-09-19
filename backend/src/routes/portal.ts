@@ -133,10 +133,10 @@ router.get('/my-timesheet', requireAuth, requireTenantContext, async (req: AuthR
                         is_unplanned: Boolean(seg.is_unplanned),
                         roster_in: seg.roster_in || null,
                         roster_out: seg.roster_out || null,
-                        roster_hours: rHours,
+                        roster_hours: Math.round(rHours * 100) / 100,
                         actual_in: seg.actual_in || null,
                         actual_out: seg.actual_out || null,
-                        actual_hours: aHours,
+                        actual_hours: Math.round(aHours * 100) / 100,
                         notes: seg.notes || null
                     });
                 }

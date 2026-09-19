@@ -521,9 +521,16 @@ export default function Roster() {
 
   const formatCompactShift = (start?: string, end?: string) => {
     if (!start || !end) return '';
-    const s = start.replace(/^0/, '');
-    const e = end.replace(/^0/, '');
-    return `${s}-${e}`;
+    const cleanS = start.split(':').slice(0, 2).join(':').replace(/^0/, '');
+    const cleanE = end.split(':').slice(0, 2).join(':').replace(/^0/, '');
+    return `${cleanS}-${cleanE}`;
+  };
+
+  const formatHours = (h: number | string | undefined | null): string => {
+    const num = Number(h || 0);
+    if (!num) return '0h';
+    const rounded = Math.round(num * 100) / 100;
+    return `${rounded}h`;
   };
 
   return (
@@ -941,7 +948,7 @@ export default function Roster() {
                                     const colorStyle = getSegmentBadgeColor(s.segment_type, false, false, isWeekend);
                                     const timeDisplay = (s.roster_in && s.roster_out) 
                                       ? formatCompactShift(s.roster_in, s.roster_out)
-                                      : (s.segment_type !== 'WORK' ? `${s.segment_type}${s.roster_hours ? ` (${s.roster_hours}h)` : ''}` : `${s.roster_hours || 0}h`);
+                                      : (s.segment_type !== 'WORK' ? `${s.segment_type}${s.roster_hours ? ` (${formatHours(s.roster_hours)})` : ''}` : formatHours(s.roster_hours));
                                     return (
                                       <div 
                                         key={idx} 
@@ -968,7 +975,7 @@ export default function Roster() {
                                     const colorStyle = getSegmentBadgeColor(segType, true, s.is_unplanned, isWeekend);
                                     const timeDisplay = (s.actual_in && s.actual_out) 
                                       ? formatCompactShift(s.actual_in, s.actual_out)
-                                      : (segType !== 'WORK' ? `${segType}${s.actual_hours ? ` (${s.actual_hours}h)` : ''}` : `${s.actual_hours || 0}h`);
+                                      : (segType !== 'WORK' ? `${segType}${s.actual_hours ? ` (${formatHours(s.actual_hours)})` : ''}` : formatHours(s.actual_hours));
                                     return (
                                       <div 
                                         key={idx} 
@@ -1822,9 +1829,37 @@ function CellEditorModal({ empId, empName, dateIso, existingRecords, rosterLocke
         setSegments([{ segment_type: 'WORK', roster_in: '09:00', roster_out: '17:00', roster_hours: 7.5, actual_in: '09:00', actual_out: '17:00', actual_hours: 7.5, is_unplanned: false }]);
     };
 
+    const computeShiftHours = (start?: string, end?: string): number => {
+      if (!start || !end) return 0;
+      const [h1, m1] = start.split(':').map(Number);
+      const [h2, m2] = end.split(':').map(Number);
+      let diff = (h2 * 60 + (m2 || 0)) - (h1 * 60 + (m1 || 0));
+      if (diff < 0) diff += 24 * 60;
+      let h = diff / 60;
+      if (h >= 6) h -= 0.5;
+      return Math.max(0, Math.round(h * 100) / 100);
+    };
+
     const updateSeg = (idx: number, field: string, val: any) => {
         const up = [...segments];
         (up[idx] as any)[field] = val;
+
+        // Automatically update duration when start/end times change
+        if (field === 'roster_in' || field === 'roster_out') {
+          const rIn = field === 'roster_in' ? val : up[idx].roster_in;
+          const rOut = field === 'roster_out' ? val : up[idx].roster_out;
+          if (rIn && rOut) {
+            up[idx].roster_hours = computeShiftHours(rIn, rOut);
+          }
+        }
+        if (field === 'actual_in' || field === 'actual_out') {
+          const aIn = field === 'actual_in' ? val : up[idx].actual_in;
+          const aOut = field === 'actual_out' ? val : up[idx].actual_out;
+          if (aIn && aOut) {
+            up[idx].actual_hours = computeShiftHours(aIn, aOut);
+          }
+        }
+
         setSegments(up);
         setError('');
     };
@@ -1923,6 +1958,27 @@ function CellEditorModal({ empId, empName, dateIso, existingRecords, rosterLocke
                                               className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--primary)] disabled:opacity-50" 
                                             />
                                         </div>
+                                        <div className="flex items-center justify-between pt-1">
+                                          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                                            <span className="font-semibold">Duration:</span>
+                                            <span className="font-extrabold text-[var(--primary)] font-mono">
+                                              {Number(s.roster_hours || 0).toFixed(2)}h
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-1">
+                                            <label className="text-[10px] text-[var(--muted)] font-bold uppercase">Manual Hours:</label>
+                                            <input 
+                                              type="number" 
+                                              step="0.1" 
+                                              min="0" 
+                                              max="24"
+                                              value={s.roster_hours || ''} 
+                                              onChange={e => updateSeg(idx, 'roster_hours', parseFloat(e.target.value) || 0)} 
+                                              placeholder="0"
+                                              className="w-20 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1 text-xs font-mono text-[var(--text)] font-bold outline-none focus:border-[var(--primary)]"
+                                            />
+                                          </div>
+                                        </div>
                                     </div>
 
                                     {/* Right Column: LOGGED TIMESHEET */}
@@ -1957,6 +2013,27 @@ function CellEditorModal({ empId, empName, dateIso, existingRecords, rosterLocke
                                               onChange={val => updateSeg(idx, 'actual_out', val)} 
                                               className="w-full bg-[var(--panel)] border border-[var(--success)]/40 rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--success)] disabled:opacity-50" 
                                             />
+                                        </div>
+                                        <div className="flex items-center justify-between pt-1">
+                                          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                                            <span className="font-semibold">Duration:</span>
+                                            <span className="font-extrabold text-[var(--success)] font-mono">
+                                              {Number(s.actual_hours || 0).toFixed(2)}h
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-1">
+                                            <label className="text-[10px] text-[var(--muted)] font-bold uppercase">Manual Hours:</label>
+                                            <input 
+                                              type="number" 
+                                              step="0.1" 
+                                              min="0" 
+                                              max="24"
+                                              value={s.actual_hours || ''} 
+                                              onChange={e => updateSeg(idx, 'actual_hours', parseFloat(e.target.value) || 0)} 
+                                              placeholder="0"
+                                              className="w-20 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1 text-xs font-mono text-[var(--text)] font-bold outline-none focus:border-[var(--success)]"
+                                            />
+                                          </div>
                                         </div>
                                     </div>
                                 </div>
