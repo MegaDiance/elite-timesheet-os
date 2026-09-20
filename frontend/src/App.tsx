@@ -11,7 +11,6 @@ import PlatformGate from './pages/auth/PlatformGate';
 
 import Roster from './pages/Roster';
 import Employees from './pages/Employees';
-import Portal from './pages/Portal';
 import Audit from './pages/Audit';
 import PlatformAdmin from './pages/PlatformAdmin';
 import Login from './pages/Login';
@@ -28,6 +27,10 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 
 import { jwtDecode } from 'jwt-decode';
+import EmployeeTimesheet from './pages/EmployeeTimesheet';
+import EmployeeSchedule from './pages/EmployeeSchedule';
+import EmployeeHistory from './pages/EmployeeHistory';
+import TimesheetReview from './pages/TimesheetReview';
 
 interface DecodedToken {
   role?: string;
@@ -48,7 +51,6 @@ function AppHomeRedirect() {
   const role = getRole();
   if (!role) return <Navigate to="/portal-access" replace />;
   if (role === 'Platform Admin') return <Navigate to="/platform" replace />;
-  if (role === 'Employee') return <Navigate to="/portal" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -148,10 +150,42 @@ export default function App() {
             } 
           />
           <Route 
+            path="/timesheet" 
+            element={
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+                <EmployeeTimesheet />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/schedule" 
+            element={
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+                <EmployeeSchedule />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/history" 
+            element={
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+                <EmployeeHistory />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/timesheets" 
+            element={
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager']}>
+                <TimesheetReview />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
             path="/portal" 
             element={
               <ProtectedRoute allowedRoles={['Employee', 'Manager', 'Company Admin', 'Platform Admin']}>
-                <Portal />
+                <EmployeeTimesheet />
               </ProtectedRoute>
             } 
           />

@@ -4,6 +4,7 @@ import { query } from '../services/db';
 import { requireAuth, requireTenantContext, AuthRequest } from '../middleware/auth';
 import { classifyShiftHours, getWeekdayName } from '../services/classificationService';
 import { fmtISO, addDays, getFortnightStartIso } from '../services/periodUtils';
+import { calcHours, parseSmartTime } from '../services/timeParser';
 
 const router = Router();
 
@@ -441,6 +442,163 @@ router.get('/leave-requests', requireAuth, requireTenantContext, async (req: Aut
     } catch (err: any) {
         console.error('[GET LEAVE REQUESTS ERROR]', err);
         res.status(500).json({ success: false, error: { message: 'Failed to retrieve leave requests.' } });
+    }
+});
+
+/**
+ * POST /api/portal/enter-hours
+ * Simple employee daily hours entry:
+ * Accepts: { record_date: 'YYYY-MM-DD', actual_in, actual_out, break_mins, notes }
+ */
+router.post('/enter-hours', requireAuth, requireTenantContext, async (req: AuthRequest, res: Response) => {
+    try {
+        const orgId = req.user?.organisation_id!;
+        const userId = req.user?.id!;
+        const { record_date, actual_in, actual_out, break_mins, notes } = req.body;
+
+        if (!record_date) {
+            return res.status(400).json({ success: false, error: { message: 'record_date is required (YYYY-MM-DD)' } });
+        }
+
+        const empRes = await query(
+            'SELECT id, full_name FROM employees WHERE user_id = $1 AND org_id = $2 AND is_active = true AND deleted_at IS NULL',
+            [userId, orgId]
+        );
+        if (empRes.rows.length === 0) {
+            return res.status(404).json({ success: false, error: { message: 'No active employee record linked to your user account.' } });
+        }
+        const employee = empRes.rows[0];
+
+        // Fortnight lock check
+        const fnIso = getFortnightStartIso(record_date);
+        const lockRes = await query(
+            'SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2',
+            [orgId, fnIso]
+        );
+        if (lockRes.rows[0]?.timesheet_locked) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'TIMESHEET_LOCKED', message: 'This timesheet period is locked and cannot be edited.' }
+            });
+        }
+
+        // Submission status check
+        const subRes = await query(
+            'SELECT id, status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3',
+            [orgId, employee.id, fnIso]
+        );
+        if (subRes.rows[0] && ['Approved', 'Locked'].includes(subRes.rows[0].status)) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'TIMESHEET_APPROVED', message: 'Your timesheet for this cycle has already been approved and cannot be modified.' }
+            });
+        }
+
+        // If timesheet was Submitted, submitting new hours resets it to Draft until resubmitted
+        if (subRes.rows[0]?.status === 'Submitted') {
+            await query(
+                `UPDATE timesheet_submissions SET status = 'Draft', submitted_at = NULL WHERE id = $1`,
+                [subRes.rows[0].id]
+            );
+        }
+
+        // Parse times
+        const cleanActualIn = actual_in ? parseSmartTime(actual_in) : null;
+        const cleanActualOut = actual_out ? parseSmartTime(actual_out) : null;
+
+        // Fetch org break settings
+        let orgSettings = { break_mins_weekday: 30, break_mins_weekend: 0, break_threshold_hours: 6 };
+        try {
+            const orgRes = await query(
+                'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
+                [orgId]
+            );
+            if (orgRes.rows[0]) {
+                orgSettings = {
+                    break_mins_weekday: orgRes.rows[0].break_mins_weekday ?? 30,
+                    break_mins_weekend: orgRes.rows[0].break_mins_weekend ?? 0,
+                    break_threshold_hours: orgRes.rows[0].break_threshold_hours ?? 6
+                };
+            }
+        } catch {
+            // fallback
+        }
+
+        const [ry, rm, rd] = record_date.split('-').map(Number);
+        const recordDayOfWeek = new Date(Date.UTC(ry, rm - 1, rd)).getUTCDay();
+        const isWeekend = (recordDayOfWeek === 0 || recordDayOfWeek === 6);
+
+        let customBreakMins: number | undefined;
+        if (break_mins !== undefined && break_mins !== null && !isNaN(Number(break_mins))) {
+            customBreakMins = Math.max(0, Number(break_mins));
+        }
+
+        const breakOptions = {
+            breakMins: customBreakMins !== undefined ? customBreakMins : (isWeekend ? Number(orgSettings.break_mins_weekend) : Number(orgSettings.break_mins_weekday)),
+            breakThresholdHours: Number(orgSettings.break_threshold_hours)
+        };
+
+        const actualHours = (cleanActualIn && cleanActualOut)
+            ? calcHours(cleanActualIn, cleanActualOut, breakOptions)
+            : 0;
+
+        // Get or create daily_record
+        let recResult = await query(
+            'SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3',
+            [orgId, employee.id, record_date]
+        );
+        let recId: string;
+        let existingRosterSegment: any = null;
+
+        if (recResult.rows.length > 0) {
+            recId = recResult.rows[0].id;
+            const segCheck = await query('SELECT * FROM shift_segments WHERE record_id = $1 ORDER BY created_at ASC LIMIT 1', [recId]);
+            if (segCheck.rows.length > 0) {
+                existingRosterSegment = segCheck.rows[0];
+            }
+        } else {
+            recId = crypto.randomUUID();
+            await query(
+                'INSERT INTO daily_records (id, org_id, employee_id, record_date, has_actuals) VALUES ($1, $2, $3, $4, $5)',
+                [recId, orgId, employee.id, record_date, Boolean(cleanActualIn && cleanActualOut)]
+            );
+        }
+
+        if (existingRosterSegment) {
+            await query(
+                `UPDATE shift_segments 
+                 SET actual_in = $1, actual_out = $2, actual_hours = $3, notes = COALESCE($4, notes)
+                 WHERE id = $5`,
+                [cleanActualIn, cleanActualOut, actualHours, notes || null, existingRosterSegment.id]
+            );
+        } else {
+            await query(
+                `INSERT INTO shift_segments (
+                    id, record_id, segment_type, is_unplanned,
+                    roster_in, roster_out, roster_hours,
+                    actual_in, actual_out, actual_hours, notes
+                ) VALUES ($1, $2, 'WORK', false, null, null, 0, $3, $4, $5, $6)`,
+                [crypto.randomUUID(), recId, cleanActualIn, cleanActualOut, actualHours, notes || null]
+            );
+        }
+
+        const hasActuals = Boolean(cleanActualIn && cleanActualOut);
+        await query('UPDATE daily_records SET has_actuals = $1 WHERE id = $2', [hasActuals, recId]);
+
+        res.json({
+            success: true,
+            data: {
+                record_date,
+                actual_in: cleanActualIn,
+                actual_out: cleanActualOut,
+                actual_hours: actualHours,
+                break_mins: breakOptions.breakMins,
+                notes: notes || null
+            }
+        });
+    } catch (err: any) {
+        console.error('[ENTER HOURS ERROR]', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to record hours.' } });
     }
 });
 

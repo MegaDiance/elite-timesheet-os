@@ -19,12 +19,18 @@ import {
   Menu,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  HelpCircle,
+  Home,
+  CheckSquare,
+  History
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { OrgSwitchModal, type OrganisationMembership } from './modals/OrgSwitchModal';
 import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
+import OnboardingTutorial from './OnboardingTutorial';
+import ContextHelpModal from './ContextHelpModal';
 
 interface DecodedToken {
   id: string;
@@ -35,9 +41,10 @@ interface DecodedToken {
 
 interface NavItem {
   label: string;
-  path: string;
+  path?: string;
   icon: React.ReactNode;
   badge?: string;
+  onClick?: () => void;
 }
 
 export default function Layout() {
@@ -54,6 +61,7 @@ export default function Layout() {
 
   // Modals state
   const [showOrgSwitchModal, setShowOrgSwitchModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Inactivity timeout & multi-tab session management
@@ -68,6 +76,12 @@ export default function Layout() {
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const handleOpenHelp = () => setShowHelpModal(true);
+    window.addEventListener('open-help-modal', handleOpenHelp);
+    return () => window.removeEventListener('open-help-modal', handleOpenHelp);
+  }, []);
 
   // Auto-collapse sidebar on roster grid to maximise horizontal room
   useEffect(() => {
@@ -160,10 +174,14 @@ export default function Layout() {
   const isManagerOrAdmin = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
   const isPlatformAdmin = role === 'Platform Admin';
 
-  const isActive = (path: string) => {
+  const isActive = (path?: string) => {
+    if (!path) return false;
     if (path === '/dashboard') return location.pathname === '/dashboard';
     if (path === '/roster') return location.pathname === '/roster';
-    if (path === '/portal') return location.pathname === '/portal';
+    if (path === '/portal' || path === '/timesheet') return location.pathname === '/portal' || location.pathname === '/timesheet';
+    if (path === '/timesheets') return location.pathname === '/timesheets';
+    if (path === '/schedule') return location.pathname === '/schedule';
+    if (path === '/history') return location.pathname === '/history';
     if (path === '/settings') return location.pathname === '/settings';
     return location.pathname.startsWith(path);
   };
@@ -179,21 +197,26 @@ export default function Layout() {
   } else if (isManagerOrAdmin) {
     navItems = [
       { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { label: 'Timesheets', path: '/timesheets', icon: <CheckSquare className="w-4 h-4" /> },
       { label: 'Roster', path: '/roster', icon: <Calendar className="w-4 h-4" /> },
       { label: 'Staff', path: '/employees', icon: <Users className="w-4 h-4" /> },
       { label: 'Leave', path: '/leave-requests', icon: <Plane className="w-4 h-4" /> },
       { label: 'Reports', path: '/reports', icon: <BarChart3 className="w-4 h-4" /> },
       { label: 'Team Chat', path: '/announcements', icon: <MessageSquare className="w-4 h-4" /> },
-      { label: 'My Portal', path: '/portal', icon: <Clock className="w-4 h-4" /> },
+      { label: 'My Timesheet', path: '/timesheet', icon: <Clock className="w-4 h-4" /> },
       ...(role !== 'Manager' ? [{ label: 'Audit', path: '/audit', icon: <FileText className="w-4 h-4" /> }] : []),
+      { label: 'Help & Guide', onClick: () => setShowHelpModal(true), icon: <HelpCircle className="w-4 h-4" /> },
       { label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> },
     ];
   } else {
-    // Employee Navigation: significantly simpler
+    // Employee Navigation: 5 core elements + Chat & Settings
     navItems = [
-      { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
-      { label: 'My Timesheet & Shifts', path: '/portal', icon: <Clock className="w-4 h-4" /> },
+      { label: 'Home', path: '/dashboard', icon: <Home className="w-4 h-4" /> },
+      { label: 'Timesheet', path: '/timesheet', icon: <Clock className="w-4 h-4" /> },
+      { label: 'Schedule', path: '/schedule', icon: <Calendar className="w-4 h-4" /> },
+      { label: 'History', path: '/history', icon: <History className="w-4 h-4" /> },
       { label: 'Team Chat', path: '/announcements', icon: <MessageSquare className="w-4 h-4" /> },
+      { label: 'Help & Guide', onClick: () => setShowHelpModal(true), icon: <HelpCircle className="w-4 h-4" /> },
       { label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> },
     ];
   }
@@ -263,26 +286,45 @@ export default function Layout() {
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const active = isActive(item.path);
+            const className = `w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors group relative text-left ${
+              active
+                ? 'bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] font-semibold'
+                : 'text-[var(--sidebar-text)] hover:text-white hover:bg-white/5'
+            }`;
+
+            if (item.path) {
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  title={sidebarCollapsed ? item.label : undefined}
+                  className={className}
+                >
+                  {/* Active Indicator Strip */}
+                  {active && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-[var(--primary)]" />
+                  )}
+                  <span className={`shrink-0 ${active ? 'text-[var(--primary)]' : 'group-hover:text-white'}`}>
+                    {item.icon}
+                  </span>
+                  {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                </Link>
+              );
+            }
+
             return (
-              <Link
-                key={item.path}
-                to={item.path}
+              <button
+                key={item.label}
+                type="button"
+                onClick={item.onClick}
                 title={sidebarCollapsed ? item.label : undefined}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors group relative ${
-                  active
-                    ? 'bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] font-semibold'
-                    : 'text-[var(--sidebar-text)] hover:text-white hover:bg-white/5'
-                }`}
+                className={className}
               >
-                {/* Active Indicator Strip */}
-                {active && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-[var(--primary)]" />
-                )}
-                <span className={`shrink-0 ${active ? 'text-[var(--primary)]' : 'group-hover:text-white'}`}>
+                <span className="shrink-0 group-hover:text-white">
                   {item.icon}
                 </span>
                 {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
-              </Link>
+              </button>
             );
           })}
         </nav>
@@ -411,20 +453,39 @@ export default function Layout() {
               <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
                 {navItems.map((item) => {
                   const active = isActive(item.path);
+                  const className = `w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-left ${
+                    active
+                      ? 'bg-[var(--sidebar-active-bg)] text-white font-semibold'
+                      : 'text-[var(--sidebar-text)] hover:text-white hover:bg-white/5'
+                  }`;
+
+                  if (item.path) {
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={className}
+                      >
+                        <span className={active ? 'text-[var(--primary)]' : ''}>{item.icon}</span>
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  }
+
                   return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                        active
-                          ? 'bg-[var(--sidebar-active-bg)] text-white font-semibold'
-                          : 'text-[var(--sidebar-text)] hover:text-white hover:bg-white/5'
-                      }`}
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        item.onClick?.();
+                      }}
+                      className={className}
                     >
-                      <span className={active ? 'text-[var(--primary)]' : ''}>{item.icon}</span>
+                      <span>{item.icon}</span>
                       <span>{item.label}</span>
-                    </Link>
+                    </button>
                   );
                 })}
               </nav>
@@ -454,10 +515,60 @@ export default function Layout() {
         )}
 
         {/* Page Content Container */}
-        <main className={`flex-1 w-full ${isFluid ? 'p-2 sm:p-3 lg:p-4' : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8'}`}>
+        <main className={`flex-1 w-full pb-24 md:pb-8 ${isFluid ? 'p-2 sm:p-3 lg:p-4' : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8'}`}>
           <Outlet />
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Bar (Dedicated touch-friendly 48px+ tap targets) */}
+      {!isPlatformAdmin && (
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[var(--sidebar-bg)] border-t border-[var(--sidebar-border)] flex items-center justify-around px-2 py-1 shadow-2xl select-none">
+          <Link
+            to="/dashboard"
+            className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
+              location.pathname === '/dashboard' ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
+            }`}
+          >
+            <Home className="w-5 h-5 mb-0.5" />
+            <span>Home</span>
+          </Link>
+          <Link
+            to={isManagerOrAdmin ? "/timesheets" : "/timesheet"}
+            className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
+              (location.pathname === '/timesheet' || location.pathname === '/timesheets' || location.pathname === '/portal') ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
+            }`}
+          >
+            <Clock className="w-5 h-5 mb-0.5" />
+            <span>Timesheet</span>
+          </Link>
+          <Link
+            to={isManagerOrAdmin ? "/roster" : "/schedule"}
+            className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
+              (location.pathname === '/schedule' || location.pathname === '/roster') ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
+            }`}
+          >
+            <Calendar className="w-5 h-5 mb-0.5" />
+            <span>Schedule</span>
+          </Link>
+          <Link
+            to={isManagerOrAdmin ? "/reports" : "/history"}
+            className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
+              (location.pathname === '/history' || location.pathname === '/reports') ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
+            }`}
+          >
+            <History className="w-5 h-5 mb-0.5" />
+            <span>{isManagerOrAdmin ? 'Reports' : 'History'}</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setShowHelpModal(true)}
+            className="flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium text-[var(--sidebar-text)] hover:text-white transition-colors"
+          >
+            <HelpCircle className="w-5 h-5 mb-0.5" />
+            <span>Help</span>
+          </button>
+        </nav>
+      )}
 
       {/* Toast Notification */}
       {toastMessage && (
@@ -482,6 +593,19 @@ export default function Layout() {
         isKeepingAlive={isKeepingAlive}
         onStaySignedIn={staySignedIn}
         onLogout={logoutNow}
+      />
+
+      {/* 1-Minute Interactive Onboarding Walkthrough */}
+      <OnboardingTutorial />
+
+      {/* Always Accessible Contextual Help & FAQ Modal */}
+      <ContextHelpModal
+        isOpen={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        onStartTutorial={() => {
+          setShowHelpModal(false);
+          window.dispatchEvent(new Event('start-tutorial'));
+        }}
       />
     </div>
   );

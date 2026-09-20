@@ -15,7 +15,8 @@ import {
   FileCheck2, 
   Hourglass, 
   CalendarCheck, 
-  Search 
+  Search,
+  Sparkles
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { Card } from '../components/ui/Card';
@@ -62,6 +63,9 @@ export default function Dashboard() {
     month: 'long',
     day: 'numeric'
   }) : 'Today';
+
+  const currentHour = new Date().getHours();
+  const greeting = currentHour < 12 ? 'Good morning' : currentHour < 17 ? 'Good afternoon' : 'Good evening';
 
   if (loading) {
     return (
@@ -142,15 +146,22 @@ export default function Dashboard() {
           </Button>
 
           {isManager ? (
-            <Link to="/roster">
-              <Button variant="primary" size="sm" leftIcon={<Calendar className="w-4 h-4" />}>
-                Open Roster Grid
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link to="/timesheets">
+                <Button variant="primary" size="sm" leftIcon={<FileCheck2 className="w-4 h-4" />}>
+                  Review Timesheets
+                </Button>
+              </Link>
+              <Link to="/roster">
+                <Button variant="outline" size="sm" leftIcon={<Calendar className="w-4 h-4" />}>
+                  Roster Grid
+                </Button>
+              </Link>
+            </div>
           ) : (
-            <Link to="/portal">
+            <Link to="/timesheet">
               <Button variant="primary" size="sm" leftIcon={<Clock className="w-4 h-4" />}>
-                My Timesheet
+                Enter Hours
               </Button>
             </Link>
           )}
@@ -162,6 +173,38 @@ export default function Dashboard() {
       ========================================================= */}
       {isManager && (
         <>
+          {/* Needs Attention Hero Card */}
+          <Card className="p-5 sm:p-6 bg-[var(--panel-subtle)] border-[var(--border)]">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-[var(--primary)]" />
+                  <h2 className="font-bold text-lg text-[var(--text)]">
+                    {greeting}, {data?.employee?.full_name?.split(' ')[0] || 'Manager'}
+                  </h2>
+                </div>
+                <div className="text-sm font-semibold text-[var(--text)]">
+                  {data?.metrics?.pending_submissions > 0
+                    ? `Needs attention: ${data.metrics.pending_submissions} timesheet${data.metrics.pending_submissions === 1 ? '' : 's'}`
+                    : 'All timesheets are reviewed & up to date'}
+                </div>
+                <p className="text-xs text-[var(--muted)]">
+                  {data?.metrics?.pending_submissions > 0
+                    ? `${data.metrics.pending_submissions} ready to approve • Fast one-click review queue`
+                    : 'No pending submissions waiting for approval.'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Link to="/timesheets">
+                  <Button variant="primary" size="md" rightIcon={<ArrowRight className="w-4 h-4" />}>
+                    Review Timesheets
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </Card>
+
           {/* Key Operational KPI Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {/* Metric 1: Currently Working */}
@@ -462,26 +505,35 @@ export default function Dashboard() {
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs uppercase tracking-wider text-[var(--primary)] font-semibold">
-                    Staff Portal
+                    Staff Home
                   </span>
                   <Badge variant="purple" size="sm">
                     {data?.employee?.department || 'Operations'}
                   </Badge>
                 </div>
                 <h2 className="text-xl font-bold text-[var(--text)]">
-                  Welcome back, {data?.employee?.full_name || 'Team Member'}
+                  {greeting}, {data?.employee?.full_name?.split(' ')[0] || 'Team Member'}
                 </h2>
                 <p className="text-xs text-[var(--muted)]">
-                  Contracted Hours: <strong className="text-[var(--text)] font-mono">{data?.employee?.contracted_hours ?? 76} hrs</strong> / fortnight
+                  Here is what you need to know for today and your fortnight timesheet.
                 </p>
               </div>
 
               <div className="flex items-center gap-2 self-start sm:self-center">
-                <Link to="/portal">
-                  <Button variant="primary" size="md" leftIcon={<Clock className="w-4 h-4" />}>
-                    Open 14-Day Timesheet
+                <Link to="/timesheet">
+                  <Button variant="primary" size="md" rightIcon={<ArrowRight className="w-4 h-4" />}>
+                    Enter Hours
                   </Button>
                 </Link>
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('start-simplehours-tutorial'))}
+                  className="px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--panel)] text-xs font-semibold text-[var(--muted)] hover:text-[var(--text)] transition-colors flex items-center gap-1.5"
+                  title="Take the 1-minute tour"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-[var(--primary)]" />
+                  Tour
+                </button>
               </div>
             </div>
           </Card>
@@ -493,10 +545,10 @@ export default function Dashboard() {
               <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-[var(--primary)]" />
-                  <h3 className="font-semibold text-sm text-[var(--text)]">Today's Shift Schedule</h3>
+                  <h3 className="font-semibold text-sm text-[var(--text)]">Today's Shift</h3>
                 </div>
                 <Badge variant={data?.lock_status?.is_published ? 'success' : 'warning'} size="sm">
-                  {data?.lock_status?.is_published ? 'Published' : 'Draft / Unfinalised'}
+                  {data?.lock_status?.is_published ? 'Published' : 'Draft Schedule'}
                 </Badge>
               </div>
 
@@ -521,7 +573,7 @@ export default function Dashboard() {
 
                       <div className="grid grid-cols-2 gap-2 text-xs font-mono pt-1">
                         <div className="p-2 rounded bg-[var(--bg)] border border-[var(--border)]">
-                          <div className="text-[10px] text-[var(--muted)] uppercase font-sans">Rostered</div>
+                          <div className="text-[10px] text-[var(--muted)] uppercase font-sans">Rostered Shift</div>
                           <div className="font-bold text-[var(--text)] text-sm">
                             {(s.roster_in ? s.roster_in.split(':').slice(0, 2).join(':') : '--:--')} - {(s.roster_out ? s.roster_out.split(':').slice(0, 2).join(':') : '--:--')}
                           </div>
@@ -529,7 +581,7 @@ export default function Dashboard() {
                         </div>
 
                         <div className="p-2 rounded bg-[var(--bg)] border border-[var(--border)]">
-                          <div className="text-[10px] text-[var(--muted)] uppercase font-sans">Recorded Actual</div>
+                          <div className="text-[10px] text-[var(--muted)] uppercase font-sans">Recorded Time</div>
                           <div className="font-bold text-[var(--text)] text-sm">
                             {(s.actual_in ? s.actual_in.split(':').slice(0, 2).join(':') : '--:--')} - {(s.actual_out ? s.actual_out.split(':').slice(0, 2).join(':') : '--:--')}
                           </div>
@@ -539,9 +591,9 @@ export default function Dashboard() {
                     </div>
                   ))}
                   <div className="pt-1">
-                    <Link to="/portal">
+                    <Link to="/timesheet">
                       <Button variant="outline" size="sm" className="w-full" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                        Manage Today's Clock In / Out
+                        Record Today's Hours
                       </Button>
                     </Link>
                   </div>
@@ -552,8 +604,8 @@ export default function Dashboard() {
                   title="No Shift Scheduled Today"
                   description="You do not have a shift assigned for today. Enjoy your day off!"
                   action={
-                    <Link to="/portal">
-                      <Button variant="outline" size="sm">View Full 14-Day Roster</Button>
+                    <Link to="/schedule">
+                      <Button variant="outline" size="sm">View Full 14-Day Schedule</Button>
                     </Link>
                   }
                 />
@@ -565,7 +617,7 @@ export default function Dashboard() {
               <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
                 <div className="flex items-center gap-2">
                   <FileCheck2 className="w-4 h-4 text-[var(--primary)]" />
-                  <h3 className="font-semibold text-sm text-[var(--text)]">Fortnight Timesheet Status</h3>
+                  <h3 className="font-semibold text-sm text-[var(--text)]">Fortnight Timesheet</h3>
                 </div>
                 <Badge
                   variant={
@@ -575,7 +627,9 @@ export default function Dashboard() {
                   }
                   size="sm"
                 >
-                  {data?.timesheet_status?.status || 'Draft'}
+                  {data?.timesheet_status?.status === 'Approved' ? '✓ Approved' :
+                   data?.timesheet_status?.status === 'Submitted' ? '⏳ Awaiting Review' :
+                   data?.timesheet_status?.status === 'Rejected' ? '⚠️ Needs Changes' : 'Draft'}
                 </Badge>
               </div>
 
@@ -585,18 +639,18 @@ export default function Dashboard() {
                   <span className="font-mono font-semibold text-[var(--text)]">{data?.active_fortnight}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[var(--muted)]">Submission Status:</span>
-                  <span className="font-semibold text-[var(--text)]">{data?.timesheet_status?.status || 'Draft'}</span>
+                  <span className="text-[var(--muted)]">Target Hours:</span>
+                  <span className="font-semibold text-[var(--text)]">{data?.employee?.contracted_hours ?? 76} hrs</span>
                 </div>
 
                 {data?.timesheet_status?.status === 'Rejected' && (
                   <div className="p-3 rounded-md bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)] text-xs mt-2 space-y-1">
                     <div className="font-semibold flex items-center gap-1.5">
                       <AlertCircle className="w-4 h-4 text-[var(--danger)]" />
-                      Timesheet Returned by Manager
+                      Returned for changes
                     </div>
                     <p className="text-xs opacity-90">
-                      Reason: {data.timesheet_status.rejection_reason || 'Please correct hours and resubmit.'}
+                      Note: {data.timesheet_status.rejection_reason || 'Please correct hours and resubmit.'}
                     </p>
                   </div>
                 )}
@@ -616,9 +670,15 @@ export default function Dashboard() {
                 )}
               </div>
 
-              <Link to="/portal">
+              <Link to="/timesheet">
                 <Button variant="primary" size="sm" className="w-full" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                  {data?.timesheet_status?.status === 'Rejected' ? 'Correct & Resubmit Timesheet' : 'Go to Timesheet Portal'}
+                  {data?.timesheet_status?.status === 'Rejected' 
+                    ? 'Fix & Resubmit Timesheet' 
+                    : data?.timesheet_status?.status === 'Submitted'
+                    ? 'View Submitted Timesheet'
+                    : data?.timesheet_status?.status === 'Approved'
+                    ? 'View Approved Timesheet'
+                    : 'Enter Timesheet Hours'}
                 </Button>
               </Link>
             </Card>
