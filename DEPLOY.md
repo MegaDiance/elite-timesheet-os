@@ -7,9 +7,8 @@ Postgres service sits behind it.
 Status: the repo is deploy-ready. Build, migrations, bootstrap and the main API
 write paths have been verified against a real PostgreSQL 16.
 
-> **This is a staging deployment.** Several known security issues are still open
-> (see "Before real data" at the bottom). Do not put real employee or payroll
-> data in it yet.
+> **This is a staging deployment.** Read "Before real data" at the bottom before
+> loading real worker or payroll data.
 
 ---
 
@@ -57,39 +56,36 @@ Open the **app service → Variables** tab and add:
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (use Railway's variable reference) |
 | `JWT_SECRET` | 64 random hex chars — `openssl rand -hex 32` |
 | `ENCRYPTION_KEY` | another 64 random hex chars |
-| `REQUIRE_SESSION_ID` | `true` |
-| `PLATFORM_ADMIN_EMAIL` | your email |
-| `PLATFORM_ADMIN_PASSWORD` | 8+ chars, at least one letter and one digit |
-| `SEED_DEMO_ORG` | `true` |
-| `DEMO_ORG_NAME` | e.g. `Monash Demo Clinic` |
-| `DEMO_ADMIN_EMAIL` | a second email you can use as the org admin |
-| `DEMO_ADMIN_PASSWORD` | 8+ chars, letter + digit |
+| `PUBLIC_URL` | the app's public URL (used in every emailed link) |
+| `SEED_OWNER_EMAIL` | optional — your email, to create a first organisation on an empty database |
+| `SEED_OWNER_PASSWORD` | optional — 8+ chars, at least one letter and one digit |
+| `SEED_ORGANISATION_NAME` | optional — e.g. `Monash Demo Clinic` |
 
 Notes:
 
-- **`NODE_ENV=production` is not optional.** Without it the app falls back to the
-  placeholder JWT secret committed in the repo, and stops requiring a server-side
-  session id on each request.
+- **`NODE_ENV=production` is not optional.** The app refuses to start in production
+  with the placeholder JWT secret, and only allows local CORS origins outside production.
 - **`NPM_CONFIG_INCLUDE=dev` is also not optional.** `NODE_ENV=production` makes
   npm skip devDependencies, which would leave the build without TypeScript and Vite.
 - TLS to the database is disabled automatically for `*.railway.internal` hosts.
   Set `DB_SSL=true` only if you point at an external Postgres that requires it.
 
-Optional — email (invitations, password resets, 2FA codes):
+Email (organisation sign-up, Branch Admin invitations, password resets, 2FA codes):
 
 ```
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=re_...
-EMAIL_FROM=Elite Timesheet <noreply@yourdomain.com>
+EMAIL_FROM=SimpleHours <noreply@yourdomain.com>
 ```
 
-Without these, invites and password resets will not send. You can still create
-organisations from the platform console (it exposes the invite link directly).
+Without these, nothing that needs an emailed link works: sign-up is refused and
+invitations are created but not delivered. Links are never shown in the app or
+returned by the API, and mail is never sent anywhere but the named recipient.
 
 ## 5. Deploy and generate a domain
 
 Trigger a redeploy. Then **Settings → Networking → Generate Domain** to get a
-`*.up.railway.app` URL. Optionally set `PUBLIC_URL` to that URL.
+`*.up.railway.app` URL, and set `PUBLIC_URL` to that URL.
 
 What happens on each deploy:
 
@@ -105,15 +101,14 @@ any user exists. Railway waits for `/health` before routing traffic.
 
 ## 6. First login
 
-- **Platform console:** `https://<your-app>/platform-gate` with
-  `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`. This is the hidden gate —
-  the normal login page will not accept a platform admin.
-- **The app itself:** `https://<your-app>/login/<demo-org-slug>` with the demo
-  admin credentials. The slug is derived from `DEMO_ORG_NAME`
-  (`Monash Demo Clinic` becomes `monash-demo-clinic`); the deploy logs print it.
+- **With `SEED_OWNER_*` set:** the deploy logs print the organisation's private
+  sign-in link (`/login/<random code>`). Sign in there as the Organisation Owner.
+- **Without it:** open `https://<your-app>/signup`, enter your email, and follow the
+  emailed link to create the organisation — you become its Owner.
 
-To add a new organisation later, use the platform console's invite flow. If email
-is not configured, tick **Emergency Debug URLs** there to copy the setup link.
+The Owner then adds branches (Branches page) and invites Branch Admins (Branch
+Admins page). Each invitation is emailed, expires after 7 days and works once.
+There is no platform-wide administrator account.
 
 ## 7. Day-to-day
 
@@ -131,28 +126,26 @@ is not configured, tick **Emergency Debug URLs** there to copy the setup link.
 |---|---|
 | `backend/migrations/1789367660479_align_schema.js` | The template literals were written with escaped backticks, so the file was a syntax error and `node-pg-migrate` aborted. Migrations 479-481 had therefore **never run** — everything worked only because development uses an in-memory mock schema. |
 | `backend/migrations/1789367660482_production_alignment.js` (new) | Converts `audit_logs.details` from JSONB to TEXT, adds `login_verification_challenges.attempts` and two `audit_logs` columns the dev schema has, and adds indexes for the hot query paths. About half of the 34 audit-log writes pass a plain string, which JSONB rejects with `22P02` — that alone broke employee creation, locking, approvals and most other mutations on real Postgres. |
-| `backend/src/index.ts` | Serves `frontend/dist` with an SPA fallback so client-side routes survive a refresh; adds `/health`; returns JSON (not HTML) for unknown `/api` routes; allows `PATCH` in CORS, which `PATCH /api/announcements/permissions` needs; binds `0.0.0.0`; skips the local `key.rtf` API-key scraping in production. |
+| `backend/src/index.ts` | Serves `frontend/dist` with an SPA fallback so client-side routes survive a refresh; adds `/health`; returns JSON (not HTML) for unknown `/api` routes; binds `0.0.0.0`. |
 | `backend/src/services/db.ts` | Disables TLS automatically for `*.railway.internal` and localhost, so the Railway private network connects without extra configuration. |
-| `backend/src/scripts/bootstrap.ts` (new) | A freshly migrated database has no users at all, so nobody could log in. Creates the first Platform Admin, and optionally a demo org with a Company Admin. Idempotent. |
+| `backend/src/scripts/bootstrap.ts` (new) | A freshly migrated database has no users at all. Optionally creates a first organisation and its Owner from `SEED_OWNER_*`. Idempotent. |
 | `frontend/src/services/apiClient.ts` | The API base defaults to the relative `/api` in production builds, keeping the dev behaviour (`localhost:4000`) intact. |
 | `package.json`, `backend/package.json` | Root `build` and `start` scripts, a `release` step that migrates and bootstraps, Node 22 pinned, and `node-pg-migrate` moved to runtime dependencies because the release step needs it. |
 | `railway.json` (new) | Build command, start command, `/health` check, restart policy. |
 
 ## Before real data
 
-These were found during the code review and are **not** fixed:
+The seven issues previously listed here were fixed in the two-role rebuild
+(`refactor/two-role-model`), each with a regression test. Still to do before
+real worker or payroll data:
 
-1. `POST /api/locks` writes both lock columns on every call, so a roster-lock
-   password clears `timesheet_locked` — an approved period becomes editable.
-2. `POST /api/auth/verify-login` accepts a bare 6-digit code with no email or
-   challenge id and issues a session for whoever owns that code.
-3. `sessionService.validateSession` returns `{ valid: true }` when the sessions
-   table is missing, so a schema problem silently disables session enforcement.
-4. Reset and invitation lookups accept `token_hash = sha256(token) OR token_hash = token`,
-   so a leaked hash works as the token itself. Org invite tokens are stored in
-   plaintext with no expiry and returned by `GET /api/platform/invitations`.
-5. `POST /api/employees` does not validate the `role` field against an allowlist,
-   so a Company Admin can create a Platform Admin.
-6. `rosterService.ts` treats Friday as a weekend and Sunday as a weekday.
-7. `reportService.ts` drops `Normal` segments from the payroll breakdown and
-   deducts the break a second time on hours that were already net.
+1. Rotate `JWT_SECRET` and `ENCRYPTION_KEY`, and configure email with a verified
+   sending domain and `EMAIL_FROM`.
+2. Confirm which of the two Railway Postgres services `DATABASE_URL` points at,
+   and turn on backups with a tested restore.
+3. Rate limiting is in memory, so it resets on restart and is per instance. Keep
+   the service at one replica until it is moved to a shared store.
+4. The suspicious-login check has no real IP geolocation, so it rarely triggers.
+   Two-step verification (Settings → My account) is the dependable second factor.
+5. After the two-role migrations have been checked on the deployed data,
+   `legacy_archive` (a JSON copy of every dropped legacy row) can be dropped.

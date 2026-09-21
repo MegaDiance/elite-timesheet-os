@@ -1,5 +1,5 @@
 {
-  "name": "elite-timesheet-os",
+  "name": "simplehours",
   "private": true,
   "workspaces": [
     "frontend",

@@ -1,51 +1,45 @@
-# Elite Timesheet OS Pro
+# SimpleHours
 
-This is a full-stack monorepo for the Elite Timesheet OS Pro application.
+Rostering, timesheets and payroll-hours reporting for organisations with one or more branches.
 
-## Tech Stack
-- **Frontend**: React + TypeScript + Vite + TailwindCSS
-- **Backend**: Node.js + TypeScript + Express
-- **Database**: PostgreSQL
-- **Workspace Manager**: npm workspaces
+## Who signs in
 
-## Setup
+SimpleHours has exactly two kinds of account:
 
-1. Install dependencies for all workspaces:
-   \`\`\`bash
-   npm install
-   \`\`\`
+| Role | Scope | Does |
+|---|---|---|
+| **Organisation Owner** | the whole organisation | organisation settings and security, branches, Branch Admins, ownership, audit log — and all roster/timesheet work in every branch |
+| **Branch Admin** | the branches assigned to them | workers, roster, timesheets, locks and reports of those branches |
 
-2. Copy the environment configuration:
-   \`\`\`bash
-   cp .env.example .env
-   cp backend/.env.example backend/.env
-   cp frontend/.env.example frontend/.env
-   \`\`\`
+Workers (the people who are rostered and paid) are records, not accounts: they never sign in.
+See [agent.md](agent.md) and [docs/](docs/) for the full specification.
 
-3. Start the PostgreSQL database:
-   \`\`\`bash
-   docker compose up -d
-   \`\`\`
+## Stack
 
-4. Run the database migrations:
-   \`\`\`bash
-   cd backend
-   npm run migrate up
-   cd ..
-   \`\`\`
+React 19 + TypeScript + Vite + Tailwind v4 (`frontend/`), Node 22 + Express 5 + TypeScript (`backend/`),
+PostgreSQL 16 (schema owned by `backend/migrations`), npm workspaces.
 
-## Development
+## Local development
 
-To start both the frontend and backend development servers concurrently:
-
-\`\`\`bash
+```bash
+npm install
+cp .env.example .env
+docker compose up -d db
+npm run migrate:up --workspace=backend
 npm run dev
-\`\`\`
+```
 
-- Frontend runs on `http://localhost:3000`
-- Backend API runs on `http://localhost:4000`
+- Frontend: http://localhost:3000 · API: http://localhost:4000
+- Create an organisation at http://localhost:3000/signup — with `EMAIL_PROVIDER=mock` the set-up link is printed in the API console.
+  Or set `SEED_OWNER_EMAIL` / `SEED_OWNER_PASSWORD` and run `npm run bootstrap --workspace=backend` after `npm run build`.
 
-## Legacy Migration
+## Checks
 
-The original application relied on local `index.html` files and `localStorage`.
-A migration script is provided in the backend to ingest this data into the new PostgreSQL schema.
+```bash
+docker compose up -d db-test   # disposable PostgreSQL 16 used by the test suite
+npm run typecheck              # backend tsc + frontend tsc/vite build
+npm test                       # backend tests, run against a database built from the migrations
+npm run lint --workspace=frontend
+```
+
+Deployment: see [DEPLOY.md](DEPLOY.md).
