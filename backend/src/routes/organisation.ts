@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
 import { hashPassword, comparePassword } from '../services/auth';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireOrgOwner, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 import { getFortnightStartIso, fmtISO } from '../services/periodUtils';
 
 const router = Router();
@@ -58,6 +58,7 @@ router.get('/discover', requireAuth, async (req: any, res: Response) => {
 /**
  * GET /api/organisation/lookup/:slug
  * Public lookup for branded organization login screen.
+ * Resolves by portal_slug, slug, or ID.
  */
 router.get('/lookup/:slug', async (req: any, res: Response) => {
     try {
@@ -66,25 +67,55 @@ router.get('/lookup/:slug', async (req: any, res: Response) => {
             return res.status(400).json({ success: false, error: { message: 'Slug or ID is required.' } });
         }
 
-        const result = await query(
-            `SELECT id, name, slug, display_name, logo_url
-             FROM organisations
-             WHERE is_active = true AND (slug = $1 OR id::text = $1)
-             LIMIT 1`,
-            [slug]
-        );
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug);
+        let result;
+        try {
+            const sql = isUuid
+                ? `SELECT id, name, display_name, slug, portal_slug, logo_url, timesheet_entry_mode
+                   FROM organisations
+                   WHERE is_active = true AND (portal_slug = $1 OR LOWER(slug) = $1 OR id = $2)
+                   LIMIT 1`
+                : `SELECT id, name, display_name, slug, portal_slug, logo_url, timesheet_entry_mode
+                   FROM organisations
+                   WHERE is_active = true AND (portal_slug = $1 OR LOWER(slug) = $1)
+                   LIMIT 1`;
+            const params = isUuid ? [slug, slug] : [slug];
+            result = await query(sql, params);
+        } catch {
+            const sql = isUuid
+                ? `SELECT id, name, display_name, slug, logo_url
+                   FROM organisations
+                   WHERE is_active = true AND (LOWER(slug) = $1 OR id = $2)
+                   LIMIT 1`
+                : `SELECT id, name, display_name, slug, logo_url
+                   FROM organisations
+                   WHERE is_active = true AND LOWER(slug) = $1
+                   LIMIT 1`;
+            const params = isUuid ? [slug, slug] : [slug];
+            result = await query(sql, params);
+        }
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, error: { message: 'Organisation not found.' } });
         }
 
         const org = result.rows[0];
+
+        let locationsCount = 0;
+        try {
+            const locRes = await query('SELECT COUNT(*) as count FROM locations WHERE org_id = $1 AND is_active = true', [org.id]);
+            locationsCount = Number(locRes.rows[0]?.count || 0);
+        } catch {}
+
         res.json({
             success: true,
             data: {
                 id: org.id,
                 name: org.display_name || org.name,
                 slug: org.slug || org.id,
+                portal_slug: org.portal_slug || org.slug || org.id,
+                timesheet_entry_mode: org.timesheet_entry_mode || 'employee',
+                locations_count: locationsCount,
                 logo_url: org.logo_url || null
             }
         });
@@ -100,7 +131,8 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
         let result;
         try {
             result = await query(
-                `SELECT id, name, slug, display_name, logo_url,
+                `SELECT id, name, slug, portal_slug, display_name, logo_url, owner_user_id,
+                        COALESCE(timesheet_entry_mode, 'employee') as timesheet_entry_mode,
                         COALESCE(break_mins_weekday, 30) as break_mins_weekday, 
                         COALESCE(break_mins_weekend, 0) as break_mins_weekend, 
                         COALESCE(break_threshold_hours, 6) as break_threshold_hours,
@@ -111,12 +143,17 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
                 [orgId]
             );
         } catch {
-            result = await query('SELECT id, name FROM organisations WHERE id = $1', [orgId]);
+            try {
+                result = await query('SELECT id, name, slug, portal_slug, timesheet_entry_mode, owner_user_id FROM organisations WHERE id = $1', [orgId]);
+            } catch {
+                result = await query('SELECT id, name FROM organisations WHERE id = $1', [orgId]);
+            }
             if (result.rows[0]) {
                 result.rows[0].break_mins_weekday = 30;
                 result.rows[0].break_mins_weekend = 0;
                 result.rows[0].break_threshold_hours = 6;
                 result.rows[0].allow_employee_chat = true;
+                result.rows[0].timesheet_entry_mode = result.rows[0].timesheet_entry_mode || 'employee';
             }
         }
         const org = result.rows[0];
@@ -125,14 +162,26 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Organisation not found' } });
         }
 
+        const isOwner = req.user?.role === 'Platform Admin' || 
+                        org.owner_user_id === req.user?.id || 
+                        req.user?.role === 'Owner';
+
+        const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3001';
+        const portalSlug = org.portal_slug || org.slug || org.id;
+        const portalUrl = `${origin}/login/${portalSlug}`;
+
         res.json({ 
             success: true, 
             data: {
                 id: org.id,
                 name: org.name,
                 slug: org.slug || org.id,
+                portal_slug: portalSlug,
+                portal_url: portalUrl,
                 display_name: org.display_name || org.name,
                 logo_url: org.logo_url || null,
+                timesheet_entry_mode: org.timesheet_entry_mode || 'employee',
+                is_owner: isOwner,
                 break_mins_weekday: Number(org.break_mins_weekday ?? 30),
                 break_mins_weekend: Number(org.break_mins_weekend ?? 0),
                 break_threshold_hours: Number(org.break_threshold_hours ?? 6),
@@ -147,35 +196,105 @@ router.get('/me', requireAuth, requireTenantContext, async (req: AuthRequest, re
     }
 });
 
-router.put('/settings', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.put('/settings', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
-        const { break_mins_weekday, break_mins_weekend, break_threshold_hours, allow_employee_chat } = req.body;
+        const { break_mins_weekday, break_mins_weekend, break_threshold_hours, allow_employee_chat, timesheet_entry_mode } = req.body;
 
-        await query(
-            `UPDATE organisations 
-             SET break_mins_weekday = $1, 
-                 break_mins_weekend = $2, 
-                 break_threshold_hours = $3,
-                 allow_employee_chat = COALESCE($4, allow_employee_chat)
-             WHERE id = $5`,
-            [
-                break_mins_weekday !== undefined ? Number(break_mins_weekday) : 30,
-                break_mins_weekend !== undefined ? Number(break_mins_weekend) : 0,
-                break_threshold_hours !== undefined ? Number(break_threshold_hours) : 6,
-                allow_employee_chat !== undefined ? Boolean(allow_employee_chat) : null,
-                orgId
-            ]
-        );
+        const updates: string[] = [];
+        const params: any[] = [];
+        let pIdx = 1;
 
-        res.json({ success: true, message: 'Settings saved successfully.' });
+        if (break_mins_weekday !== undefined) {
+            updates.push(`break_mins_weekday = $${pIdx++}`);
+            params.push(Number(break_mins_weekday));
+        }
+        if (break_mins_weekend !== undefined) {
+            updates.push(`break_mins_weekend = $${pIdx++}`);
+            params.push(Number(break_mins_weekend));
+        }
+        if (break_threshold_hours !== undefined) {
+            updates.push(`break_threshold_hours = $${pIdx++}`);
+            params.push(Number(break_threshold_hours));
+        }
+        if (allow_employee_chat !== undefined) {
+            updates.push(`allow_employee_chat = $${pIdx++}`);
+            params.push(Boolean(allow_employee_chat));
+        }
+        if (timesheet_entry_mode !== undefined) {
+            if (!['employee', 'manager'].includes(timesheet_entry_mode)) {
+                return res.status(400).json({ success: false, error: { message: 'timesheet_entry_mode must be either "employee" or "manager".' } });
+            }
+            updates.push(`timesheet_entry_mode = $${pIdx++}`);
+            params.push(timesheet_entry_mode);
+        }
+
+        if (updates.length > 0) {
+            params.push(orgId);
+            await query(`UPDATE organisations SET ${updates.join(', ')} WHERE id = $${pIdx}`, params);
+
+            await query(
+                `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, details)
+                 VALUES ($1, $2, NOW(), $3, 'ORGANISATION_SETTINGS_UPDATED', 'organisation', $4)`,
+                [crypto.randomUUID(), orgId, req.user?.id, `Updated organisation settings: ${updates.join(', ')}`]
+            ).catch(() => {});
+        }
+
+        res.json({
+            success: true,
+            message: 'Settings saved successfully.',
+            data: {
+                timesheet_entry_mode
+            }
+        });
     } catch (err: any) {
         console.error('[ORGANISATION SETTINGS ERROR]', err);
         res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update organisation settings.' } });
     }
 });
 
-router.put('/lock-passwords', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin']), async (req: AuthRequest, res: Response) => {
+/**
+ * POST /api/organisation/regenerate-portal-url
+ * Generates a new cryptographically random portal slug (Organisation Owner only)
+ */
+router.post('/regenerate-portal-url', requireAuth, requireTenantContext, requireOrgOwner, async (req: AuthRequest, res: Response) => {
+    try {
+        const orgId = req.user?.organisation_id!;
+        
+        // Generate random 10-char alphanumeric slug
+        let newSlug = crypto.randomBytes(5).toString('hex');
+        while (true) {
+            const check = await query('SELECT id FROM organisations WHERE portal_slug = $1 OR slug = $1', [newSlug]);
+            if (check.rows.length === 0) break;
+            newSlug = crypto.randomBytes(5).toString('hex');
+        }
+
+        await query('UPDATE organisations SET portal_slug = $1 WHERE id = $2', [newSlug, orgId]);
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
+             VALUES ($1, $2, NOW(), $3, 'PORTAL_URL_REGENERATED', 'organisation', $2, $4)`,
+            [crypto.randomUUID(), orgId, req.user?.id, `Regenerated custom portal slug to ${newSlug}`]
+        ).catch(() => {});
+
+        const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3001';
+        const portalUrl = `${origin}/login/${newSlug}`;
+
+        res.json({
+            success: true,
+            data: {
+                portal_slug: newSlug,
+                portal_url: portalUrl
+            },
+            message: 'Custom portal URL has been regenerated successfully. The previous URL is now invalid.'
+        });
+    } catch (err: any) {
+        console.error('[REGENERATE PORTAL URL ERROR]', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to regenerate portal URL.' } });
+    }
+});
+
+router.put('/lock-passwords', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { current_password, new_roster_lock_password, new_timesheet_lock_password } = req.body;
@@ -217,7 +336,7 @@ router.put('/lock-passwords', requireAuth, requireTenantContext, requireRole(['A
     }
 });
 
-router.get('/leave-requests', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/leave-requests', requireAuth, requireTenantContext, requireAnyPermission([Permission.LEAVE_VIEW, Permission.ORGANISATION_VIEW]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const result = await query(
@@ -236,7 +355,7 @@ router.get('/leave-requests', requireAuth, requireTenantContext, requireRole(['A
     }
 });
 
-router.post('/leave-requests/:id/review', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/leave-requests/:id/review', requireAuth, requireTenantContext, requireAnyPermission([Permission.LEAVE_APPROVE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { id } = req.params;

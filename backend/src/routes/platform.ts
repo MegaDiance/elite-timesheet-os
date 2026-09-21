@@ -151,6 +151,47 @@ router.post('/claim-invite', async (req: any, res: Response) => {
             ]);
 
             await seedOrgDefaults(orgId);
+
+            // Update owner_user_id and timesheet_entry_mode
+            try {
+                await txQuery(
+                    `UPDATE organisations SET owner_user_id = $1, timesheet_entry_mode = $2 WHERE id = $3`,
+                    [userId, req.body.timesheet_entry_mode || 'employee', orgId]
+                );
+            } catch {}
+
+            // Create Primary Location
+            const locId = crypto.randomUUID();
+            const locName = (req.body.primary_location_name && req.body.primary_location_name.trim()) || 'Main Branch';
+            const locAddress = (req.body.primary_location_address && req.body.primary_location_address.trim()) || null;
+            const locTz = (req.body.primary_location_timezone && req.body.primary_location_timezone.trim()) || 'Australia/Sydney';
+
+            try {
+                await txQuery(
+                    `INSERT INTO locations (id, org_id, name, address, timezone, is_active)
+                     VALUES ($1, $2, $3, $4, $5, true)`,
+                    [locId, orgId, locName, locAddress, locTz]
+                );
+                // Assign owner membership
+                await txQuery(
+                    `INSERT INTO location_memberships (id, location_id, user_id, role, is_active)
+                     VALUES ($1, $2, $3, 'admin', true)`,
+                    [crypto.randomUUID(), locId, userId]
+                );
+            } catch {}
+
+            // Optional: Invite first location manager
+            if (req.body.invite_manager_email && req.body.invite_manager_email.includes('@')) {
+                try {
+                    const inviteToken = crypto.randomBytes(32).toString('hex');
+                    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                    await txQuery(
+                        `INSERT INTO location_invitations (id, org_id, location_id, email, role, token, expires_at)
+                         VALUES ($1, $2, $3, $4, 'manager', $5, $6)`,
+                        [crypto.randomUUID(), orgId, locId, req.body.invite_manager_email.trim().toLowerCase(), inviteToken, expiresAt]
+                    );
+                } catch {}
+            }
         });
 
         res.json({ success: true, data: { id: orgId, admin_id: userId } });
@@ -416,6 +457,33 @@ router.post('/organisations', async (req: AuthRequest, res: Response) => {
     } catch (err: any) {
         console.error('[PLATFORM CREATE ORG ERROR]', err);
         res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create organization.' } });
+    }
+});
+
+router.get('/audit-logs', requireAuth, requireRole(['Platform Admin']), async (_req: AuthRequest, res: Response) => {
+    try {
+        let result;
+        try {
+            result = await query(`
+                SELECT a.*, u.email as actor_email
+                FROM audit_logs a
+                LEFT JOIN users u ON a.actor_id = u.id
+                WHERE a.scope = 'platform'
+                ORDER BY a.created_at DESC
+            `);
+        } catch {
+            result = await query(`
+                SELECT a.*, u.email as actor_email
+                FROM audit_logs a
+                LEFT JOIN users u ON a.actor_id = u.id
+                WHERE a.scope = 'platform'
+                ORDER BY a.timestamp DESC
+            `);
+        }
+        res.json({ success: true, data: result.rows, logs: result.rows });
+    } catch (err: any) {
+        console.error('[PLATFORM AUDIT GET ERROR]', err);
+        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve platform audit logs.' } });
     }
 });
 

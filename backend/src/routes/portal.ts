@@ -160,6 +160,12 @@ router.get('/my-timesheet', requireAuth, requireTenantContext, async (req: AuthR
 
         const contractedHours = Number(employee.contracted_hours || 76);
 
+        let timesheetEntryMode = 'employee';
+        try {
+            const orgModeRes = await query('SELECT timesheet_entry_mode FROM organisations WHERE id = $1', [orgId]);
+            timesheetEntryMode = orgModeRes.rows[0]?.timesheet_entry_mode || 'employee';
+        } catch {}
+
         res.json({
             success: true,
             data: {
@@ -171,6 +177,7 @@ router.get('/my-timesheet', requireAuth, requireTenantContext, async (req: AuthR
                     contracted_hours: contractedHours
                 },
                 fortnight_start: startDate,
+                timesheet_entry_mode: timesheetEntryMode,
                 days,
                 submission,
                 locks: lock,

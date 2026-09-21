@@ -9,6 +9,7 @@ export interface SessionRecord {
     id: string;
     user_id: string;
     org_id?: string;
+    location_id?: string;
     ip_address?: string;
     approx_location?: string;
     device_info?: string;
@@ -34,7 +35,8 @@ const touchThrottleMap = new Map<string, number>();
 export async function createSession(
     userId: string,
     orgId: string | undefined,
-    clientInfo: ClientInfo
+    clientInfo: ClientInfo,
+    locationId?: string | null
 ): Promise<{ sessionId: string; tokenHash: string }> {
     const sessionId = crypto.randomUUID();
     const tokenIdentifier = crypto.randomBytes(32).toString('hex');
@@ -46,12 +48,13 @@ export async function createSession(
     try {
         await query(
             `INSERT INTO sessions 
-                (id, user_id, org_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, true, NOW())`,
+                (id, user_id, org_id, location_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, true, NOW())`,
             [
                 sessionId,
                 userId,
                 orgId || null,
+                locationId || null,
                 tokenHash,
                 clientInfo.ip,
                 clientInfo.approxLocation,
@@ -60,9 +63,29 @@ export async function createSession(
                 expiresAt
             ]
         );
-    } catch (err: any) {
-        // Legacy minimal unit tests may not have created the sessions table
-        // Proceed with generated session ID to maintain compatibility
+    } catch {
+        // Fallback for schemas without location_id
+        try {
+            await query(
+                `INSERT INTO sessions 
+                    (id, user_id, org_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, true, NOW())`,
+                [
+                    sessionId,
+                    userId,
+                    orgId || null,
+                    tokenHash,
+                    clientInfo.ip,
+                    clientInfo.approxLocation,
+                    clientInfo.userAgent,
+                    clientInfo.deviceInfo,
+                    expiresAt
+                ]
+            );
+        } catch (err: any) {
+            // Legacy minimal unit tests may not have created the sessions table
+            // Proceed with generated session ID to maintain compatibility
+        }
     }
 
     return { sessionId, tokenHash };

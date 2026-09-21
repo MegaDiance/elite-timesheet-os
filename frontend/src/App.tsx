@@ -17,6 +17,8 @@ import Login from './pages/Login';
 import SetupAccount from './pages/SetupAccount';
 import ResetPassword from './pages/ResetPassword';
 import ForgotPassword from './pages/ForgotPassword';
+import Locations from './pages/Locations';
+import AcceptLocationInvite from './pages/auth/AcceptLocationInvite';
 import SetupOrganisation from './pages/SetupOrganisation';
 import AcceptInvite from './pages/AcceptInvite';
 import VerifyLogin from './pages/auth/VerifyLogin';
@@ -57,7 +59,9 @@ function AppHomeRedirect() {
 function ProtectedRoute({ allowedRoles, children }: { allowedRoles: string[]; children: JSX.Element }) {
   const role = getRole();
   if (!role) return <Navigate to="/portal-access" replace />;
-  if (!allowedRoles.includes(role)) {
+  const isAuthorized = allowedRoles.includes(role) || 
+    (role === 'Owner' && (allowedRoles.includes('Admin') || allowedRoles.includes('Company Admin') || allowedRoles.includes('Manager') || allowedRoles.includes('Owner')));
+  if (!isAuthorized) {
     if (role === 'Platform Admin') return <Navigate to="/platform" replace />;
     return <Navigate to="/dashboard" replace />;
   }
@@ -95,8 +99,10 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/setup-account" element={<SetupAccount />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/accept-location-invite" element={<AcceptLocationInvite />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/setup-org" element={<SetupOrganisation />} />
+        <Route path="/setup-organisation" element={<SetupOrganisation />} />
         
         {/* Unlisted Secret Platform Admin Console Gateway */}
         <Route path="/platform-gate" element={<PlatformGate />} />
@@ -108,15 +114,23 @@ export default function App() {
           <Route 
             path="/dashboard" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
                 <Dashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/locations" 
+            element={
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Owner']}>
+                <Locations />
               </ProtectedRoute>
             } 
           />
           <Route 
             path="/roster" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
                 <Roster />
               </ProtectedRoute>
             } 
@@ -124,7 +138,7 @@ export default function App() {
           <Route 
             path="/employees" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
                 <Employees />
               </ProtectedRoute>
             } 
@@ -136,7 +150,7 @@ export default function App() {
           <Route 
             path="/leave-requests" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
                 <LeaveRequests />
               </ProtectedRoute>
             } 
@@ -144,7 +158,7 @@ export default function App() {
           <Route 
             path="/reports" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
                 <Reports />
               </ProtectedRoute>
             } 
@@ -152,7 +166,7 @@ export default function App() {
           <Route 
             path="/timesheet" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
                 <EmployeeTimesheet />
               </ProtectedRoute>
             } 
@@ -160,7 +174,7 @@ export default function App() {
           <Route 
             path="/schedule" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
                 <EmployeeSchedule />
               </ProtectedRoute>
             } 
@@ -168,7 +182,7 @@ export default function App() {
           <Route 
             path="/history" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
                 <EmployeeHistory />
               </ProtectedRoute>
             } 
@@ -176,7 +190,7 @@ export default function App() {
           <Route 
             path="/timesheets" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
                 <TimesheetReview />
               </ProtectedRoute>
             } 
@@ -184,7 +198,7 @@ export default function App() {
           <Route 
             path="/portal" 
             element={
-              <ProtectedRoute allowedRoles={['Employee', 'Manager', 'Company Admin', 'Platform Admin']}>
+              <ProtectedRoute allowedRoles={['Employee', 'Manager', 'Company Admin', 'Platform Admin', 'Owner']}>
                 <EmployeeTimesheet />
               </ProtectedRoute>
             } 
@@ -192,7 +206,7 @@ export default function App() {
           <Route 
             path="/audit" 
             element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin']}>
+              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Owner']}>
                 <Audit />
               </ProtectedRoute>
             } 

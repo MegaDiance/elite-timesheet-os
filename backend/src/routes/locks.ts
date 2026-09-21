@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
 import { comparePassword } from '../services/auth';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 router.use(requireAuth, requireTenantContext);
@@ -17,7 +17,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     }
 });
 
-router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, requireAnyPermission([Permission.TIMESHEET_LOCK, Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { start_date, roster_locked, timesheet_locked, is_published, password } = req.body;
@@ -95,7 +95,7 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
     }
 });
 
-router.post('/publish', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/publish', requireAuth, requireAnyPermission([Permission.TIMESHEET_LOCK, Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { start_date, is_published } = req.body;

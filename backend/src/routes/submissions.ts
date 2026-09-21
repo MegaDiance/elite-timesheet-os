@@ -1,11 +1,76 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import {
+    requireAuth,
+    requireTenantContext,
+    requirePermission,
+    requireAnyBranchPermission,
+    AuthRequest
+} from '../middleware/auth';
+import {
+    Permission,
+    checkUserPermission,
+    resolveUserSecurityContext,
+    branchesWithPermission,
+    organisationHasNoBranches,
+    UserSecurityContext
+} from '../services/permissionService';
 import { addDays, fmtISO } from '../services/periodUtils';
 
 const router = Router();
 router.use(requireAuth, requireTenantContext);
+
+async function getContext(req: AuthRequest, orgId: string): Promise<UserSecurityContext> {
+    if (req.securityContext) return req.securityContext;
+    const ctx = await resolveUserSecurityContext(req.user!.id, orgId, req.user?.location_id, req.user?.role);
+    req.securityContext = ctx;
+    return ctx;
+}
+
+/**
+ * CRITICAL TIMESHEET BOUNDARY CHECK.
+ *
+ * Verifies the caller holds the requested timesheet permission in the branch that the
+ * target employee belongs to. Organisation-level roles (OWNER / ORG_ADMIN / ORG_MANAGER)
+ * receive NO branch timesheet access here - the legacy role-string bypass has been removed.
+ */
+async function checkEmployeeTimesheetPermission(
+    req: AuthRequest,
+    empId: string,
+    orgId: string,
+    permission: Permission
+): Promise<boolean> {
+    const ctx = await getContext(req, orgId);
+    if (ctx.isPlatformAdmin) return true;
+
+    let empLoc: string | null = null;
+    try {
+        const check = await query('SELECT location_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
+        if (check.rows.length === 0) return false;
+        empLoc = check.rows[0].location_id || null;
+    } catch {
+        empLoc = null;
+    }
+
+    if (!empLoc) {
+        // Employee not assigned to any branch (legacy / single-site data).
+        if (await organisationHasNoBranches(orgId)) {
+            const fallback = await checkUserPermission(ctx, permission, {});
+            return fallback.allowed;
+        }
+        // Branch-configured tenant: require the permission in at least one branch.
+        return branchesWithPermission(ctx, permission).length > 0;
+    }
+
+    const result = await checkUserPermission(ctx, permission, { branchId: empLoc });
+    return result.allowed;
+}
+
+/** Backwards-compatible alias retained for the submit-on-behalf flow. */
+async function checkSubmissionEmployeeLocation(req: AuthRequest, empId: string, orgId: string): Promise<boolean> {
+    return checkEmployeeTimesheetPermission(req, empId, orgId, Permission.TIMESHEET_REVIEW);
+}
 
 /**
  * POST /api/submissions/submit
@@ -23,13 +88,28 @@ router.post('/submit', requireAuth, requireTenantContext, async (req: AuthReques
             return res.status(400).json({ success: false, error: { message: 'start_date is required' } });
         }
 
+        const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner'].includes(req.user?.role || '');
+
+        // Check organisation timesheet_entry_mode
+        try {
+            const orgModeRes = await query('SELECT timesheet_entry_mode FROM organisations WHERE id = $1', [orgId]);
+            const entryMode = orgModeRes.rows[0]?.timesheet_entry_mode || 'employee';
+            if (entryMode === 'manager' && !isManager) {
+                return res.status(403).json({
+                    success: false,
+                    error: {
+                        code: 'TIMESHEET_MODE_MANAGER_ONLY',
+                        message: 'This organisation operates in Manager Entry mode. Employees cannot submit timesheets directly.'
+                    }
+                });
+            }
+        } catch {}
+
         // Check if timesheet is locked for this fortnight
         const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
         if (lockRes.rows[0]?.timesheet_locked) {
             return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheet is locked for this fortnight.' } });
         }
-
-        const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(req.user?.role || '');
 
         // Resolve logged in employee record
         const empRes = await query('SELECT id FROM employees WHERE user_id = $1 AND org_id = $2 AND deleted_at IS NULL', [userId, orgId]);
@@ -48,6 +128,15 @@ router.post('/submit', requireAuth, requireTenantContext, async (req: AuthReques
             }
             if (!isManager && employee_id !== myEmpId) {
                 return res.status(403).json({ success: false, error: { message: 'Forbidden: You can only submit timesheets for yourself.' } });
+            }
+            if (isManager && !(await checkSubmissionEmployeeLocation(req, employee_id, orgId))) {
+                return res.status(403).json({
+                    success: false,
+                    error: {
+                        code: 'LOCATION_FORBIDDEN',
+                        message: 'You do not have permission to manage timesheets for employees in another location.'
+                    }
+                });
             }
         }
 
@@ -157,7 +246,7 @@ router.post('/submit', requireAuth, requireTenantContext, async (req: AuthReques
  * GET /api/submissions
  * Manager / Admin view: List submission statuses for all employees in a fortnight
  */
-router.get('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/', requireAuth, requireTenantContext, requireAnyBranchPermission(Permission.TIMESHEET_VIEW), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const startDate = req.query.start_date as string;
@@ -166,10 +255,43 @@ router.get('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Compan
             return res.status(400).json({ success: false, error: { message: 'start_date query param required' } });
         }
 
-        const employeesRes = await query(
-            'SELECT id, full_name, department, contracted_hours FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL ORDER BY full_name ASC',
-            [orgId]
-        );
+        // Restrict the roster of employees to the branches where the caller holds TIMESHEET_VIEW.
+        const ctx = await getContext(req, orgId);
+        const requestedBranch = (req.query.location_id as string) || req.user?.location_id || null;
+        let allowedBranchIds: string[] | null = null;
+        if (!ctx.isPlatformAdmin) {
+            const viewable = branchesWithPermission(ctx, Permission.TIMESHEET_VIEW);
+            if (requestedBranch) {
+                allowedBranchIds = viewable.filter(b => b === requestedBranch);
+            } else if (viewable.length > 0) {
+                allowedBranchIds = viewable;
+            } else {
+                allowedBranchIds = null; // legacy tenant fallback (guard already authorised)
+            }
+        }
+
+        let employeesRes;
+        try {
+            if (allowedBranchIds && allowedBranchIds.length > 0) {
+                const placeholders = allowedBranchIds.map((_, i) => `$${i + 2}`).join(', ');
+                employeesRes = await query(
+                    `SELECT id, full_name, department, contracted_hours FROM employees
+                     WHERE org_id = $1 AND location_id IN (${placeholders})
+                       AND is_active = true AND deleted_at IS NULL ORDER BY full_name ASC`,
+                    [orgId, ...allowedBranchIds]
+                );
+            } else {
+                employeesRes = await query(
+                    'SELECT id, full_name, department, contracted_hours FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL ORDER BY full_name ASC',
+                    [orgId]
+                );
+            }
+        } catch {
+            employeesRes = await query(
+                'SELECT id, full_name, department, contracted_hours FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL ORDER BY full_name ASC',
+                [orgId]
+            );
+        }
 
         const subsRes = await query(
             'SELECT * FROM timesheet_submissions WHERE org_id = $1 AND start_date = $2',
@@ -202,18 +324,16 @@ router.get('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Compan
                 }
                 hoursMap.set(row.employee_id, prev);
             }
-        } catch (err: any) {
-            if (!err.message?.includes('does not exist') && !err.data?.error?.includes('does not exist')) {
-                throw err;
-            }
+        } catch {
+            // Safe fallback if daily_records not yet created
         }
 
-        const data = employeesRes.rows.map((emp: any) => {
+        const list = employeesRes.rows.map((emp: any) => {
             const sub = subMap.get(emp.id);
-            const empHours = hoursMap.get(emp.id) || { rostered: 0, actual: 0 };
+            const hrs = hoursMap.get(emp.id) || { rostered: 0, actual: 0 };
             const contracted = Number(emp.contracted_hours || 76);
-            const actualHours = Math.round(empHours.actual * 100) / 100;
-            const rosteredHours = Math.round(empHours.rostered * 100) / 100;
+            const actualHours = Math.round(hrs.actual * 100) / 100;
+            const rosteredHours = Math.round(hrs.rostered * 100) / 100;
             const variance = Math.round((actualHours - contracted) * 100) / 100;
 
             return {
@@ -233,9 +353,9 @@ router.get('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Compan
             };
         });
 
-        res.json({ success: true, data });
+        res.json({ success: true, data: list });
     } catch (err: any) {
-        console.error('[GET SUBMISSIONS ERROR]', err);
+        console.error('[SUBMISSIONS GET ALL ERROR]', err);
         res.status(500).json({ success: false, error: { message: 'Failed to retrieve timesheet submissions.' } });
     }
 });
@@ -244,7 +364,7 @@ router.get('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Compan
  * POST /api/submissions/review
  * Move status to 'Under Review'
  */
-router.post('/review', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/review', requireAuth, requireTenantContext, requireAnyBranchPermission(Permission.TIMESHEET_REVIEW), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const { submission_id, employee_id, start_date } = req.body;
@@ -268,9 +388,16 @@ router.post('/review', requireAuth, requireTenantContext, requireRole(['Admin', 
             return res.status(400).json({ success: false, error: { message: 'Missing submission identification or submission does not exist.' } });
         }
 
-        const subCheck = await query('SELECT id, status FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
+        const subCheck = await query('SELECT id, status, employee_id FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
         if (subCheck.rows.length === 0) {
             return res.status(404).json({ success: false, error: { message: 'Submission not found in your organisation.' } });
+        }
+
+        if (!(await checkEmployeeTimesheetPermission(req, subCheck.rows[0].employee_id, orgId, Permission.TIMESHEET_REVIEW))) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to manage timesheets for employees in another location.' }
+            });
         }
 
         const curStatus = subCheck.rows[0].status;
@@ -310,7 +437,7 @@ router.post('/review', requireAuth, requireTenantContext, requireRole(['Admin', 
  * POST /api/submissions/approve
  * Move status to 'Approved'
  */
-router.post('/approve', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/approve', requireAuth, requireTenantContext, requireAnyBranchPermission(Permission.TIMESHEET_APPROVE), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const userId = req.user?.id!;
@@ -330,6 +457,9 @@ router.post('/approve', requireAuth, requireTenantContext, requireRole(['Admin',
             if (empCheck.rows.length === 0) {
                 return res.status(404).json({ success: false, error: { message: 'Employee not found in your organisation.' } });
             }
+            if (!(await checkEmployeeTimesheetPermission(req, employee_id, orgId, Permission.TIMESHEET_APPROVE))) {
+                return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to manage timesheets for employees in another location.' } });
+            }
 
             const subRes = await query('SELECT id, status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
             if (subRes.rows.length > 0) {
@@ -346,9 +476,12 @@ router.post('/approve', requireAuth, requireTenantContext, requireRole(['Admin',
             return res.status(400).json({ success: false, error: { message: 'Missing submission identification or no submission exists.' } });
         }
 
-        const subCheck = await query('SELECT id, status FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
+        const subCheck = await query('SELECT id, status, employee_id FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
         if (subCheck.rows.length === 0) {
             return res.status(404).json({ success: false, error: { message: 'Submission not found in your organisation.' } });
+        }
+        if (!(await checkEmployeeTimesheetPermission(req, subCheck.rows[0].employee_id, orgId, Permission.TIMESHEET_APPROVE))) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to manage timesheets for employees in another location.' } });
         }
 
         const curStatus = subCheck.rows[0].status;
@@ -405,7 +538,7 @@ router.post('/approve', requireAuth, requireTenantContext, requireRole(['Admin',
  * POST /api/submissions/reject
  * Reject submission with mandatory feedback reason
  */
-router.post('/reject', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/reject', requireAuth, requireTenantContext, requireAnyBranchPermission(Permission.TIMESHEET_REVIEW), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const userId = req.user?.id!;
@@ -431,6 +564,9 @@ router.post('/reject', requireAuth, requireTenantContext, requireRole(['Admin', 
             if (empCheck.rows.length === 0) {
                 return res.status(404).json({ success: false, error: { message: 'Employee not found in your organisation.' } });
             }
+            if (!(await checkSubmissionEmployeeLocation(req, employee_id, orgId))) {
+                return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to manage timesheets for employees in another location.' } });
+            }
 
             const subRes = await query('SELECT id, status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3', [orgId, employee_id, start_date]);
             if (subRes.rows.length > 0) {
@@ -447,9 +583,12 @@ router.post('/reject', requireAuth, requireTenantContext, requireRole(['Admin', 
             return res.status(400).json({ success: false, error: { message: 'Missing submission identification or no submission exists to reject.' } });
         }
 
-        const subCheck = await query('SELECT id, status FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
+        const subCheck = await query('SELECT id, status, employee_id FROM timesheet_submissions WHERE id = $1 AND org_id = $2', [targetId, orgId]);
         if (subCheck.rows.length === 0) {
             return res.status(404).json({ success: false, error: { message: 'Submission not found in your organisation.' } });
+        }
+        if (!(await checkSubmissionEmployeeLocation(req, subCheck.rows[0].employee_id, orgId))) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to manage timesheets for employees in another location.' } });
         }
 
         const curStatus = subCheck.rows[0].status;
@@ -509,7 +648,7 @@ router.post('/reject', requireAuth, requireTenantContext, requireRole(['Admin', 
  * POST /api/submissions/bulk-approve
  * Manager / Admin approves multiple employee timesheets in one operation
  */
-router.post('/bulk-approve', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/bulk-approve', requireAuth, requireTenantContext, requireAnyBranchPermission(Permission.TIMESHEET_APPROVE), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const userId = req.user?.id!;
@@ -539,13 +678,27 @@ router.post('/bulk-approve', requireAuth, requireTenantContext, requireRole(['Ad
             return res.status(403).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'Timesheet is locked for this fortnight.' } });
         }
 
-        // Verify that all employees belong to caller's org (filter out any foreign ids for tenant isolation)
-        const empPlaceholders = employee_ids.map((_, i) => `$${i + 2}`).join(', ');
-        const empCheck = await query(
-            `SELECT id FROM employees WHERE org_id = $1 AND id IN (${empPlaceholders}) AND deleted_at IS NULL`,
-            [orgId, ...employee_ids]
-        );
-        const validEmployees = empCheck.rows.map((e: any) => e.id);
+        // Verify that all employees belong to caller's org and location (filter out any foreign ids for tenant and location isolation)
+        let empCheck;
+        try {
+            empCheck = await query(
+                `SELECT id FROM employees WHERE org_id = $1 AND id IN (${employee_ids.map((_: any, i: number) => `$${i + 2}`).join(', ')}) AND deleted_at IS NULL`,
+                [orgId, ...employee_ids]
+            );
+        } catch {
+            empCheck = await query(
+                `SELECT id FROM employees WHERE org_id = $1 AND id IN (${employee_ids.map((_: any, i: number) => `$${i + 2}`).join(', ')}) AND deleted_at IS NULL`,
+                [orgId, ...employee_ids]
+            );
+        }
+
+        // Enforce the timesheet branch boundary per employee.
+        const validEmployees: string[] = [];
+        for (const row of empCheck.rows) {
+            if (await checkEmployeeTimesheetPermission(req, row.id, orgId, Permission.TIMESHEET_APPROVE)) {
+                validEmployees.push(row.id);
+            }
+        }
 
         if (validEmployees.length === 0) {
             return res.status(404).json({

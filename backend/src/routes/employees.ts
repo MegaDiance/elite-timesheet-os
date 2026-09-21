@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 import { calcHours, parseSmartTime } from '../services/timeParser';
 import { sendTransactionalEmail, buildEmployeeInviteEmailTemplate } from '../services/emailService';
 import { revokeAllUserSessions } from '../services/sessionService';
@@ -10,20 +10,35 @@ const router = Router();
 router.use(requireAuth, requireTenantContext);
 
 // Get all employees for the organization
-router.get('/', requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/', requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const includeInactive = req.query.include_inactive === 'true';
+        const hasLocFilter = Boolean(req.user?.location_id) && ['Manager'].includes(req.user?.role || '');
+        const params = hasLocFilter ? [orgId, req.user!.location_id] : [orgId];
+        const locCondition = hasLocFilter ? ' AND (e.location_id = $2 OR e.location_id IS NULL)' : '';
 
         const sql = includeInactive
             ? `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
                (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
-               FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1`
+               FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1${locCondition}`
             : `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
                (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
-               FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1 AND e.is_active = true AND e.deleted_at IS NULL`;
+               FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1 AND e.is_active = true AND e.deleted_at IS NULL${locCondition}`;
 
-        const result = await query(sql, [orgId]);
+        let result;
+        try {
+            result = await query(sql, params);
+        } catch {
+            const fallbackSql = includeInactive
+                ? `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
+                   (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
+                   FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1`
+                : `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
+                   (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
+                   FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1 AND e.is_active = true AND e.deleted_at IS NULL`;
+            result = await query(fallbackSql, [orgId]);
+        }
         const emps = result.rows;
 
         for (const emp of emps) {
@@ -39,13 +54,27 @@ router.get('/', requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manage
     }
 });
 
-router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
-        const { full_name, department, email, phone, contracted_hours, create_account, role } = req.body;
+        const { full_name, department, email, phone, contracted_hours, create_account, role, location_id } = req.body;
 
         if (!full_name) {
             return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'full_name is required' } });
+        }
+
+        let targetLocationId = location_id || req.user?.location_id || null;
+        if (req.user?.location_id && ['Manager'].includes(req.user?.role || '')) {
+            if (location_id && location_id !== req.user.location_id) {
+                return res.status(403).json({
+                    success: false,
+                    error: {
+                        code: 'LOCATION_FORBIDDEN',
+                        message: 'You cannot create employees for another location.'
+                    }
+                });
+            }
+            targetLocationId = req.user.location_id;
         }
 
         const empId = crypto.randomUUID();
@@ -105,16 +134,24 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
             }
         }
 
-        await query(
-            `INSERT INTO employees (id, org_id, user_id, full_name, department, email, phone, contracted_hours)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [empId, orgId, userId, full_name, department || null, email || null, phone || null, contracted_hours || 76]
-        );
+        try {
+            await query(
+                `INSERT INTO employees (id, org_id, user_id, full_name, department, email, phone, contracted_hours, location_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                [empId, orgId, userId, full_name, department || null, email || null, phone || null, contracted_hours || 76, targetLocationId]
+            );
+        } catch {
+            await query(
+                `INSERT INTO employees (id, org_id, user_id, full_name, department, email, phone, contracted_hours)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [empId, orgId, userId, full_name, department || null, email || null, phone || null, contracted_hours || 76]
+            );
+        }
 
         await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'CREATED', empId, `Created employee ${full_name}`]
-        );
+            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_id, details, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'organisation')`,
+            [crypto.randomUUID(), orgId, targetLocationId, new Date().toISOString(), req.user?.id, 'CREATED', empId, `Created employee ${full_name}`]
+        ).catch(() => {});
 
         let inviteLink = null;
         let emailSent = false;
@@ -163,7 +200,14 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
     }
 });
 
-router.put('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+function checkEmployeeLocationAccess(req: AuthRequest, empLocationId: string | null | undefined): boolean {
+    if (!req.user?.location_id) return true;
+    if (['Platform Admin', 'Company Admin', 'Admin'].includes(req.user.role || '')) return true;
+    if (!empLocationId) return true;
+    return empLocationId === req.user.location_id;
+}
+
+router.put('/:id', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
@@ -173,6 +217,12 @@ router.put('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform
         if (empCheck.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
         
         const emp = empCheck.rows[0];
+        if (!checkEmployeeLocationAccess(req, emp.location_id)) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' }
+            });
+        }
         let userId = emp.user_id;
         let inviteLink = null;
         let emailSent = false;
@@ -260,11 +310,21 @@ router.put('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform
     }
 });
 
-router.post('/:id/deactivate', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/:id/deactivate', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
-        const empRes = await query('SELECT user_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
+        let empRes;
+        try {
+            empRes = await query('SELECT user_id, location_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
+        } catch {
+            empRes = await query('SELECT user_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
+        }
+        if (empRes.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
+        if (!checkEmployeeLocationAccess(req, empRes.rows[0]?.location_id)) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
+        }
+
         await query('UPDATE employees SET is_active = false, deleted_at = $1 WHERE id = $2 AND org_id = $3', [new Date().toISOString(), empId, orgId]);
         if (empRes.rows.length > 0 && empRes.rows[0].user_id) {
             const userId = empRes.rows[0].user_id;
@@ -281,7 +341,7 @@ router.post('/:id/deactivate', requireAuth, requireRole(['Admin', 'Company Admin
                 await revokeAllUserSessions(userId);
             }
         }
-        await query(`INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'DEACTIVATED', empId, `Deactivated employee ${empId}`]);
+        await query(`INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_id, details, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'organisation')`, [crypto.randomUUID(), orgId, empRes.rows[0]?.location_id || null, new Date().toISOString(), req.user?.id, 'DEACTIVATED', empId, `Deactivated employee ${empId}`]).catch(() => {});
         res.json({ success: true });
     } catch (err: any) {
         console.error('[EMPLOYEES DEACTIVATE ERROR]', err);
@@ -289,12 +349,23 @@ router.post('/:id/deactivate', requireAuth, requireRole(['Admin', 'Company Admin
     }
 });
 
-router.post('/:id/reactivate', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/:id/reactivate', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
+        let empRes;
+        try {
+            empRes = await query('SELECT location_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
+        } catch {
+            empRes = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
+        }
+        if (empRes.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
+        if (!checkEmployeeLocationAccess(req, empRes.rows[0]?.location_id)) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
+        }
+
         await query('UPDATE employees SET is_active = true, deleted_at = NULL WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        await query(`INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'RESTORED', empId, `Restored employee ${empId}`]);
+        await query(`INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_id, details, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'organisation')`, [crypto.randomUUID(), orgId, empRes.rows[0]?.location_id || null, new Date().toISOString(), req.user?.id, 'RESTORED', empId, `Restored employee ${empId}`]).catch(() => {});
         res.json({ success: true });
     } catch (err: any) {
         console.error('[EMPLOYEES REACTIVATE ERROR]', err);
@@ -302,7 +373,7 @@ router.post('/:id/reactivate', requireAuth, requireRole(['Admin', 'Company Admin
     }
 });
 
-router.delete('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.delete('/:id', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
@@ -312,6 +383,9 @@ router.delete('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platf
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
         }
         const emp = empCheck.rows[0];
+        if (!checkEmployeeLocationAccess(req, emp.location_id)) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
+        }
 
         // Guard: Cannot delete employee with approved/locked historical payroll records
         const approvedCheck = await query(
@@ -359,7 +433,7 @@ router.delete('/:id', requireAuth, requireRole(['Admin', 'Company Admin', 'Platf
     }
 });
 
-router.post('/:id/templates', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/:id/templates', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
@@ -367,6 +441,9 @@ router.post('/:id/templates', requireAuth, requireRole(['Admin', 'Company Admin'
 
         const empCheck = await query('SELECT * FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
         if (empCheck.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
+        if (!checkEmployeeLocationAccess(req, empCheck.rows[0].location_id)) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
+        }
 
         await query('DELETE FROM roster_templates WHERE employee_id = $1', [empId]);
 
@@ -410,7 +487,7 @@ router.post('/:id/templates', requireAuth, requireRole(['Admin', 'Company Admin'
     }
 });
 
-router.post('/:id/send-invitation', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/:id/send-invitation', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const empId = req.params.id;
@@ -424,6 +501,9 @@ router.post('/:id/send-invitation', requireAuth, requireRole(['Admin', 'Company 
 
         if (empCheck.rows.length === 0) {
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
+        }
+        if (!checkEmployeeLocationAccess(req, empCheck.rows[0].location_id)) {
+            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
         }
 
         let emp = empCheck.rows[0];

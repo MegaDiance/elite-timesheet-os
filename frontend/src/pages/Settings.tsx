@@ -11,12 +11,17 @@ import {
   FileText, 
   Users, 
   ExternalLink, 
-  Laptop 
+  Laptop,
+  RefreshCw,
+  MapPin,
+  Clock,
+  ArrowRight
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useToast } from '../components/ui/Toast';
 import { TwoFactorModal } from '../components/modals/TwoFactorModal';
 import { AccountSecurityModal } from '../components/modals/AccountSecurityModal';
@@ -42,6 +47,9 @@ export default function Settings() {
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [showLockModal, setShowLockModal] = useState(false);
   const [showBreakModal, setShowBreakModal] = useState(false);
+  const [showRegenerateModal, setShowRegenerateModal] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [updatingWorkflow, setUpdatingWorkflow] = useState(false);
 
   const [copied, setCopied] = useState(false);
 
@@ -71,12 +79,13 @@ export default function Settings() {
 
   const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
   const isAdmin = ['Admin', 'Company Admin', 'Platform Admin'].includes(role);
+  const isOwner = org?.is_owner || role === 'Owner' || role === 'Platform Admin';
 
   // Portal URL construction
-  const portalSlug = org?.slug || localStorage.getItem('last_org_slug') || '';
-  const portalUrl = portalSlug 
+  const portalSlug = org?.portal_slug || org?.slug || localStorage.getItem('last_org_slug') || '';
+  const portalUrl = org?.portal_url || (portalSlug 
     ? `${window.location.origin}/login/${portalSlug}` 
-    : `${window.location.origin}/login`;
+    : `${window.location.origin}/login`);
 
   const handleCopyPortalUrl = async () => {
     try {
@@ -86,6 +95,49 @@ export default function Settings() {
       setTimeout(() => setCopied(false), 2500);
     } catch {
       toast.error('Unable to copy to clipboard');
+    }
+  };
+
+  const handleRegeneratePortalUrl = async () => {
+    setRegenerating(true);
+    try {
+      const res = await api.post('/organisation/regenerate-portal-url');
+      if (res.data?.success) {
+        toast.success('Custom portal URL regenerated successfully.');
+        setOrg((prev: any) => ({
+          ...prev,
+          portal_slug: res.data.data.portal_slug,
+          slug: res.data.data.portal_slug,
+          portal_url: res.data.data.portal_url
+        }));
+        if (res.data.data.portal_slug) {
+          localStorage.setItem('last_org_slug', res.data.data.portal_slug);
+        }
+        setShowRegenerateModal(false);
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to regenerate portal URL.');
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  const handleUpdateTimesheetMode = async (mode: 'employee' | 'manager') => {
+    if (org?.timesheet_entry_mode === mode || updatingWorkflow) return;
+    setUpdatingWorkflow(true);
+    try {
+      const res = await api.put('/organisation/settings', { timesheet_entry_mode: mode });
+      if (res.data?.success) {
+        toast.success(`Timesheet mode switched to ${mode === 'employee' ? 'Employee Submission' : 'Manager Entry'}`);
+        setOrg((prev: any) => ({
+          ...prev,
+          timesheet_entry_mode: mode
+        }));
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to update timesheet mode.');
+    } finally {
+      setUpdatingWorkflow(false);
     }
   };
 
@@ -203,6 +255,18 @@ export default function Settings() {
                 >
                   {copied ? 'Copied to Clipboard' : 'Copy Portal URL'}
                 </Button>
+
+                {isOwner && (
+                  <Button
+                    variant="ghost"
+                    size="md"
+                    onClick={() => setShowRegenerateModal(true)}
+                    leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+                    className="shrink-0 text-[var(--muted)] hover:text-[var(--text)]"
+                  >
+                    Regenerate URL
+                  </Button>
+                )}
               </div>
               <p className="text-xs text-[var(--muted)] leading-relaxed pt-1">
                 Provide this dedicated URL to your employees so they can access your workplace login page.
@@ -222,6 +286,89 @@ export default function Settings() {
             </div>
           </Card>
 
+          {/* Timesheet Workflow Mode Card */}
+          {isAdmin && (
+            <Card className="p-6 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[var(--text)]">Timesheet Entry Mode</h3>
+                    <p className="text-xs text-[var(--muted)]">Configure how hours are submitted across your organization</p>
+                  </div>
+                </div>
+                <Badge variant="purple" size="sm">
+                  {org?.timesheet_entry_mode === 'manager' ? 'Manager Entry' : 'Employee Submission'}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div
+                  onClick={() => handleUpdateTimesheetMode('employee')}
+                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                    org?.timesheet_entry_mode !== 'manager'
+                      ? 'border-[var(--primary)] bg-[var(--primary-light)]/20'
+                      : 'border-[var(--border)] hover:border-[var(--border-h)] bg-[var(--panel-subtle)]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="text-xs font-bold text-[var(--text)]">Employee Submission Mode</div>
+                    {org?.timesheet_entry_mode !== 'manager' && (
+                      <Check className="w-4 h-4 text-[var(--primary)]" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1.5 leading-relaxed">
+                    Staff members submit their own timesheet at the end of each fortnight. Managers review, decline with reasons, or approve.
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => handleUpdateTimesheetMode('manager')}
+                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                    org?.timesheet_entry_mode === 'manager'
+                      ? 'border-[var(--primary)] bg-[var(--primary-light)]/20'
+                      : 'border-[var(--border)] hover:border-[var(--border-h)] bg-[var(--panel-subtle)]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="text-xs font-bold text-[var(--text)]">Manager Entry Mode</div>
+                    {org?.timesheet_entry_mode === 'manager' && (
+                      <Check className="w-4 h-4 text-[var(--primary)]" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] mt-1.5 leading-relaxed">
+                    Location managers directly enter or generate shift actuals. The staff timesheet portal remains read-only with submission disabled.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Quick-Access Locations Card */}
+          {isAdmin && (
+            <Card className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--text)]">Multi-Location Management</h3>
+                  <p className="text-xs text-[var(--muted)] mt-0.5">
+                    View active branches, configure location managers, and monitor isolation rules
+                  </p>
+                </div>
+              </div>
+
+              <Link to="/locations">
+                <Button variant="outline" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
+                  Manage Locations
+                </Button>
+              </Link>
+            </Card>
+          )}
+
           {/* Organisation Profile details */}
           <Card className="p-6 space-y-4">
             <h3 className="text-sm font-bold text-[var(--text)] pb-2 border-b border-[var(--border)]">
@@ -236,7 +383,7 @@ export default function Settings() {
 
               <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-1">
                 <div className="text-[var(--muted)] font-medium">Workspace Identifier (Slug)</div>
-                <div className="text-sm font-mono font-semibold text-[var(--text)]">@{org?.slug || '—'}</div>
+                <div className="text-sm font-mono font-semibold text-[var(--text)]">@{org?.portal_slug || org?.slug || '—'}</div>
               </div>
 
               <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-1">
@@ -254,6 +401,18 @@ export default function Settings() {
               </div>
             </div>
           </Card>
+
+          {/* Regenerate URL Confirm Modal */}
+          <ConfirmModal
+            isOpen={showRegenerateModal}
+            onClose={() => setShowRegenerateModal(false)}
+            onConfirm={handleRegeneratePortalUrl}
+            title="Regenerate Custom Portal URL?"
+            message="Regenerating your organisation portal URL will create a new random slug. The previous login URL will immediately stop working. Ensure you distribute the new link to your staff."
+            confirmLabel="Regenerate URL"
+            variant="warning"
+            loading={regenerating}
+          />
         </div>
       )}
 

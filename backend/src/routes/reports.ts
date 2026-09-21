@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 import { generatePayrollReport, convertReportToCsv, generatePrintableHtml } from '../services/reportService';
 
 const router = Router();
@@ -9,7 +9,7 @@ router.use(requireAuth, requireTenantContext);
  * GET /api/reports/payroll
  * Returns JSON aggregation of payroll data for the given fortnight
  */
-router.get('/payroll', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/payroll', requireAuth, requireTenantContext, requireAnyPermission([Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const startDate = (req.query.start_date || req.query.startDate) as string;
@@ -30,7 +30,7 @@ router.get('/payroll', requireAuth, requireTenantContext, requireRole(['Admin', 
  * GET /api/reports/export/csv
  * Downloads RFC 4180 standard CSV file for accountant / payroll processing
  */
-router.get('/export/csv', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/export/csv', requireAuth, requireTenantContext, requireAnyPermission([Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const startDate = (req.query.start_date || req.query.startDate) as string;
@@ -58,7 +58,7 @@ router.get('/export/csv', requireAuth, requireTenantContext, requireRole(['Admin
  * GET /api/reports/export/pdf
  * Returns a printable HTML document ready for window.print() or headless print-to-pdf
  */
-router.get('/export/pdf', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/export/pdf', requireAuth, requireTenantContext, requireAnyPermission([Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const startDate = (req.query.start_date || req.query.startDate) as string;

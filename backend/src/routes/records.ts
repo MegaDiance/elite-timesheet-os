@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireAnyBranchPermission, Permission, AuthRequest } from '../middleware/auth';
 import { calcHours, parseSmartTime } from '../services/timeParser';
 import { getFortnightStartIso } from '../services/periodUtils';
 
@@ -68,7 +68,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
         const start_date = req.query.start_date as string;
         if (!start_date) return res.status(400).json({ error: 'Missing start_date' });
 
-        const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(req.user?.role || '');
+        const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner'].includes(req.user?.role || '');
         
         let empRes = await query('SELECT id FROM employees WHERE user_id = $1 AND org_id = $2 AND deleted_at IS NULL', [req.user?.id, orgId]);
         let myEmpId = empRes.rows.length > 0 ? empRes.rows[0].id : null;
@@ -85,9 +85,20 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
 
         // Validate that requested employee belongs to the caller's organisation
         if (isManager && empId !== myEmpId) {
-            const empCheck = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL', [empId, orgId]);
+            let empCheck;
+            try {
+                empCheck = await query('SELECT id, location_id FROM employees WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL', [empId, orgId]);
+            } catch {
+                empCheck = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL', [empId, orgId]);
+            }
             if (empCheck.rows.length === 0) {
                 return res.status(404).json({ success: false, error: { message: 'Employee not found in your organisation.' } });
+            }
+            if (req.user?.location_id && ['Manager'].includes(req.user?.role || '')) {
+                const empLoc = empCheck.rows[0]?.location_id;
+                if (empLoc && empLoc !== req.user.location_id) {
+                    return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to access records for an employee in another location.' } });
+                }
             }
         }
 
@@ -102,7 +113,7 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
     }
 });
 
-router.get('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/', requireAuth, requireAnyBranchPermission(Permission.TIMESHEET_VIEW), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         if (!orgId) return res.status(400).json({ error: 'Missing orgId' });
@@ -111,6 +122,11 @@ router.get('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Ad
 
         let sql = 'SELECT * FROM daily_records WHERE org_id = $1';
         const params: any[] = [orgId];
+
+        if (req.user?.location_id && ['Manager'].includes(req.user?.role || '')) {
+            params.push(req.user.location_id);
+            sql += ` AND employee_id IN (SELECT id FROM employees WHERE org_id = $1 AND (location_id = $${params.length} OR location_id IS NULL))`;
+        }
 
         if (start_date) {
             params.push(start_date);
@@ -127,7 +143,27 @@ router.get('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Ad
 
         sql += ' ORDER BY record_date ASC';
 
-        const result = await query(sql, params);
+        let result;
+        try {
+            result = await query(sql, params);
+        } catch {
+            let fallbackSql = 'SELECT * FROM daily_records WHERE org_id = $1';
+            const fallbackParams: any[] = [orgId];
+            if (start_date) {
+                fallbackParams.push(start_date);
+                fallbackSql += ` AND record_date >= $${fallbackParams.length}`;
+            }
+            if (end_date) {
+                fallbackParams.push(end_date);
+                fallbackSql += ` AND record_date <= $${fallbackParams.length}`;
+            }
+            if (employee_id) {
+                fallbackParams.push(employee_id);
+                fallbackSql += ` AND employee_id = $${fallbackParams.length}`;
+            }
+            fallbackSql += ' ORDER BY record_date ASC';
+            result = await query(fallbackSql, fallbackParams);
+        }
         const records = result.rows;
 
         if (records.length === 0) {
@@ -157,7 +193,7 @@ router.get('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Ad
     }
 });
 
-router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), checkLocks, async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, requireAnyBranchPermission(Permission.ROSTER_UPDATE), checkLocks, async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id;
         const { employee_id, record_date, segments } = req.body;
@@ -166,12 +202,26 @@ router.post('/', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform A
             return res.status(400).json({ success: false, error: { message: 'employee_id and record_date are required' } });
         }
 
-        const empCheck = await query(
-            'SELECT id, is_active, deleted_at FROM employees WHERE id = $1 AND org_id = $2',
-            [employee_id, orgId]
-        );
+        let empCheck;
+        try {
+            empCheck = await query(
+                'SELECT id, is_active, deleted_at, location_id FROM employees WHERE id = $1 AND org_id = $2',
+                [employee_id, orgId]
+            );
+        } catch {
+            empCheck = await query(
+                'SELECT id, is_active, deleted_at FROM employees WHERE id = $1 AND org_id = $2',
+                [employee_id, orgId]
+            );
+        }
         if (empCheck.rows.length === 0) {
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee does not belong to your organisation' } });
+        }
+        if (req.user?.location_id && ['Manager'].includes(req.user?.role || '')) {
+            const empLoc = empCheck.rows[0]?.location_id;
+            if (empLoc && empLoc !== req.user.location_id) {
+                return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to manage records for employees in another location.' } });
+            }
         }
         if (!empCheck.rows[0].is_active || empCheck.rows[0].deleted_at) {
             return res.status(400).json({

@@ -73,10 +73,13 @@ export async function calculateRosterStats(orgId: string, employeeId: string, fo
     return { rostered: rRostered, actual: rActual, contracted, variance: rVariance, leave: rLeave };
 }
 
-export async function autoRosterAll(orgId: string, fortnightStart: Date, selectedDays?: number[], actorId?: string) {
+export async function autoRosterAll(orgId: string, fortnightStart: Date, selectedDays?: number[], actorId?: string, locationId?: string) {
     let orgSettings = { break_mins_weekday: 30, break_mins_weekend: 0, break_threshold_hours: 6 };
     try {
-        const orgRes = await query('SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1', [orgId]);
+        const orgRes = await query(
+            'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
+            [orgId]
+        );
         if (orgRes.rows[0]) {
             orgSettings = {
                 break_mins_weekday: orgRes.rows[0].break_mins_weekday ?? 30,
@@ -88,7 +91,9 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
         // Fallback to default break settings if columns do not exist in temporary mock schemas
     }
 
-    const emps = await query('SELECT id FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL', [orgId]);
+    const emps = locationId
+        ? await query('SELECT id FROM employees WHERE org_id = $1 AND (location_id = $2 OR location_id IS NULL) AND is_active = true AND deleted_at IS NULL', [orgId, locationId])
+        : await query('SELECT id FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL', [orgId]);
     const targetDays = selectedDays && selectedDays.length > 0 ? selectedDays : Array.from({ length: 14 }, (_, i) => i);
     const startIso = fmtISO(fortnightStart);
 
@@ -176,8 +181,10 @@ export async function autoRosterAll(orgId: string, fortnightStart: Date, selecte
     }
 }
 
-export async function autoLogAll(orgId: string, fortnightStart: Date, selectedDays?: number[], actorId?: string) {
-    const emps = await query('SELECT id FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL', [orgId]);
+export async function autoLogAll(orgId: string, fortnightStart: Date, selectedDays?: number[], actorId?: string, locationId?: string) {
+    const emps = locationId
+        ? await query('SELECT id FROM employees WHERE org_id = $1 AND (location_id = $2 OR location_id IS NULL) AND is_active = true AND deleted_at IS NULL', [orgId, locationId])
+        : await query('SELECT id FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL', [orgId]);
     const targetDays = selectedDays && selectedDays.length > 0 ? selectedDays : Array.from({ length: 14 }, (_, i) => i);
     const startIso = fmtISO(fortnightStart);
 

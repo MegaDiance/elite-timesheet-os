@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 import {
     buildXeroAuthUrl,
     getXeroConnectionStatus,
@@ -47,7 +47,7 @@ router.get('/callback', async (req: any, res: Response) => {
  * GET /api/xero/status
  * Check if the current tenant has an active Xero connection
  */
-router.get('/status', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/status', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_VIEW]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const status = await getXeroConnectionStatus(orgId);
@@ -62,7 +62,7 @@ router.get('/status', requireAuth, requireTenantContext, requireRole(['Admin', '
  * GET /api/xero/connect
  * Generates OAuth 2.0 Authorization URL to initiate Xero connection
  */
-router.get('/connect', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin']), async (req: AuthRequest, res: Response) => {
+router.get('/connect', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const authUrl = buildXeroAuthUrl(orgId);
@@ -77,7 +77,7 @@ router.get('/connect', requireAuth, requireTenantContext, requireRole(['Admin', 
  * POST /api/xero/disconnect
  * Removes Xero connection and revokes credentials
  */
-router.post('/disconnect', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin']), async (req: AuthRequest, res: Response) => {
+router.post('/disconnect', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         await disconnectXero(orgId);
@@ -99,7 +99,7 @@ router.post('/disconnect', requireAuth, requireTenantContext, requireRole(['Admi
  * POST /api/xero/mock-connect
  * Facilitates dev / staging / automated testing connection without external OAuth redirect
  */
-router.post('/mock-connect', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin']), async (req: AuthRequest, res: Response) => {
+router.post('/mock-connect', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const { tenant_name } = req.body;
@@ -124,7 +124,7 @@ router.post('/mock-connect', requireAuth, requireTenantContext, requireRole(['Ad
  * GET /api/xero/preview
  * Previews timesheets transformed into Xero format for manager review
  */
-router.get('/preview', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.get('/preview', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_VIEW]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const startDate = req.query.start_date as string;

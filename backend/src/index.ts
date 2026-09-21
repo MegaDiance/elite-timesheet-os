@@ -7,6 +7,7 @@ import recordsRoutes from './routes/records';
 import locksRoutes from './routes/locks';
 import organisationRoutes from './routes/organisation';
 import platformRoutes from './routes/platform';
+import locationsRoutes from './routes/locations';
 import { initDB } from './services/db';
 import path from 'path';
 import os from 'os';
@@ -101,6 +102,7 @@ import xeroRoutes from './routes/xero';
 import auditRoutes from './routes/audit';
 import announcementsRoutes from './routes/announcements';
 import dashboardRoutes from './routes/dashboard';
+import membershipsRoutes from './routes/memberships';
 
 // Health check (used by Railway to decide the deploy succeeded)
 app.get('/health', (_req, res) => {
@@ -109,12 +111,14 @@ app.get('/health', (_req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api', membershipsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/employees', employeesRoutes);
 app.use('/api/records', recordsRoutes);
 app.use('/api/locks', locksRoutes);
 app.use('/api/organisation', organisationRoutes);
 app.use('/api/organisation/holidays', holidaysRoutes);
+app.use('/api/locations', locationsRoutes);
 app.use('/api/platform', platformRoutes);
 app.use('/api/roster', rosterRoutes);
 app.use('/api/portal', portalRoutes);

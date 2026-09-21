@@ -23,7 +23,8 @@ import {
   CheckSquare,
   History,
   Pin,
-  PinOff
+  PinOff,
+  MapPin
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { OrgSwitchModal, type OrganisationMembership } from './modals/OrgSwitchModal';
@@ -31,6 +32,7 @@ import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
 import OnboardingTutorial from './OnboardingTutorial';
 import ContextHelpModal from './ContextHelpModal';
+import { usePermissions } from '../hooks/usePermissions';
 import HelpChatbot from './HelpChatbot';
 
 interface DecodedToken {
@@ -38,6 +40,7 @@ interface DecodedToken {
   email: string;
   organisation_id?: string;
   role?: string;
+  location_id?: string;
 }
 
 interface NavItem {
@@ -48,6 +51,12 @@ interface NavItem {
   onClick?: () => void;
 }
 
+const BRANCH_ROLE_LABELS: Record<string, string> = {
+  BRANCH_ADMIN: 'Branch Admin',
+  BRANCH_MANAGER: 'Branch Manager',
+  EMPLOYEE: 'Employee',
+};
+
 interface NavSection {
   title?: string;
   items: NavItem[];
@@ -56,6 +65,14 @@ interface NavSection {
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const {
+    isLegacy,
+    activeBranchId,
+    activeBranchRole,
+    activeBranchMemberships,
+    hasPermission,
+    hasPermissionInAnyBranch,
+  } = usePermissions();
 
   const [user, setUser] = useState<DecodedToken | null>(null);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -92,13 +109,17 @@ export default function Layout() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Multi-location state
+  const [userLocations, setUserLocations] = useState<any[]>([]);
+  const [activeLocationName, setActiveLocationName] = useState<string>('');
+
   // Inactivity timeout & multi-tab session management
   const {
     showWarning,
     remainingSeconds,
     isKeepingAlive,
     staySignedIn,
-    logoutNow,
+    logoutNow
   } = useSessionTimeout();
 
   useEffect(() => {
@@ -111,7 +132,7 @@ export default function Layout() {
     return () => window.removeEventListener('open-help-modal', handleOpenHelp);
   }, []);
 
-  // Auto-collapse sidebar on roster grid to maximise horizontal room
+  // Auto-collapse sidebar on roster page for maximum scheduling workspace
   useEffect(() => {
     if (location.pathname === '/roster') {
       setIsPinned(false);
@@ -125,6 +146,7 @@ export default function Layout() {
         const decoded = jwtDecode<DecodedToken>(token);
         setUser(decoded);
         fetchOrganisations();
+        fetchUserLocations();
       } catch {
         handleLogout();
       }
@@ -164,6 +186,41 @@ export default function Layout() {
     }
   };
 
+  const fetchUserLocations = async () => {
+    try {
+      const res = await api.get('/locations');
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        setUserLocations(res.data.data);
+        const currentToken = localStorage.getItem('token');
+        if (currentToken) {
+          try {
+            const decoded = jwtDecode<any>(currentToken);
+            const activeLoc = res.data.data.find((l: any) => l.id === decoded.location_id);
+            if (activeLoc) {
+              setActiveLocationName(activeLoc.name);
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch user locations', err);
+    }
+  };
+
+  const handleSwitchLocation = async (locId: string) => {
+    try {
+      const res = await api.post('/auth/select-location', { location_id: locId });
+      if (res.data?.success && res.data?.data?.token) {
+        localStorage.setItem('token', res.data.data.token);
+        window.dispatchEvent(new Event('auth-change'));
+        window.location.reload();
+      }
+    } catch {
+      setToastMessage('Failed to switch location context');
+      setTimeout(() => setToastMessage(null), 3500);
+    }
+  };
+
   const handleSwitchOrg = async (orgId: string) => {
     if (!orgId || orgId === user?.organisation_id || switching) return;
     try {
@@ -199,8 +256,33 @@ export default function Layout() {
   };
 
   const role = user?.role || 'Employee';
-  const isManagerOrAdmin = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
   const isPlatformAdmin = role === 'Platform Admin';
+
+  // ---------------------------------------------------------------------------
+  // Permission-driven navigation visibility.
+  //
+  // Branch-scoped capabilities (timesheets, roster, leave) are checked with
+  // hasPermissionInAnyBranch so a manager of a *different* branch can still
+  // reach the page and switch across. Organisation roles on their own grant
+  // none of these — that is enforced by the backend security context, which
+  // simply never lists them without an active branch membership.
+  // ---------------------------------------------------------------------------
+  const canViewTimesheets = hasPermissionInAnyBranch('TIMESHEET_VIEW');
+  const canViewRoster = hasPermissionInAnyBranch('ROSTER_VIEW');
+  const canViewLeave = hasPermissionInAnyBranch('LEAVE_VIEW');
+  const canViewReports = hasPermissionInAnyBranch('REPORT_VIEW');
+  const canViewBranches =
+    hasPermission('ORGANISATION_MANAGE_BRANCHES') || hasPermissionInAnyBranch('BRANCH_VIEW');
+  const canViewStaff =
+    hasPermissionInAnyBranch('BRANCH_MANAGE_STAFF') || hasPermission('ORGANISATION_MANAGE_USERS');
+  const canViewOrgSettings = hasPermission('ORGANISATION_VIEW');
+  const canViewAudit = hasPermission('ORGANISATION_UPDATE') || hasPermission('ORGANISATION_MANAGE_BRANCHES');
+
+  // Anyone holding at least one management capability gets the management shell;
+  // everyone else keeps the employee self-service navigation unchanged.
+  const isManagementUser =
+    canViewTimesheets || canViewRoster || canViewLeave || canViewReports ||
+    canViewBranches || canViewStaff || canViewOrgSettings;
 
   const isActive = (path?: string) => {
     if (!path) return false;
@@ -210,6 +292,7 @@ export default function Layout() {
     if (path === '/timesheets') return location.pathname === '/timesheets';
     if (path === '/schedule') return location.pathname === '/schedule';
     if (path === '/history') return location.pathname === '/history';
+    if (path === '/locations') return location.pathname === '/locations';
     if (path === '/settings') return location.pathname === '/settings';
     return location.pathname.startsWith(path);
   };
@@ -227,34 +310,32 @@ export default function Layout() {
         ]
       }
     ];
-  } else if (isManagerOrAdmin) {
-    navSections = [
-      {
-        title: 'Main',
-        items: [
-          { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
-          { label: 'Roster', path: '/roster', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Timesheets', path: '/timesheets', icon: <CheckSquare className="w-4 h-4" /> },
-          { label: 'Leave', path: '/leave-requests', icon: <Plane className="w-4 h-4" /> },
-        ]
-      },
-      {
-        title: 'People',
-        items: [
-          { label: 'Employees', path: '/employees', icon: <Users className="w-4 h-4" /> },
-          { label: 'Team Chat', path: '/announcements', icon: <MessageSquare className="w-4 h-4" /> },
-        ]
-      },
-      {
-        title: 'Management',
-        items: [
-          { label: 'Reports', path: '/reports', icon: <BarChart3 className="w-4 h-4" /> },
-          ...(role !== 'Manager' ? [{ label: 'Audit Log', path: '/audit', icon: <FileText className="w-4 h-4" /> }] : []),
-          { label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> },
-          { label: 'Help & Guide', onClick: () => setShowHelpModal(true), icon: <HelpCircle className="w-4 h-4" /> },
-        ]
-      }
+  } else if (isManagementUser) {
+    const mainItems: NavItem[] = [
+      { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+      ...(canViewRoster ? [{ label: 'Roster', path: '/roster', icon: <Calendar className="w-4 h-4" /> }] : []),
+      ...(canViewTimesheets ? [{ label: 'Timesheets', path: '/timesheets', icon: <CheckSquare className="w-4 h-4" /> }] : []),
+      ...(canViewLeave ? [{ label: 'Leave', path: '/leave-requests', icon: <Plane className="w-4 h-4" /> }] : []),
     ];
+
+    const peopleItems: NavItem[] = [
+      ...(canViewStaff ? [{ label: 'Employees', path: '/employees', icon: <Users className="w-4 h-4" /> }] : []),
+      { label: 'Team Chat', path: '/announcements', icon: <MessageSquare className="w-4 h-4" /> },
+    ];
+
+    const managementItems: NavItem[] = [
+      ...(canViewBranches ? [{ label: 'Locations', path: '/locations', icon: <Building2 className="w-4 h-4" /> }] : []),
+      ...(canViewReports ? [{ label: 'Reports', path: '/reports', icon: <BarChart3 className="w-4 h-4" /> }] : []),
+      ...(canViewAudit ? [{ label: 'Audit Log', path: '/audit', icon: <FileText className="w-4 h-4" /> }] : []),
+      ...(canViewOrgSettings ? [{ label: 'Settings', path: '/settings', icon: <Sliders className="w-4 h-4" /> }] : []),
+      { label: 'Help & Guide', onClick: () => setShowHelpModal(true), icon: <HelpCircle className="w-4 h-4" /> },
+    ];
+
+    navSections = [
+      { title: 'Main', items: mainItems },
+      { title: 'People', items: peopleItems },
+      { title: 'Management', items: managementItems },
+    ].filter(section => section.items.length > 0);
   } else {
     // Employee Navigation: Main + Account
     navSections = [
@@ -278,6 +359,21 @@ export default function Layout() {
     ];
   }
 
+  // ---------------------------------------------------------------------------
+  // Branch switcher: only branches where the user holds an ACTIVE membership.
+  // Owners / org admins who need the full branch list for management use the
+  // Locations page — the switcher is strictly "branches I can work in".
+  // ---------------------------------------------------------------------------
+  const branchOptions: Array<{ id: string; name: string; role: string | null }> = isLegacy
+    ? userLocations.map((l: any) => ({ id: l.id, name: l.name, role: null }))
+    : activeBranchMemberships.map(m => ({ id: m.branchId, name: m.branchName, role: m.role }));
+
+  const resolvedBranchId = (isLegacy ? user?.location_id : activeBranchId) || '';
+  const activeBranchName =
+    branchOptions.find(b => b.id === resolvedBranchId)?.name || activeLocationName || '';
+  const activeBranchRoleLabel = activeBranchRole ? BRANCH_ROLE_LABELS[activeBranchRole] : null;
+  const showBranchContext = !isPlatformAdmin && (!!activeBranchName || branchOptions.length > 0 || !isLegacy);
+
   const isFluid = location.pathname === '/roster';
 
   return (
@@ -288,32 +384,24 @@ export default function Layout() {
       
       {/* 1. Desktop Spacer: Keeps main content steady without layout jitter */}
       <div 
-        className={`hidden md:block shrink-0 transition-all duration-200 ${
-          isPinned ? 'w-64' : 'w-16'
+        className={`hidden md:block shrink-0 transition-[width] duration-200 ease-out ${
+          isPinned ? 'w-60' : 'w-16'
         }`} 
       />
 
-      {/* 2. Desktop Fixed Sidebar */}
-      <aside 
+      {/* 2. Desktop Floating / Pinned Sidebar */}
+      <aside
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className={`hidden md:flex flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)] transition-all duration-200 select-none z-30 fixed left-0 top-0 h-screen ${
-          isPinned 
-            ? 'w-64' 
-            : isHovered 
-            ? 'w-64 shadow-2xl z-40' 
-            : 'w-16'
+        className={`hidden md:flex flex-col fixed inset-y-0 left-0 z-30 bg-[var(--sidebar-bg)] text-[var(--sidebar-text)] border-r border-[var(--sidebar-border)] shadow-xl transition-[width] duration-200 ease-out select-none ${
+          isSidebarOpen ? 'w-60' : 'w-16'
         }`}
       >
         {/* Brand Header */}
-        <div className="h-16 px-3 flex items-center justify-between border-b border-[var(--sidebar-border)] shrink-0">
-          <Link 
-            to={isPlatformAdmin ? '/platform' : isManagerOrAdmin ? '/dashboard' : '/portal'} 
-            className="flex items-center gap-2.5 overflow-hidden min-w-0"
-          >
-            {/* Logo Mark 'S' */}
-            <div className="w-9 h-9 rounded-xl bg-[var(--primary)] flex items-center justify-center text-white font-black text-sm tracking-tight shrink-0 shadow-xs">
-              S
+        <div className="h-16 px-4 border-b border-[var(--sidebar-border)] flex items-center justify-between shrink-0">
+          <Link to="/dashboard" className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-[var(--primary)] text-white flex items-center justify-center font-black text-sm shrink-0 shadow-md shadow-indigo-500/20">
+              <Clock className="w-4 h-4" />
             </div>
             {isSidebarOpen && (
               <div className="min-w-0 animate-in fade-in duration-150">
@@ -346,7 +434,7 @@ export default function Layout() {
 
         {/* Organisation Context Chip (When expanded) */}
         {isSidebarOpen && !isPlatformAdmin && (
-          <div className="px-3 pt-3 pb-1 shrink-0 animate-in fade-in duration-150">
+          <div className="px-3 pt-3 pb-1 shrink-0 animate-in fade-in duration-150 space-y-1.5">
             <div className="px-3 py-2 rounded-xl bg-white/5 border border-white/8 flex items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 min-w-0">
                 <Building2 className="w-3.5 h-3.5 text-[var(--primary)] shrink-0" />
@@ -362,6 +450,49 @@ export default function Layout() {
                 </button>
               )}
             </div>
+
+            {/* Active branch indicator + membership-scoped branch switcher */}
+            {showBranchContext && (
+              <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <MapPin
+                      className={`w-3 h-3 shrink-0 ${activeBranchName ? 'text-emerald-400' : 'text-amber-400'}`}
+                    />
+                    <span className="truncate text-white font-medium text-[11px]">
+                      {activeBranchName || 'No active branch'}
+                    </span>
+                  </div>
+                  {activeBranchRoleLabel && (
+                    <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/20">
+                      {activeBranchRoleLabel}
+                    </span>
+                  )}
+                </div>
+
+                {branchOptions.length > 1 && (
+                  <select
+                    value={resolvedBranchId}
+                    onChange={(e) => handleSwitchLocation(e.target.value)}
+                    aria-label="Switch active branch"
+                    className="w-full bg-black/30 text-white text-[10px] rounded-md px-2 py-1 border border-white/10 outline-none cursor-pointer focus:border-[var(--primary)]"
+                  >
+                    {branchOptions.map(b => (
+                      <option key={b.id} value={b.id} className="text-black">
+                        {b.name}
+                        {b.role ? ` — ${BRANCH_ROLE_LABELS[b.role] ?? b.role}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {!isLegacy && branchOptions.length === 0 && (
+                  <p className="text-[10px] leading-snug text-[var(--sidebar-text)] opacity-80">
+                    No branch memberships. Branch rosters and timesheets require a branch role — manage branches from Locations.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -542,6 +673,36 @@ export default function Layout() {
                 <div className="p-3 border-b border-[var(--sidebar-border)] bg-white/5">
                   <div className="text-[10px] uppercase text-[var(--sidebar-text)] font-semibold">Active Workspace</div>
                   <div className="font-bold text-sm text-white truncate">{currentOrgName}</div>
+                  {showBranchContext && (
+                    <div className="mt-2 space-y-1.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <MapPin className={`w-3 h-3 shrink-0 ${activeBranchName ? 'text-emerald-400' : 'text-amber-400'}`} />
+                        <span className="truncate text-[11px] text-white font-medium">
+                          {activeBranchName || 'No active branch'}
+                        </span>
+                        {activeBranchRoleLabel && (
+                          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/20">
+                            {activeBranchRoleLabel}
+                          </span>
+                        )}
+                      </div>
+                      {branchOptions.length > 1 && (
+                        <select
+                          value={resolvedBranchId}
+                          onChange={(e) => handleSwitchLocation(e.target.value)}
+                          aria-label="Switch active branch"
+                          className="w-full bg-black/30 text-white text-[11px] rounded-md px-2 py-1.5 border border-white/10 outline-none cursor-pointer focus:border-[var(--primary)]"
+                        >
+                          {branchOptions.map(b => (
+                            <option key={b.id} value={b.id} className="text-black">
+                              {b.name}
+                              {b.role ? ` — ${BRANCH_ROLE_LABELS[b.role] ?? b.role}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -638,7 +799,7 @@ export default function Layout() {
             <span>Home</span>
           </Link>
           <Link
-            to={isManagerOrAdmin ? "/timesheets" : "/timesheet"}
+            to={canViewTimesheets ? "/timesheets" : "/timesheet"}
             className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
               (location.pathname === '/timesheet' || location.pathname === '/timesheets' || location.pathname === '/portal') ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
             }`}
@@ -647,7 +808,7 @@ export default function Layout() {
             <span>Timesheet</span>
           </Link>
           <Link
-            to={isManagerOrAdmin ? "/roster" : "/schedule"}
+            to={canViewRoster ? "/roster" : "/schedule"}
             className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
               (location.pathname === '/schedule' || location.pathname === '/roster') ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
             }`}
@@ -656,13 +817,13 @@ export default function Layout() {
             <span>Schedule</span>
           </Link>
           <Link
-            to={isManagerOrAdmin ? "/reports" : "/history"}
+            to={canViewReports ? "/reports" : "/history"}
             className={`flex flex-col items-center justify-center min-w-[54px] min-h-[48px] py-1 px-2 rounded-xl text-[10px] font-medium transition-colors ${
               (location.pathname === '/history' || location.pathname === '/reports') ? 'text-[var(--primary)] font-bold bg-white/5' : 'text-[var(--sidebar-text)] hover:text-white'
             }`}
           >
             <History className="w-5 h-5 mb-0.5" />
-            <span>{isManagerOrAdmin ? 'Reports' : 'History'}</span>
+            <span>{canViewReports ? 'Reports' : 'History'}</span>
           </Link>
           <button
             type="button"

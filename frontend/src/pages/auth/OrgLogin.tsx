@@ -65,6 +65,14 @@ export const OrgLogin: React.FC = () => {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendNotice, setResendNotice] = useState<string | null>(null);
 
+  // Single Active Org Conflict state & Location Picker
+  const [orgConflict, setOrgConflict] = useState<boolean>(false);
+  const [conflictMessage, setConflictMessage] = useState<string>('');
+  const [availableLocations, setAvailableLocations] = useState<any[]>([]);
+  const [pendingToken, setPendingToken] = useState<string>('');
+  const [pendingUser, setPendingUser] = useState<any>(null);
+  const [selectingLocation, setSelectingLocation] = useState(false);
+
   // Fetch tenant info by slug
   useEffect(() => {
     if (!slug) {
@@ -116,6 +124,44 @@ export const OrgLogin: React.FC = () => {
     }
   };
 
+  const checkLocationsAndProceed = (token: string, user: any, locations?: any[]) => {
+    if (locations && locations.length > 1 && !user.location_id) {
+      setPendingToken(token);
+      setPendingUser(user);
+      setAvailableLocations(locations);
+      return;
+    }
+    handleAuthSuccess(token, user);
+  };
+
+  const handleSelectLocationContext = async (locId: string) => {
+    setSelectingLocation(true);
+    try {
+      const res = await api.post('/auth/select-location', { location_id: locId }, {
+        headers: { Authorization: `Bearer ${pendingToken}` }
+      });
+      if (res.data?.success && res.data?.data?.token) {
+        handleAuthSuccess(res.data.data.token, { ...pendingUser, location_id: locId });
+      } else {
+        handleAuthSuccess(pendingToken, pendingUser);
+      }
+    } catch {
+      handleAuthSuccess(pendingToken, pendingUser);
+    } finally {
+      setSelectingLocation(false);
+    }
+  };
+
+  const handleSignOutAndRetry = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('current_org_id');
+    setOrgConflict(false);
+    setConflictMessage('');
+    setError(null);
+    handleLoginSubmit({ preventDefault: () => {} } as any);
+  };
+
   // Submit initial email/password
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,6 +172,7 @@ export const OrgLogin: React.FC = () => {
 
     setLoading(true);
     setError(null);
+    setOrgConflict(false);
 
     try {
       const res = await api.post('/auth/login', { 
@@ -144,12 +191,17 @@ export const OrgLogin: React.FC = () => {
           setIs2FA(true);
           setTempToken(res.data.temp_token);
         } else {
-          handleAuthSuccess(res.data.data.token, res.data.data.user);
+          checkLocationsAndProceed(res.data.data.token, res.data.data.user, res.data.data.locations);
         }
       } else {
         setError(res.data?.error?.message || res.data?.error || 'Invalid email or password.');
       }
     } catch (err: any) {
+      if (err.response?.status === 409 || err.response?.data?.code === 'SESSION_ORG_CONFLICT') {
+        setOrgConflict(true);
+        setConflictMessage(err.response?.data?.message || 'You are currently authenticated in another organisation. Please sign out of your previous session before logging into this organisation.');
+        return;
+      }
       const msg = err.response?.data?.error?.message || err.response?.data?.error || err.response?.data?.message || 'Login failed. Please check credentials.';
       setError(msg);
     } finally {
@@ -297,7 +349,28 @@ export const OrgLogin: React.FC = () => {
             </div>
           )}
 
-          {error && (
+          {orgConflict && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-3">
+              <div className="flex items-start gap-2.5 text-amber-500 font-bold">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Active Organisation Session Conflict</span>
+              </div>
+              <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+                {conflictMessage || 'You are currently authenticated in another organisation. Security policies require an explicit sign-out before switching workspaces.'}
+              </p>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={handleSignOutAndRetry}
+                className="w-full shadow-xs"
+              >
+                Sign Out of Other Organisation & Continue
+              </Button>
+            </div>
+          )}
+
+          {error && !orgConflict && (
             <div className="p-3 rounded-md bg-rose-500/10 border border-rose-500/20 text-xs text-rose-500 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{error}</span>
@@ -311,7 +384,34 @@ export const OrgLogin: React.FC = () => {
             </div>
           )}
 
-          {!is2FA ? (
+          {availableLocations.length > 0 ? (
+            /* Multi-Location Selection Step */
+            <div className="space-y-4">
+              <div className="text-center space-y-1">
+                <h3 className="text-sm font-bold text-[var(--text)]">Select Active Location</h3>
+                <p className="text-xs text-[var(--muted)]">
+                  You hold memberships across multiple locations. Choose which branch to open:
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {availableLocations.map((loc) => (
+                  <button
+                    key={loc.id}
+                    onClick={() => handleSelectLocationContext(loc.id)}
+                    disabled={selectingLocation}
+                    className="w-full p-3.5 rounded-xl border border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--primary-light)]/10 text-left transition-all flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="text-xs font-bold text-[var(--text)]">{loc.name}</div>
+                      <div className="text-[10px] text-[var(--muted)] mt-0.5">{loc.address || loc.timezone}</div>
+                    </div>
+                    <Badge variant="purple" size="sm">{loc.role || 'Member'}</Badge>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : !is2FA ? (
             /* Step 1: Standard Credentials Form */
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <Input

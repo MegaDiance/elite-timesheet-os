@@ -19,7 +19,10 @@ import {
   Sparkles,
   ClipboardList,
   ShieldCheck,
-  Plus
+  Plus,
+  Building2,
+  Copy,
+  Sliders
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { Card } from '../components/ui/Card';
@@ -55,7 +58,13 @@ export default function Dashboard() {
     try {
       const res = await api.get('/dashboard/today');
       if (res.data?.success) {
-        setData(res.data);
+        const raw = res.data.data ? { ...res.data.data, ...res.data } : res.data;
+        setData({
+          ...raw,
+          scheduled_today: raw.scheduled_today || [],
+          pending_submissions: raw.pending_submissions || [],
+          pending_leave: raw.pending_leave || []
+        });
       }
     } catch (err: any) {
       console.error('Failed to load dashboard data:', err);
@@ -70,7 +79,9 @@ export default function Dashboard() {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  const isManager = data && ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(data.role);
+  const userRole = (data?.role || '').trim();
+  const isManager = ['admin', 'company admin', 'platform admin', 'manager', 'owner'].includes(userRole.toLowerCase());
+  const isOwner = userRole.toLowerCase() === 'owner' || Boolean(data?.is_owner_view);
 
   // Format today's human-readable date
   const todayDateStr = data?.date ? new Date(data.date + 'T00:00:00').toLocaleDateString(undefined, {
@@ -195,6 +206,100 @@ export default function Dashboard() {
       ========================================================= */}
       {isManager && (
         <div className="space-y-6">
+          {/* Section 0: Organisation Owner Overview (if Owner) */}
+          {isOwner && (
+            <Card className="p-5 bg-gradient-to-r from-[var(--primary-light)]/20 via-[var(--panel)] to-[var(--panel)] border-[var(--primary)]/30 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs uppercase font-bold tracking-wider text-[var(--primary)]">
+                      Organisation Control Centre
+                    </span>
+                    <Badge variant="purple" size="sm">Owner Account</Badge>
+                    <Badge variant="outline" size="sm">
+                      {data?.organisation?.entry_mode === 'manager' || data?.summary?.timesheet_entry_mode === 'manager'
+                        ? 'Direct Manager Entry' 
+                        : 'Employee Self-Submission'}
+                    </Badge>
+                  </div>
+                  <h2 className="text-lg font-bold text-[var(--text)] mt-1">
+                    {data?.organisation?.name || data?.summary?.organisation_name || 'Your Organisation'}
+                  </h2>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Link to="/locations">
+                    <Button variant="outline" size="sm" leftIcon={<Building2 className="w-3.5 h-3.5" />}>
+                      Manage Locations
+                    </Button>
+                  </Link>
+                  <Link to="/settings">
+                    <Button variant="ghost" size="sm" leftIcon={<Sliders className="w-3.5 h-3.5" />}>
+                      Org Settings
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+
+              {/* 4 Key Organisation Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Total Locations</div>
+                  <div className="text-2xl font-bold text-[var(--text)] font-mono mt-0.5">
+                    {data?.metrics?.total_locations ?? data?.summary?.total_locations ?? 1}
+                  </div>
+                  <Link to="/locations" className="text-[11px] text-[var(--primary)] font-semibold hover:underline block mt-1">
+                    View branches →
+                  </Link>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Active Managers</div>
+                  <div className="text-2xl font-bold text-[var(--text)] font-mono mt-0.5">
+                    {data?.metrics?.active_managers ?? data?.summary?.active_managers ?? 0}
+                  </div>
+                  <Link to="/locations" className="text-[11px] text-[var(--primary)] font-semibold hover:underline block mt-1">
+                    Assign managers →
+                  </Link>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Total Staff</div>
+                  <div className="text-2xl font-bold text-[var(--text)] font-mono mt-0.5">
+                    {data?.metrics?.total_employees ?? data?.metrics?.total_staff ?? data?.summary?.total_employees ?? 0}
+                  </div>
+                  <Link to="/employees" className="text-[11px] text-[var(--primary)] font-semibold hover:underline block mt-1">
+                    Staff directory →
+                  </Link>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Custom Portal URL</div>
+                  <div className="text-xs font-mono font-semibold text-[var(--text)] truncate mt-1">
+                    {(data?.organisation?.portal_slug || data?.summary?.portal_slug) ? `/login/${data.organisation?.portal_slug || data.summary?.portal_slug}` : 'Configured'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const slug = data?.organisation?.portal_slug || data?.summary?.portal_slug;
+                      if (slug) {
+                        const url = `${window.location.origin}/login/${slug}`;
+                        navigator.clipboard.writeText(url);
+                        toast.success('Portal URL copied to clipboard!');
+                      } else {
+                        toast.info('Visit Settings to view your portal slug.');
+                      }
+                    }}
+                    className="text-[11px] text-[var(--primary)] font-semibold hover:underline flex items-center gap-1 mt-1 cursor-pointer"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Copy Link</span>
+                  </button>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Section 1: Today's Operational Snapshot (3 Clean, High-Value Stats) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Stat 1: Currently Working */}
@@ -447,14 +552,14 @@ export default function Dashboard() {
                   </Badge>
                 </div>
 
-                {data?.pending_submissions?.length === 0 ? (
+                {!data?.pending_submissions || data.pending_submissions.length === 0 ? (
                   <div className="py-6 text-center text-[var(--muted)] text-xs">
                     <CheckCircle2 className="w-6 h-6 text-[var(--success)] mx-auto mb-1 opacity-80" />
                     No timesheets currently pending review.
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {data.pending_submissions.slice(0, 4).map((sub: any) => (
+                    {(data.pending_submissions || []).slice(0, 4).map((sub: any) => (
                       <div key={sub.submission_id} className="p-2.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] flex items-center justify-between text-xs">
                         <div>
                           <div className="font-semibold text-[var(--text)]">{sub.full_name}</div>
@@ -467,7 +572,7 @@ export default function Dashboard() {
                         </Link>
                       </div>
                     ))}
-                    {data.pending_submissions.length > 4 && (
+                    {(data?.pending_submissions?.length || 0) > 4 && (
                       <div className="pt-1 text-center">
                         <Link to="/timesheets" className="text-xs font-semibold text-[var(--primary)] hover:underline">
                           View all {data.pending_submissions.length} timesheets →
@@ -487,19 +592,19 @@ export default function Dashboard() {
                       Leave Requests
                     </h2>
                   </div>
-                  <Badge variant={data?.pending_leave?.length > 0 ? 'purple' : 'outline'} size="sm">
+                  <Badge variant={(data?.pending_leave?.length || 0) > 0 ? 'purple' : 'outline'} size="sm">
                     {data?.pending_leave?.length ?? 0}
                   </Badge>
                 </div>
 
-                {data?.pending_leave?.length === 0 ? (
+                {!data?.pending_leave || data.pending_leave.length === 0 ? (
                   <div className="py-6 text-center text-[var(--muted)] text-xs">
                     <CheckCircle2 className="w-6 h-6 text-[var(--success)] mx-auto mb-1 opacity-80" />
                     All leave applications are up to date.
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {data.pending_leave.slice(0, 4).map((l: any) => (
+                    {(data.pending_leave || []).slice(0, 4).map((l: any) => (
                       <div key={l.id} className="p-2.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] flex items-center justify-between text-xs">
                         <div>
                           <div className="font-semibold text-[var(--text)]">{l.full_name}</div>
@@ -514,7 +619,7 @@ export default function Dashboard() {
                         </Link>
                       </div>
                     ))}
-                    {data.pending_leave.length > 4 && (
+                    {(data?.pending_leave?.length || 0) > 4 && (
                       <div className="pt-1 text-center">
                         <Link to="/leave-requests" className="text-xs font-semibold text-[var(--primary)] hover:underline">
                           View all {data.pending_leave.length} requests →
@@ -559,7 +664,28 @@ export default function Dashboard() {
       ========================================================= */}
       {!isManager && (
         <div className="space-y-6">
-          {/* Employee Welcome Card */}
+          {data?.has_employee_record === false ? (
+            <Card className="p-8 text-center space-y-4 max-w-xl mx-auto my-8">
+              <div className="w-14 h-14 rounded-2xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center mx-auto">
+                <Users className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-base text-[var(--text)]">No Staff Profile Linked</h3>
+                <p className="text-xs text-[var(--muted)] leading-relaxed">
+                  Your login account is active, but is not currently linked to an employee timesheet profile. Please reach out to your manager or administrator to link your profile.
+                </p>
+              </div>
+              <div className="pt-2">
+                <Link to="/settings">
+                  <Button variant="outline" size="sm">
+                    Account Settings
+                  </Button>
+                </Link>
+              </div>
+            </Card>
+          ) : (
+            <>
+              {/* Employee Welcome Card */}
           <Card className="p-6 bg-gradient-to-r from-[var(--primary-light)]/20 via-[var(--panel)] to-[var(--panel)] border-[var(--primary)]/20">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
@@ -827,6 +953,8 @@ export default function Dashboard() {
               )}
             </Card>
           </div>
+        </>
+      )}
         </div>
       )}
     </div>

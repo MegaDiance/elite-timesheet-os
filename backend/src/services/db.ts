@@ -23,8 +23,11 @@ export async function initDB(dbUrl: string) {
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 name TEXT NOT NULL,
                 slug TEXT UNIQUE,
+                portal_slug TEXT UNIQUE,
                 display_name TEXT,
                 logo_url TEXT,
+                timesheet_entry_mode TEXT DEFAULT 'employee',
+                owner_user_id UUID,
                 is_public_searchable BOOLEAN DEFAULT true,
                 break_mins_weekday NUMERIC DEFAULT 30,
                 break_mins_weekend NUMERIC DEFAULT 0,
@@ -33,6 +36,43 @@ export async function initDB(dbUrl: string) {
                 timesheet_lock_password_hash TEXT,
                 allow_employee_chat BOOLEAN DEFAULT true,
                 is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS locations (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                org_id UUID NOT NULL,
+                name TEXT NOT NULL,
+                address TEXT,
+                timezone TEXT DEFAULT 'Australia/Melbourne',
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS location_memberships (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                location_id UUID NOT NULL,
+                user_id UUID NOT NULL,
+                role TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS location_invitations (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                org_id UUID NOT NULL,
+                location_id UUID NOT NULL,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                token_hash TEXT UNIQUE NOT NULL,
+                delivery_status TEXT DEFAULT 'pending',
+                last_error TEXT,
+                created_by UUID,
+                expires_at TIMESTAMPTZ NOT NULL,
+                accepted_at TIMESTAMPTZ,
+                cancelled_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
 
@@ -52,12 +92,15 @@ export async function initDB(dbUrl: string) {
                 organisation_id UUID NOT NULL,
                 user_id UUID NOT NULL,
                 role TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(organisation_id, user_id)
             );
 
             CREATE TABLE IF NOT EXISTS employees (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 org_id UUID NOT NULL,
+                location_id UUID,
                 full_name TEXT NOT NULL,
                 department TEXT,
                 email TEXT,
@@ -115,15 +158,20 @@ export async function initDB(dbUrl: string) {
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 org_id UUID NOT NULL,
+                location_id UUID,
+                scope TEXT DEFAULT 'organisation',
                 timestamp TIMESTAMPTZ DEFAULT NOW(),
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 actor_id UUID,
                 user_id UUID,
+                target_user_id UUID,
                 ip_address TEXT,
                 action TEXT NOT NULL,
                 entity_type TEXT,
                 entity_id UUID,
                 details TEXT,
+                previous_value TEXT,
+                new_value TEXT,
                 snapshot TEXT
             );
 
@@ -247,6 +295,7 @@ export async function initDB(dbUrl: string) {
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID NOT NULL,
                 org_id UUID,
+                location_id UUID,
                 token_hash TEXT NOT NULL UNIQUE,
                 ip_address TEXT,
                 approx_location TEXT,
@@ -305,9 +354,12 @@ export async function initDB(dbUrl: string) {
         // Company Admin Account for Apex Logistics
         db.public.none(`INSERT INTO users (id, org_id, email, password_hash, role) VALUES ('${companyAdminUserId}', '${orgId}', 'admin@apexlogistics.com', '${hash}', 'Company Admin')`);
         
-        db.public.none(`INSERT INTO organisations (id, name, slug, display_name) VALUES ('${orgId}', 'Apex Logistics Solutions', 'apex-logistics', 'Apex Logistics Solutions')`);
+        const locationId = '123e4567-e89b-12d3-a456-666666666666';
+        db.public.none(`INSERT INTO organisations (id, name, slug, portal_slug, display_name, timesheet_entry_mode, owner_user_id) VALUES ('${orgId}', 'Apex Logistics Solutions', 'apex-logistics', '7kq4m9xp', 'Apex Logistics Solutions', 'employee', '${companyAdminUserId}')`);
         db.public.none(`INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ('123e4567-e89b-12d3-a456-444444444444', '${orgId}', '${platformUserId}', 'Platform Admin')`);
-        db.public.none(`INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ('123e4567-e89b-12d3-a456-555555555555', '${orgId}', '${companyAdminUserId}', 'Company Admin')`);
+        db.public.none(`INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ('123e4567-e89b-12d3-a456-555555555555', '${orgId}', '${companyAdminUserId}', 'Owner')`);
+        db.public.none(`INSERT INTO locations (id, org_id, name, address) VALUES ('${locationId}', '${orgId}', 'Headquarters - Melbourne', '120 Collins St, Melbourne VIC 3000')`);
+        db.public.none(`INSERT INTO location_memberships (id, location_id, user_id, role) VALUES ('123e4567-e89b-12d3-a456-777777777777', '${locationId}', '${companyAdminUserId}', 'manager')`);
 
         const PgPool = db.adapters.createPg().Pool;
         pool = new PgPool();
@@ -345,7 +397,8 @@ export async function initDB(dbUrl: string) {
             const saveSnapshot = () => {
                 try {
                     const tables = [
-                        'organisations', 'users', 'organisation_members', 'employees',
+                        'organisations', 'locations', 'location_memberships', 'location_invitations',
+                        'users', 'organisation_members', 'employees',
                         'fortnight_locks', 'daily_records', 'shift_segments', 'roster_templates',
                         'audit_logs', 'invitation_tokens', 'org_invitation_tokens', 'reset_tokens',
                         'two_factor_codes', 'public_holidays', 'timesheet_submissions', 'leave_requests', 'xero_connections',

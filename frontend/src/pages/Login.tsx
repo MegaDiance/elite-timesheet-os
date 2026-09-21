@@ -42,6 +42,8 @@ export default function Login() {
   const [authUser, setAuthUser] = useState<any>(null);
   const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [selectingOrgId, setSelectingOrgId] = useState<string | null>(null);
+  const [orgConflict, setOrgConflict] = useState<boolean>(false);
+  const [conflictMessage, setConflictMessage] = useState<string>('');
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -151,6 +153,11 @@ export default function Login() {
         setError(response.data?.error?.message || response.data?.error || 'Invalid credentials');
       }
     } catch (err: any) {
+      if (err.response?.status === 409 || err.response?.data?.code === 'SESSION_ORG_CONFLICT') {
+        setOrgConflict(true);
+        setConflictMessage(err.response?.data?.message || 'You are currently authenticated in another organisation. Please sign out of your previous session before logging into this organisation.');
+        return;
+      }
       if (err.response?.status === 429) {
         setError(err.response.data.error?.message || 'Too many failed attempts. Try again in 15 minutes.');
       } else {
@@ -159,6 +166,16 @@ export default function Login() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleClearSessionAndRetry = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('current_org_id');
+    setOrgConflict(false);
+    setConflictMessage('');
+    setError('');
+    handleLoginSubmit({ preventDefault: () => {} } as any);
   };
 
   const handleVerify2FASubmit = async (e: React.FormEvent) => {
@@ -304,7 +321,28 @@ export default function Login() {
           </div>
         )}
 
-        {error && (
+        {orgConflict && (
+          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 p-4 rounded-xl text-xs space-y-3">
+            <div className="flex items-start gap-2.5 font-bold">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Active Organisation Session Conflict</span>
+            </div>
+            <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+              {conflictMessage}
+            </p>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={handleClearSessionAndRetry}
+              className="w-full shadow-xs"
+            >
+              Sign Out of Other Organisation & Continue
+            </Button>
+          </div>
+        )}
+
+        {error && !orgConflict && (
           <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 p-3 rounded-md text-xs flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>

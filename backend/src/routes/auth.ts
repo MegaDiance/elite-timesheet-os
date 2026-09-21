@@ -1,7 +1,8 @@
 import { Router, Response } from 'express';
 import { query } from '../services/db';
-import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword } from '../services/auth';
+import { comparePassword, generateToken, generateTempToken, verifyToken, verifyTempToken, hashPassword } from '../services/auth';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { resolveUserSecurityContext } from '../services/permissionService';
 import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate } from '../services/emailService';
 import { createSession, touchSession, revokeSession, revokeAllUserSessions, getActiveUserSessions, recordLoginAttempt } from '../services/sessionService';
 import { parseClientInfo, assessLoginRisk, createLoginChallenge } from '../services/securityService';
@@ -139,6 +140,70 @@ async function getUserOrganisations(userId: string, currentOrgId?: string, userR
     }
 }
 
+export async function getUserLocations(userId: string, orgId: string, userRole?: string): Promise<any[]> {
+    try {
+        if (userRole === 'Platform Admin') {
+            try {
+                const allLocs = await query(
+                    'SELECT id, name, address, timezone, is_active, \'BRANCH_ADMIN\' as role FROM locations WHERE (org_id = $1 OR organisation_id = $1) AND is_active = true ORDER BY name ASC',
+                    [orgId]
+                );
+                return allLocs.rows;
+            } catch {
+                const allLocs = await query(
+                    'SELECT id, name, is_active, \'BRANCH_ADMIN\' as role FROM locations WHERE org_id = $1 ORDER BY name ASC',
+                    [orgId]
+                );
+                return allLocs.rows;
+            }
+        }
+
+        let locs: any[] = [];
+        try {
+            const locRes = await query(`
+                SELECT l.id, l.name, l.address, l.timezone, l.is_active, lm.role
+                FROM location_memberships lm
+                JOIN locations l ON lm.location_id = l.id
+                WHERE lm.user_id = $1 AND (l.org_id = $2 OR l.organisation_id = $2) AND l.is_active = true
+                ORDER BY l.name ASC
+            `, [userId, orgId]);
+            locs = locRes.rows;
+        } catch {
+            try {
+                const locRes = await query(`
+                    SELECT l.id, l.name, l.is_active, lm.role
+                    FROM location_memberships lm
+                    JOIN locations l ON lm.location_id = l.id
+                    WHERE lm.user_id = $1 AND l.org_id = $2
+                    ORDER BY l.name ASC
+                `, [userId, orgId]);
+                locs = locRes.rows;
+            } catch {
+                locs = [];
+            }
+        }
+
+        if (locs.length === 0) {
+            try {
+                const empLocRes = await query(`
+                    SELECT l.id, l.name, l.address, l.timezone, l.is_active, 'Employee' as role
+                    FROM employees e
+                    JOIN locations l ON e.location_id = l.id
+                    WHERE e.user_id = $1 AND e.org_id = $2 AND l.is_active = true AND e.is_active = true AND e.deleted_at IS NULL
+                    ORDER BY l.name ASC
+                `, [userId, orgId]);
+                if (empLocRes.rows.length > 0) {
+                    locs = empLocRes.rows;
+                }
+            } catch {}
+        }
+
+        return locs;
+    } catch (err) {
+        return [];
+    }
+}
+
 /**
  * POST /api/auth/login
  * Validates credentials, checks for suspicious context / 2FA, creates server-backed session.
@@ -195,13 +260,13 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
         let targetOrg: any = null;
         if (organisation_id) {
             try {
-                const orgRes = await query('SELECT id, name, slug, is_active FROM organisations WHERE id = $1', [organisation_id]);
+                const orgRes = await query('SELECT id, name, slug, portal_slug, is_active FROM organisations WHERE id = $1', [organisation_id]);
                 targetOrg = orgRes.rows[0];
             } catch {}
         } else if (organisation_slug) {
             const cleanSlug = organisation_slug.trim().toLowerCase();
             try {
-                const orgRes = await query('SELECT id, name, slug, is_active FROM organisations WHERE LOWER(slug) = $1', [cleanSlug]);
+                const orgRes = await query('SELECT id, name, slug, portal_slug, is_active FROM organisations WHERE portal_slug = $1 OR LOWER(slug) = $1', [cleanSlug]);
                 if (orgRes.rows.length > 0) {
                     targetOrg = orgRes.rows[0];
                 } else {
@@ -210,6 +275,34 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
                         const orgById = await query('SELECT id, name, slug, is_active FROM organisations WHERE id = $1', [cleanSlug]);
                         targetOrg = orgById.rows[0];
                     }
+                }
+            } catch {
+                try {
+                    const orgRes = await query('SELECT id, name, slug, is_active FROM organisations WHERE LOWER(slug) = $1', [cleanSlug]);
+                    if (orgRes.rows.length > 0) {
+                        targetOrg = orgRes.rows[0];
+                    } else {
+                        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSlug);
+                        if (isUuid) {
+                            const orgById = await query('SELECT id, name, slug, is_active FROM organisations WHERE id = $1', [cleanSlug]);
+                            targetOrg = orgById.rows[0];
+                        }
+                    }
+                } catch {}
+            }
+        }
+
+        // Cross-Organisation Conflict Check: If client is already authenticated in another organisation, require sign-out first
+        const existingAuthHeader = req.headers.authorization;
+        if (existingAuthHeader && existingAuthHeader.startsWith('Bearer ')) {
+            try {
+                const decodedOld = verifyToken(existingAuthHeader.split(' ')[1]);
+                if (decodedOld?.organisation_id && targetOrg && decodedOld.organisation_id !== targetOrg.id) {
+                    return res.status(409).json({
+                        success: false,
+                        code: 'SESSION_ORG_CONFLICT',
+                        message: 'You are currently authenticated in another organisation. Please sign out first before accessing this workspace.'
+                    });
                 }
             } catch {}
         }
@@ -374,15 +467,40 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
             });
         }
 
+        const userLocations = await getUserLocations(user.id, effectiveOrgId, effectiveRole);
+        let activeLocationId: string | null = null;
+        if (req.body.location_id) {
+            const hasLocationAccess = effectiveRole === 'Platform Admin' || userLocations.some(l => l.id === req.body.location_id);
+            if (!hasLocationAccess) {
+                return res.status(403).json({
+                    success: false,
+                    error: {
+                        code: 'LOCATION_FORBIDDEN',
+                        message: 'You do not have access to the specified location.'
+                    }
+                });
+            }
+            activeLocationId = req.body.location_id;
+        } else {
+            if (effectiveRole === 'Owner') {
+                activeLocationId = userLocations.length === 1 ? userLocations[0].id : null;
+            } else if (userLocations.length === 1) {
+                activeLocationId = userLocations[0].id;
+            } else {
+                activeLocationId = null;
+            }
+        }
+
         // Successful Standard Authentication -> Create Server Session
         clearRateLimit(cleanEmail);
-        const session = await createSession(user.id, effectiveOrgId, clientInfo);
+        const session = await createSession(user.id, effectiveOrgId, clientInfo, activeLocationId || undefined);
 
         const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
         const token = generateToken({
             id: user.id,
             email: user.email,
             organisation_id: effectiveOrgId,
+            location_id: activeLocationId || undefined,
             role: effectiveRole,
             session_id: session.sessionId
         });
@@ -398,9 +516,9 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
         });
 
         await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
-             VALUES ($1, $2, NOW(), $3, 'LOGIN_SUCCESS', 'auth', $4, $5)`,
-            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', user.id, session.sessionId, `User logged in from ${clientInfo.approxLocation}`]
+            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details, scope)
+             VALUES ($1, $2, $3, NOW(), $4, 'LOGIN_SUCCESS', 'auth', $5, $6, 'organisation')`,
+            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', activeLocationId, user.id, session.sessionId, `User logged in from ${clientInfo.approxLocation}`]
         ).catch(() => {});
 
         res.json({
@@ -413,8 +531,12 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
                     email: user.email,
                     role: effectiveRole,
                     organisation_id: effectiveOrgId,
-                    organisations: orgs
-                }
+                    location_id: activeLocationId,
+                    organisations: orgs,
+                    locations: userLocations
+                },
+                require_location_selection: !activeLocationId && userLocations.length > 1,
+                available_locations: userLocations
             }
         });
     } catch (err) {
@@ -530,17 +652,22 @@ router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => 
         }
         const user = userRes.rows[0];
 
-        // Create server-side session
-        const session = await createSession(user.id, challenge.org_id || user.org_id, clientInfo);
-
         const effectiveRole = challenge.role || user.role;
         const effectiveOrgId = challenge.org_id || user.org_id;
+
+        // Fetch user locations
+        const userLocations = await getUserLocations(user.id, effectiveOrgId, effectiveRole);
+        const activeLocationId = userLocations.length === 1 ? userLocations[0].id : null;
+
+        // Create server-side session
+        const session = await createSession(user.id, effectiveOrgId, clientInfo, activeLocationId || undefined);
 
         const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
         const authToken = generateToken({
             id: user.id,
             email: user.email,
             organisation_id: effectiveOrgId,
+            location_id: activeLocationId || undefined,
             role: effectiveRole,
             session_id: session.sessionId
         });
@@ -556,9 +683,9 @@ router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => 
         });
 
         await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_type, entity_id, details)
-             VALUES ($1, $2, NOW(), $3, 'SUSPICIOUS_LOGIN_VERIFIED', 'auth', $4, $5)`,
-            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', user.id, session.sessionId, `Suspicious login verified from ${clientInfo.approxLocation}`]
+            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details, scope)
+             VALUES ($1, $2, $3, NOW(), $4, 'SUSPICIOUS_LOGIN_VERIFIED', 'auth', $5, $6, 'organisation')`,
+            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', activeLocationId, user.id, session.sessionId, `Suspicious login verified from ${clientInfo.approxLocation}`]
         ).catch(() => {});
 
         res.json({
@@ -571,8 +698,12 @@ router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => 
                     email: user.email,
                     role: effectiveRole,
                     organisation_id: effectiveOrgId,
-                    organisations: orgs
-                }
+                    location_id: activeLocationId,
+                    organisations: orgs,
+                    locations: userLocations
+                },
+                require_location_selection: !activeLocationId && userLocations.length > 1,
+                available_locations: userLocations
             }
         });
     } catch (err: any) {
@@ -777,13 +908,16 @@ router.post('/verify-2fa', async (req: any, res: any) => {
         const effectiveOrgId = decoded.organisation_id || user.org_id;
         const effectiveRole = decoded.role || user.role;
 
+        const userLocations = await getUserLocations(user.id, effectiveOrgId, effectiveRole);
+        const activeLocationId = userLocations.length === 1 ? userLocations[0].id : null;
+
         // Create server-side session
-        const session = await createSession(user.id, effectiveOrgId, clientInfo);
+        const session = await createSession(user.id, effectiveOrgId, clientInfo, activeLocationId || undefined);
 
         if (user.org_id) {
             await query(
-                'INSERT INTO audit_logs (id, org_id, actor_id, action, entity_type, entity_id, details, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
-                [crypto.randomUUID(), user.org_id, user.id, 'LOGIN_2FA_SUCCESS', 'users', user.id, `2FA verified for ${user.email}`]
+                'INSERT INTO audit_logs (id, org_id, location_id, actor_id, action, entity_type, entity_id, details, timestamp, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), \'organisation\')',
+                [crypto.randomUUID(), user.org_id, activeLocationId, user.id, 'LOGIN_2FA_SUCCESS', 'users', user.id, `2FA verified for ${user.email}`]
             ).catch(() => {});
         }
 
@@ -802,6 +936,7 @@ router.post('/verify-2fa', async (req: any, res: any) => {
             id: user.id,
             email: user.email,
             organisation_id: effectiveOrgId,
+            location_id: activeLocationId || undefined,
             role: effectiveRole,
             session_id: session.sessionId
         });
@@ -816,8 +951,12 @@ router.post('/verify-2fa', async (req: any, res: any) => {
                     email: user.email,
                     role: effectiveRole,
                     organisation_id: effectiveOrgId,
-                    organisations: orgs
-                }
+                    location_id: activeLocationId,
+                    organisations: orgs,
+                    locations: userLocations
+                },
+                require_location_selection: !activeLocationId && userLocations.length > 1,
+                available_locations: userLocations
             }
         });
     } catch (err: any) {
@@ -1166,6 +1305,39 @@ router.post('/reset-password', checkRateLimit, async (req: any, res: any) => {
     }
 });
 
+router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id!;
+        const orgId = req.user?.organisation_id;
+
+        let context = req.securityContext;
+        if (orgId && !context) {
+            context = await resolveUserSecurityContext(userId, orgId, req.user?.location_id, req.user?.role);
+        }
+
+        res.json({
+            success: true,
+            data: {
+                id: userId,
+                email: req.user?.email,
+                organisation_id: orgId || null,
+                role: req.user?.role || 'Employee',
+                location_id: req.user?.location_id || null,
+                security_context: context ? {
+                    org_role: context.orgRole,
+                    active_branch_id: context.activeBranchId,
+                    active_branch_role: context.activeBranchRole,
+                    permissions: Array.from(context.effectivePermissions),
+                    branch_memberships: context.branchMemberships
+                } : null
+            }
+        });
+    } catch (err: any) {
+        console.error('Get me error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to retrieve profile' } });
+    }
+});
+
 router.get('/organisations', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user?.id!;
@@ -1174,6 +1346,78 @@ router.get('/organisations', requireAuth, async (req: AuthRequest, res: Response
     } catch (err: any) {
         console.error('Get organisations error:', err);
         res.status(500).json({ success: false, error: { message: 'Failed to fetch organisations' } });
+    }
+});
+
+router.post('/select-location', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id!;
+        const orgId = req.user?.organisation_id!;
+        const { location_id } = req.body;
+
+        if (!location_id) {
+            return res.status(400).json({ success: false, error: { message: 'location_id is required' } });
+        }
+
+        const userLocations = await getUserLocations(userId, orgId, req.user?.role);
+        const hasAccess = req.user?.role === 'Platform Admin'
+            ? true
+            : userLocations.some(l => l.id === location_id);
+
+        if (!hasAccess) {
+            await query(
+                `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details, scope)
+                 VALUES ($1, $2, $3, NOW(), $4, 'LOCATION_ACCESS_DENIED', 'location', $5, $6, 'organisation')`,
+                [crypto.randomUUID(), orgId, location_id, userId, location_id, `User attempted unauthorized location switch to ${location_id}`]
+            ).catch(() => {});
+
+            return res.status(403).json({
+                success: false,
+                error: {
+                    code: 'LOCATION_FORBIDDEN',
+                    message: 'You do not have access to this location.'
+                }
+            });
+        }
+
+        const selectedLoc = userLocations.find(l => l.id === location_id) || { id: location_id, name: 'Location', slug: location_id };
+
+        if (req.user?.session_id) {
+            await query('UPDATE sessions SET location_id = $1 WHERE id = $2', [location_id, req.user.session_id]).catch(() => {});
+        }
+
+        const newToken = generateToken({
+            id: userId,
+            email: req.user?.email!,
+            organisation_id: orgId,
+            location_id: location_id,
+            role: req.user?.role || 'Employee',
+            session_id: req.user?.session_id
+        });
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details, scope)
+             VALUES ($1, $2, $3, NOW(), $4, 'LOCATION_SELECTED', 'location', $5, $6, 'organisation')`,
+            [crypto.randomUUID(), orgId, location_id, userId, location_id, `User switched active location to ${selectedLoc.name || location_id}`]
+        ).catch(() => {});
+
+        res.json({
+            success: true,
+            data: {
+                token: newToken,
+                location: selectedLoc,
+                user: {
+                    id: userId,
+                    email: req.user?.email,
+                    role: req.user?.role,
+                    organisation_id: orgId,
+                    location_id: location_id
+                }
+            }
+        });
+    } catch (err: any) {
+        console.error('Select location error:', err);
+        res.status(500).json({ success: false, error: { message: 'Failed to select location' } });
     }
 });
 
@@ -1213,17 +1457,32 @@ router.post('/switch-organisation', requireAuth, async (req: AuthRequest, res: R
         const orgInfo = membershipRes.rows[0];
         const newRole = orgInfo.role || req.user?.role || 'Employee';
 
+        const newLocations = await getUserLocations(userId, organisation_id, newRole);
+        let newLocationId: string | null = null;
+        if (newRole === 'Owner') {
+            newLocationId = newLocations.length === 1 ? newLocations[0].id : null;
+        } else if (newLocations.length === 1) {
+            newLocationId = newLocations[0].id;
+        }
+
         if (req.user?.session_id) {
-            await query('UPDATE sessions SET org_id = $1 WHERE id = $2', [organisation_id, req.user.session_id]).catch(() => {});
+            await query('UPDATE sessions SET org_id = $1, location_id = $2 WHERE id = $3', [organisation_id, newLocationId, req.user.session_id]).catch(() => {});
         }
 
         const newToken = generateToken({
             id: userId,
             email: req.user?.email!,
             organisation_id: organisation_id,
+            location_id: newLocationId || undefined,
             role: newRole,
             session_id: req.user?.session_id
         });
+
+        await query(
+            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details, scope)
+             VALUES ($1, $2, $3, NOW(), $4, 'ORGANISATION_SWITCHED', 'organisation', $5, $6, 'organisation')`,
+            [crypto.randomUUID(), organisation_id, newLocationId, userId, organisation_id, `User switched active organisation to ${orgInfo.name}`]
+        ).catch(() => {});
 
         res.json({
             success: true,
@@ -1234,8 +1493,12 @@ router.post('/switch-organisation', requireAuth, async (req: AuthRequest, res: R
                     email: req.user?.email,
                     role: newRole,
                     organisation_id: organisation_id,
-                    organisation_name: orgInfo.name
-                }
+                    organisation_name: orgInfo.name,
+                    location_id: newLocationId,
+                    locations: newLocations
+                },
+                require_location_selection: !newLocationId && newLocations.length > 1,
+                available_locations: newLocations
             }
         });
     } catch (err: any) {

@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -27,7 +27,7 @@ router.get('/', requireAuth, requireTenantContext, async (req: AuthRequest, res:
  * POST /api/organisation/holidays
  * Add or update a public holiday
  */
-router.post('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE, Permission.BRANCH_MANAGE_STAFF]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const userId = req.user?.id!;
@@ -74,7 +74,7 @@ router.post('/', requireAuth, requireTenantContext, requireRole(['Admin', 'Compa
  * DELETE /api/organisation/holidays/:id
  * Remove a public holiday
  */
-router.delete('/:id', requireAuth, requireTenantContext, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
+router.delete('/:id', requireAuth, requireTenantContext, requireAnyPermission([Permission.ORGANISATION_UPDATE, Permission.BRANCH_MANAGE_STAFF]), async (req: AuthRequest, res: Response) => {
     try {
         const orgId = req.user?.organisation_id!;
         const userId = req.user?.id!;

@@ -9,7 +9,8 @@ import {
   ChevronDown, 
   ChevronUp, 
   Send, 
-  Sparkles
+  Sparkles,
+  ShieldAlert
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { getFortnightStart, fmtISO } from '../utils/fortnight';
@@ -40,6 +41,7 @@ export default function TimesheetReview() {
   const [activeDate, setActiveDate] = useState<Date>(new Date());
   const [loading, setLoading] = useState(true);
   const [submissions, setSubmissions] = useState<SubmissionItem[]>([]);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [filterTab, setFilterTab] = useState<'ready' | 'needs_changes' | 'approved' | 'draft' | 'all'>('ready');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -65,10 +67,19 @@ export default function TimesheetReview() {
       const res = await api.get(`/submissions?start_date=${fnIso}`);
       if (res.data?.success) {
         setSubmissions(res.data.data || []);
+        setAccessDenied(false);
       }
     } catch (err: any) {
-      console.error('Failed to load submissions:', err);
-      toast.error('Unable to fetch timesheets for this fortnight.');
+      // A 403 means the active branch context carries no timesheet permission.
+      // That is an expected state (e.g. an org admin with no branch membership),
+      // so it renders as an empty state rather than an error.
+      if (err?.response?.status === 403) {
+        setSubmissions([]);
+        setAccessDenied(true);
+      } else {
+        console.error('Failed to load submissions:', err);
+        toast.error('Unable to fetch timesheets for this fortnight.');
+      }
     } finally {
       setLoading(false);
     }
@@ -203,6 +214,41 @@ export default function TimesheetReview() {
   const fnEndDate = new Date(fnStartDate);
   fnEndDate.setDate(fnEndDate.getDate() + 13);
   const fnDateRangeStr = `${fnStartDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${fnEndDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+  if (accessDenied) {
+    return (
+      <div className="space-y-6 pb-16">
+        <div className="pb-4 border-b border-[var(--border)]">
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
+            Timesheet Approvals
+          </h1>
+          <p className="text-xs text-[var(--muted)] mt-1.5">
+            Branch-scoped review queue
+          </p>
+        </div>
+
+        <div className="flex items-center justify-center py-10">
+          <div className="w-full max-w-md text-center bg-[var(--panel)] border border-[var(--border)] rounded-lg p-8 shadow-sm flex flex-col items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-[var(--panel-subtle)] border border-[var(--border)] text-[var(--muted)] flex items-center justify-center">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="text-sm font-semibold tracking-tight text-[var(--text)]">
+                Branch timesheet access required
+              </h2>
+              <p className="text-xs leading-relaxed text-[var(--muted)]">
+                You do not have branch timesheet access for this location. Please switch to an
+                authorized branch or contact your administrator.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => fetchSubmissions()}>
+              Try again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-16">

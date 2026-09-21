@@ -223,8 +223,10 @@ export default function EmployeeTimesheet() {
   const days: DayRecord[] = portalData?.days || [];
   const totalWorked = portalData?.worked_hours ?? 0;
   const contractedHours = portalData?.contracted_hours ?? 76;
+  const isManagerMode = portalData?.timesheet_entry_mode === 'manager';
   const isLockedOrApproved = lockStatus.timesheet_locked || submission.status === 'Approved' || submission.status === 'Locked';
   const isSubmitted = submission.status === 'Submitted';
+  const isReadOnly = isLockedOrApproved || isManagerMode;
 
   // Format fortnight title
   const [fy, fm, fd] = fnIso.split('-').map(Number);
@@ -245,7 +247,9 @@ export default function EmployeeTimesheet() {
               My Fortnight Timesheet
             </h1>
             {/* Obvious Status Badge */}
-            {submission.status === 'Approved' ? (
+            {isManagerMode ? (
+              <Badge variant="outline" size="md">Manager Managed</Badge>
+            ) : submission.status === 'Approved' ? (
               <Badge variant="success" size="md">✓ Approved</Badge>
             ) : submission.status === 'Submitted' ? (
               <Badge variant="purple" size="md">⏳ Awaiting Approval</Badge>
@@ -300,8 +304,21 @@ export default function EmployeeTimesheet() {
         </div>
       </div>
 
-      {/* 2. Manager Feedback Banner (if rejected) */}
-      {submission.status === 'Rejected' && (
+      {/* 2. Manager Mode Informational Banner */}
+      {isManagerMode && (
+        <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-blue-900 dark:text-blue-300 text-xs flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
+          <div className="space-y-1 flex-1">
+            <div className="font-bold text-sm">Direct Manager Entry Mode Active</div>
+            <p className="text-xs leading-relaxed opacity-95">
+              Timesheets in this organisation are entered directly by your location manager. Your hours are displayed below in read-only mode.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Manager Feedback Banner (if rejected) */}
+      {!isManagerMode && submission.status === 'Rejected' && (
         <div className="p-4 rounded-xl bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)] text-xs space-y-1.5 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
           <div className="space-y-1 flex-1">
@@ -316,7 +333,7 @@ export default function EmployeeTimesheet() {
         </div>
       )}
 
-      {/* 3. Approved Banner */}
+      {/* 4. Approved Banner */}
       {submission.status === 'Approved' && (
         <div className="p-4 rounded-xl bg-[var(--success-light)] border border-[var(--success)]/30 text-[var(--success)] text-xs flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -335,7 +352,7 @@ export default function EmployeeTimesheet() {
         </div>
       )}
 
-      {/* 4. Fortnight Summary Bar & Obvious Primary Action */}
+      {/* 5. Fortnight Summary Bar & Obvious Primary Action */}
       <Card className="p-4 sm:p-5 bg-[var(--panel-subtle)] border-[var(--border)]">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-6">
@@ -358,7 +375,16 @@ export default function EmployeeTimesheet() {
 
           {/* Primary Action Button */}
           <div>
-            {isLockedOrApproved ? (
+            {isManagerMode ? (
+              <Button
+                variant="outline"
+                size="md"
+                disabled
+                leftIcon={<Lock className="w-4 h-4 text-[var(--muted)]" />}
+              >
+                Managed by Location Manager
+              </Button>
+            ) : isLockedOrApproved ? (
               <Button
                 variant="outline"
                 size="md"
@@ -470,7 +496,7 @@ export default function EmployeeTimesheet() {
                       <SmartTimeInput
                         value={form.actual_in}
                         onChange={(val: string) => handleFieldChange(day.date, 'actual_in', val)}
-                        disabled={isLockedOrApproved}
+                        disabled={isReadOnly}
                         placeholder="09:00"
                         className="w-full"
                       />
@@ -484,7 +510,7 @@ export default function EmployeeTimesheet() {
                       <SmartTimeInput
                         value={form.actual_out}
                         onChange={(val: string) => handleFieldChange(day.date, 'actual_out', val)}
-                        disabled={isLockedOrApproved}
+                        disabled={isReadOnly}
                         placeholder="17:00"
                         className="w-full"
                       />
@@ -498,7 +524,7 @@ export default function EmployeeTimesheet() {
                       <select
                         value={form.break_mins}
                         onChange={(e) => handleFieldChange(day.date, 'break_mins', Number(e.target.value))}
-                        disabled={isLockedOrApproved}
+                        disabled={isReadOnly}
                         className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-xs text-[var(--text)]"
                       >
                         <option value={0}>0 min</option>
@@ -517,7 +543,7 @@ export default function EmployeeTimesheet() {
                     </div>
 
                     {/* Actions: Match Schedule + Save */}
-                    {!isLockedOrApproved && (
+                    {!isReadOnly && (
                       <div className="flex items-center gap-2 pt-3 sm:pt-4">
                         {hasRosteredShift && !form.actual_in && (
                           <button
@@ -536,7 +562,7 @@ export default function EmployeeTimesheet() {
                           size="sm"
                           onClick={() => handleSaveDay(day.date)}
                           loading={form.isSaving}
-                          disabled={isLockedOrApproved}
+                          disabled={isReadOnly}
                           leftIcon={form.isSaved ? <CheckCircle2 className="w-3.5 h-3.5 text-[var(--success)]" /> : <Save className="w-3.5 h-3.5" />}
                         >
                           {form.isSaved ? 'Saved' : 'Save'}
