@@ -16,20 +16,15 @@ export interface RiskAssessment {
 }
 
 /**
- * Extracts client IP safely from request headers
+ * Returns the client IP as determined by Express.
+ *
+ * X-Forwarded-For is client-controlled, so it is only honoured through Express's
+ * `trust proxy` setting (configured in index.ts from TRUST_PROXY; on by default in
+ * production, where Railway adds exactly one proxy hop). Reading the header directly
+ * would let any client choose its own rate-limit key.
  */
 export function extractClientIp(req: Request): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) {
-        const ips = (typeof forwarded === 'string' ? forwarded : forwarded[0]).split(',');
-        const candidate = ips[0].trim();
-        if (candidate) return candidate;
-    }
-    const realIp = req.headers['x-real-ip'];
-    if (typeof realIp === 'string' && realIp.trim()) {
-        return realIp.trim();
-    }
-    return req.socket.remoteAddress || '127.0.0.1';
+    return req.ip || req.socket?.remoteAddress || '127.0.0.1';
 }
 
 /**
@@ -116,8 +111,8 @@ export async function assessLoginRisk(
     clientInfo: ClientInfo,
     req?: Request
 ): Promise<RiskAssessment> {
-    // 1. Check for manual/test simulation header
-    if (req?.headers['x-test-simulate-suspicious'] === 'true') {
+    // 1. Test-only hook to force the challenge path. Ignored outside NODE_ENV=test.
+    if (process.env.NODE_ENV === 'test' && req?.headers['x-test-simulate-suspicious'] === 'true') {
         return {
             isSuspicious: true,
             reason: 'Simulated suspicious login condition for testing',

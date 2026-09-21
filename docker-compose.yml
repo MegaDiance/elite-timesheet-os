@@ -12,5 +12,20 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # Disposable PostgreSQL used by the backend test suite (`npm test`).
+  # Matches the Railway production major version. No volume: data lives in
+  # tmpfs and is thrown away when the container stops.
+  db-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: simplehours_test
+      POSTGRES_PASSWORD: simplehours_test
+      POSTGRES_DB: simplehours_test
+    ports:
+      - "55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+
 volumes:
   pgdata:

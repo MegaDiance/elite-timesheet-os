@@ -9,6 +9,27 @@ import { revokeAllUserSessions } from '../services/sessionService';
 const router = Router();
 router.use(requireAuth, requireTenantContext);
 
+/**
+ * Roles an organisation user may set on an employee's login. 'Platform Admin' (or any
+ * other string) can never be granted through a tenant API: platform operators are
+ * provisioned only by the bootstrap script. Only a Company Admin/Owner may grant
+ * 'Company Admin'; everyone else can only create 'Employee' logins.
+ */
+const TENANT_GRANTABLE_ROLES = ['Employee', 'Manager', 'Company Admin'] as const;
+
+function resolveGrantableRole(callerRole: string | undefined, requested: unknown): { ok: true; role: string } | { ok: false } {
+    const wanted = requested === undefined || requested === null || requested === '' ? 'Employee' : requested;
+    if (typeof wanted !== 'string' || !(TENANT_GRANTABLE_ROLES as readonly string[]).includes(wanted)) {
+        return { ok: false };
+    }
+    const caller = (callerRole || '').trim().toLowerCase();
+    const callerIsOrgAdmin = caller === 'company admin' || caller === 'owner';
+    if (!callerIsOrgAdmin) {
+        return { ok: true, role: 'Employee' };
+    }
+    return { ok: true, role: wanted };
+}
+
 // Get all employees for the organization
 router.get('/', requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
     try {
@@ -91,12 +112,12 @@ router.post('/', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STA
                 });
             }
 
-            userId = crypto.randomUUID();
-            const callerRole = req.user?.role || 'Employee';
-            let userRole = role || 'Employee';
-            if (!['Company Admin', 'Platform Admin'].includes(callerRole) && userRole !== 'Employee') {
-                userRole = 'Employee';
+            const grant = resolveGrantableRole(req.user?.role, role);
+            if (!grant.ok) {
+                return res.status(400).json({ success: false, error: { code: 'INVALID_ROLE', message: 'Role must be one of: Employee, Manager, Company Admin.' } });
             }
+            const userRole = grant.role;
+            userId = crypto.randomUUID();
 
             await query(
                 `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -241,12 +262,12 @@ router.put('/:id', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_S
                 });
             }
 
-            userId = crypto.randomUUID();
-            const callerRole = req.user?.role || 'Employee';
-            let userRole = role || 'Employee';
-            if (!['Company Admin', 'Platform Admin'].includes(callerRole) && userRole !== 'Employee') {
-                userRole = 'Employee';
+            const grant = resolveGrantableRole(req.user?.role, role);
+            if (!grant.ok) {
+                return res.status(400).json({ success: false, error: { code: 'INVALID_ROLE', message: 'Role must be one of: Employee, Manager, Company Admin.' } });
             }
+            const userRole = grant.role;
+            userId = crypto.randomUUID();
 
             await query(
                 `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,

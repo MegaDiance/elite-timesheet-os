@@ -182,7 +182,7 @@ export const OrgLogin: React.FC = () => {
       });
 
       if (res.data?.require_login_verification) {
-        navigate(`/verify-login?email=${encodeURIComponent(res.data.email || email.trim())}`);
+        navigate(`/verify-login?challenge=${encodeURIComponent(res.data.challenge_id || '')}`);
         return;
       }
 

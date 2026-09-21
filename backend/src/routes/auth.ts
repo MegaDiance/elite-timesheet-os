@@ -88,6 +88,56 @@ function maskEmail(email: string): string {
     return `${name.slice(0, 2)}***${name.slice(-1)}@${domain}`;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function sha256Hex(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function hashesEqual(a: string, b: string): boolean {
+    const bufA = Buffer.from(a || '', 'utf8');
+    const bufB = Buffer.from(b || '', 'utf8');
+    return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Issues an email one-time code and a short-lived 2fa_pending token bound to this user.
+ * Used by every path that has verified the password (login, suspicious-login verification)
+ * so that no path can reach a full session without the second factor.
+ */
+async function beginTwoFactorStep(user: any, orgId: string | undefined, role: string | undefined): Promise<{ status: number; body: any }> {
+    const code = Math.floor(100000 + crypto.randomInt(900000)).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    await query('DELETE FROM two_factor_codes WHERE user_id = $1', [user.id]);
+    await query(
+        'INSERT INTO two_factor_codes (id, user_id, code_hash, expires_at, attempts) VALUES ($1, $2, $3, $4, 0)',
+        [crypto.randomUUID(), user.id, sha256Hex(code), expiresAt]
+    );
+
+    const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
+    const emailResult = await sendTransactionalEmail({
+        to: user.email,
+        subject: emailTemplate.subject,
+        html: emailTemplate.html,
+        text: emailTemplate.text
+    });
+
+    if (!emailResult.success) {
+        await query('DELETE FROM two_factor_codes WHERE user_id = $1', [user.id]).catch(() => {});
+        return {
+            status: 503,
+            body: { success: false, error: { code: 'EMAIL_DELIVERY_FAILED', message: 'We could not send your verification code. Please try again shortly.' } }
+        };
+    }
+
+    const tempToken = generateTempToken({ id: user.id, email: user.email, organisation_id: orgId, role });
+    return {
+        status: 200,
+        body: { success: true, require_2fa: true, temp_token: tempToken, masked_email: maskEmail(user.email) }
+    };
+}
+
 async function getUserOrganisations(userId: string, currentOrgId?: string, userRole?: string): Promise<any[]> {
     try {
         if (userRole === 'Platform Admin') {
@@ -417,6 +467,7 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
             return res.json({
                 success: true,
                 require_login_verification: true,
+                challenge_id: challenge.challengeId,
                 masked_email: maskEmail(user.email),
                 message: 'Sign-in from a new location requires confirmation. Please check your email inbox.'
             });
@@ -433,38 +484,8 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
         // Two-Step Verification Check (default: disabled until user explicitly enables it)
         const is2FAEnabled = has2FATable && user.two_factor_enabled === true;
         if (is2FAEnabled) {
-            const code = Math.floor(100000 + crypto.randomInt(900000)).toString();
-            const codeHash = crypto.createHash('sha256').update(code).digest('hex');
-            const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
-
-            await query('DELETE FROM two_factor_codes WHERE user_id = $1', [user.id]);
-            await query(
-                'INSERT INTO two_factor_codes (id, user_id, code_hash, expires_at, attempts) VALUES ($1, $2, $3, $4, 0)',
-                [crypto.randomUUID(), user.id, codeHash, expiresAt]
-            );
-
-            const emailTemplate = buildTwoFactorEmailTemplate({ code, recipientEmail: user.email });
-            const emailResult = await sendTransactionalEmail({
-                to: user.email,
-                subject: emailTemplate.subject,
-                html: emailTemplate.html,
-                text: emailTemplate.text
-            });
-
-            const tempToken = generateTempToken({
-                id: user.id,
-                email: user.email,
-                organisation_id: effectiveOrgId,
-                role: effectiveRole
-            });
-
-            return res.json({
-                success: true,
-                require_2fa: true,
-                temp_token: tempToken,
-                masked_email: maskEmail(user.email),
-                delivery_notice: emailResult.reroutedTo ? `Notice: Delivered to ${emailResult.reroutedTo}` : undefined
-            });
+            const step = await beginTwoFactorStep(user, effectiveOrgId, effectiveRole);
+            return res.status(step.status).json(step.body);
         }
 
         const userLocations = await getUserLocations(user.id, effectiveOrgId, effectiveRole);
@@ -547,119 +568,113 @@ router.post('/login', checkRateLimit, async (req: any, res: any) => {
 
 /**
  * POST /api/auth/verify-login
- * Confirms a suspicious login challenge using a token or 6-digit code.
+ * Confirms a suspicious-login challenge.
+ *
+ * The request must be bound to one specific challenge, by either:
+ *   - `token`: the 256-bit single-use token from the emailed link, or
+ *   - `challenge_id` + `code`: the id returned to the client that passed the password step,
+ *     plus the 6-digit code from the email.
+ * A bare code (or email + code) is never accepted, codes are compared by hash only, each
+ * challenge allows 5 attempts and is consumed atomically. If the user has two-factor
+ * authentication enabled, success leads to the 2FA step, not directly to a session.
  */
 router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => {
-    const { token, code, email, challenge_id } = req.body;
-    if (!token && !code) {
-        return res.status(400).json({ success: false, error: { message: 'Verification token or code is required.' } });
-    }
-
+    const { token, code, challenge_id } = req.body || {};
     const clientInfo = parseClientInfo(req);
+    const invalidChallenge = () => res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_CHALLENGE', message: 'This verification request is invalid, expired or already used. Please sign in again.' }
+    });
 
     try {
-        let challengeRes: any;
-        if (token && typeof token === 'string') {
-            const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
-            challengeRes = await query(
-                `SELECT * FROM login_verification_challenges 
-                 WHERE token_hash = $1 AND consumed = false AND expires_at > NOW()`,
-                [tokenHash]
-            );
-        } else if (code && typeof code === 'string') {
-            const rawCode = code.trim();
-            const codeHash = crypto.createHash('sha256').update(rawCode).digest('hex');
+        let challenge: any = null;
 
-            if (challenge_id) {
-                challengeRes = await query(
-                    `SELECT * FROM login_verification_challenges 
-                     WHERE id = $1 AND consumed = false AND expires_at > NOW()`,
-                    [challenge_id]
-                );
-            } else if (email && typeof email === 'string') {
-                challengeRes = await query(
-                    `SELECT c.* FROM login_verification_challenges c
-                     JOIN users u ON c.user_id = u.id
-                     WHERE LOWER(u.email) = $1 AND c.consumed = false AND c.expires_at > NOW()
-                     ORDER BY c.created_at DESC LIMIT 1`,
-                    [email.trim().toLowerCase()]
-                );
-            } else {
-                challengeRes = await query(
-                    `SELECT * FROM login_verification_challenges 
-                     WHERE (verification_code = $1 OR verification_code = $2) AND consumed = false AND expires_at > NOW()
-                     ORDER BY created_at DESC LIMIT 1`,
-                    [codeHash, rawCode]
-                );
+        if (typeof token === 'string' && token.trim()) {
+            const found = await query(
+                `SELECT * FROM login_verification_challenges
+                 WHERE token_hash = $1 AND consumed = false AND expires_at > NOW()`,
+                [sha256Hex(token.trim())]
+            );
+            challenge = found.rows[0] || null;
+            if (!challenge) {
+                recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+                return invalidChallenge();
+            }
+        } else if (typeof challenge_id === 'string' && UUID_PATTERN.test(challenge_id) && typeof code === 'string' && /^\d{6}$/.test(code.trim())) {
+            const found = await query(
+                `SELECT * FROM login_verification_challenges
+                 WHERE id = $1 AND consumed = false AND expires_at > NOW()`,
+                [challenge_id]
+            );
+            challenge = found.rows[0] || null;
+            if (!challenge) {
+                recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+                return invalidChallenge();
             }
 
-            if (challengeRes && challengeRes.rows.length > 0) {
-                const targetChallenge = challengeRes.rows[0];
-                const currentAttempts = Number(targetChallenge.attempts || 0);
+            const attempts = Number(challenge.attempts || 0);
+            if (attempts >= 5) {
+                await query('UPDATE login_verification_challenges SET consumed = true WHERE id = $1', [challenge.id]);
+                return res.status(429).json({
+                    success: false,
+                    error: { code: 'CHALLENGE_LOCKED', message: 'Too many incorrect attempts. Please sign in again.' }
+                });
+            }
 
-                if (currentAttempts >= 5) {
-                    await query('UPDATE login_verification_challenges SET consumed = true WHERE id = $1', [targetChallenge.id]).catch(() => {});
-                    recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+            if (!hashesEqual(challenge.verification_code, sha256Hex(code.trim()))) {
+                const nextAttempts = attempts + 1;
+                await query(
+                    'UPDATE login_verification_challenges SET attempts = $1, consumed = $2 WHERE id = $3',
+                    [nextAttempts, nextAttempts >= 5, challenge.id]
+                );
+                recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+                if (nextAttempts >= 5) {
                     return res.status(429).json({
                         success: false,
-                        error: { message: 'Too many incorrect attempts. This verification challenge has been invalidated. Please sign in again.' }
+                        error: { code: 'CHALLENGE_LOCKED', message: 'Too many incorrect attempts. Please sign in again.' }
                     });
                 }
-
-                const matches = (targetChallenge.verification_code === codeHash || targetChallenge.verification_code === rawCode);
-                if (!matches) {
-                    const nextAttempts = currentAttempts + 1;
-                    if (nextAttempts >= 5) {
-                        await query('UPDATE login_verification_challenges SET consumed = true, attempts = $1 WHERE id = $2', [nextAttempts, targetChallenge.id]).catch(() => {});
-                        recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
-                        return res.status(429).json({
-                            success: false,
-                            error: { message: 'Too many incorrect attempts. This verification challenge has been invalidated. Please sign in again.' }
-                        });
-                    }
-
-                    await query('UPDATE login_verification_challenges SET attempts = $1 WHERE id = $2', [nextAttempts, targetChallenge.id]).catch(() => {});
-                    recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
-                    const remaining = 5 - nextAttempts;
-                    return res.status(400).json({
-                        success: false,
-                        error: {
-                            message: `Incorrect verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`
-                        }
-                    });
-                }
+                const remaining = 5 - nextAttempts;
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'INVALID_CODE', message: `Incorrect verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` }
+                });
             }
-        }
-
-        if (!challengeRes || challengeRes.rows.length === 0) {
-            recordFailedAttempt(req.rateLimitKey, req.rateLimitAttempts);
+        } else {
             return res.status(400).json({
                 success: false,
-                error: { message: 'Invalid, expired, or already used verification challenge. Please sign in again.' }
+                error: { code: 'CHALLENGE_REQUIRED', message: 'Open the link in your email, or enter the 6-digit code on the sign-in page that requested it.' }
             });
         }
 
-        const challenge = challengeRes.rows[0];
-
-        // Mark challenge as consumed
-        await query('UPDATE login_verification_challenges SET consumed = true WHERE id = $1', [challenge.id]);
+        // Atomic single use: only one request can consume the challenge.
+        const consumed = await query(
+            'UPDATE login_verification_challenges SET consumed = true WHERE id = $1 AND consumed = false RETURNING id',
+            [challenge.id]
+        );
+        if (consumed.rows.length === 0) {
+            return invalidChallenge();
+        }
         clearRateLimit(req.rateLimitKey);
 
-        // Fetch user
         const userRes = await query('SELECT * FROM users WHERE id = $1 AND is_active = true', [challenge.user_id]);
         if (userRes.rows.length === 0) {
-            return res.status(401).json({ success: false, error: { message: 'User account is not active.' } });
+            return invalidChallenge();
         }
         const user = userRes.rows[0];
 
         const effectiveRole = challenge.role || user.role;
         const effectiveOrgId = challenge.org_id || user.org_id;
 
-        // Fetch user locations
+        // The suspicious-login check never replaces the second factor.
+        if (user.two_factor_enabled === true) {
+            const step = await beginTwoFactorStep(user, effectiveOrgId, effectiveRole);
+            return res.status(step.status).json(step.body);
+        }
+
         const userLocations = await getUserLocations(user.id, effectiveOrgId, effectiveRole);
         const activeLocationId = userLocations.length === 1 ? userLocations[0].id : null;
 
-        // Create server-side session
         const session = await createSession(user.id, effectiveOrgId, clientInfo, activeLocationId || undefined);
 
         const orgs = await getUserOrganisations(user.id, effectiveOrgId, effectiveRole);
@@ -685,7 +700,7 @@ router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => 
         await query(
             `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details, scope)
              VALUES ($1, $2, $3, NOW(), $4, 'SUSPICIOUS_LOGIN_VERIFIED', 'auth', $5, $6, 'organisation')`,
-            [crypto.randomUUID(), effectiveOrgId || '123e4567-e89b-12d3-a456-000000000000', activeLocationId, user.id, session.sessionId, `Suspicious login verified from ${clientInfo.approxLocation}`]
+            [crypto.randomUUID(), effectiveOrgId, activeLocationId, user.id, session.sessionId, `Suspicious login verified from ${clientInfo.approxLocation}`]
         ).catch(() => {});
 
         res.json({
@@ -708,7 +723,7 @@ router.post('/verify-login', checkRateLimit, async (req: any, res: Response) => 
         });
     } catch (err: any) {
         console.error('Verify login error:', err);
-        res.status(500).json({ success: false, error: { message: 'Internal server error during login verification.' } });
+        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Sign-in verification failed. Please try again.' } });
     }
 });
 

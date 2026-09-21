@@ -83,41 +83,34 @@ export default function AcceptLocationInvite() {
         setError('Passwords do not match.');
         return;
       }
-    } else {
-      if (!password) {
-        setError('Please enter your existing password to link this location.');
-        return;
-      }
     }
 
     setSubmitting(true);
     setError(null);
 
     try {
+      // Accepting never signs anyone in. Existing accounts must already be signed in
+      // (the API client sends the current session); new accounts sign in afterwards.
       const res = await api.post('/locations/accept-invite', {
         token: token.trim(),
-        full_name: fullName.trim() || undefined,
-        password: password
+        password: inviteData?.user_exists ? undefined : password
       });
 
-      if (res.data?.success && res.data?.data) {
-        const { token: sessionToken, user } = res.data.data;
-        localStorage.setItem('token', sessionToken);
-        localStorage.setItem('user', JSON.stringify(user));
-        if (user.organisation_id) {
-          localStorage.setItem('current_org_id', user.organisation_id);
+      if (res.data?.success) {
+        if (res.data.data?.requires_sign_in) {
+          navigate('/login', { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
         }
-        if (inviteData?.org_slug) {
-          localStorage.setItem('last_org_slug', inviteData.org_slug);
-        }
-        window.dispatchEvent(new Event('auth-change'));
-
-        navigate('/dashboard');
       } else {
         setError(res.data?.error?.message || 'Failed to accept invitation.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to accept invitation.');
+      if (err.response?.data?.error?.code === 'SIGN_IN_REQUIRED') {
+        setError('Please sign in to your existing account first, then open the invitation link from your email again.');
+      } else {
+        setError(err.response?.data?.error?.message || 'Failed to accept invitation.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -246,19 +239,9 @@ export default function AcceptLocationInvite() {
               </>
             ) : (
               <div>
-                <p className="text-xs text-[var(--muted)] mb-3 leading-relaxed">
-                  An existing account was detected for this email. Please enter your password to link your profile to <strong>{inviteData.location_name}</strong>.
+                <p className="text-xs text-[var(--muted)] leading-relaxed">
+                  You already have a SimpleHours account for this email. Make sure you are signed in to that account in this browser, then accept to join <strong>{inviteData.location_name}</strong>.
                 </p>
-                <Input
-                  label="Current Password *"
-                  type="password"
-                  placeholder="Enter your existing account password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoFocus
-                  leftIcon={<Lock className="w-4 h-4" />}
-                />
               </div>
             )}
 

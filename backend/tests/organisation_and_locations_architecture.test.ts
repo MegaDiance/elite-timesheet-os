@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { getTestOutbox } from '../src/services/emailService';
 import app from '../src/index';
 import { newDb, DataType } from 'pg-mem';
 import { setPool, query } from '../src/services/db';
@@ -615,9 +616,12 @@ describe('SimpleHours: Organisation, Locations, Roles & Custom URLs Architecture
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.data.invite_url).toBeDefined();
-            expect(res.body.data.token).toBeDefined();
-            inviteToken = res.body.data.token;
+            // The token is delivered only by email, never in the API response.
+            expect(res.body.data.invite_url).toBeUndefined();
+            expect(res.body.data.token).toBeUndefined();
+            const mail = getTestOutbox().filter((m) => m.to === 'northmanager@apex.com').pop();
+            inviteToken = /token=([a-f0-9]{64})/.exec(mail?.text || '')?.[1] as string;
+            expect(inviteToken).toBeDefined();
         });
 
         it('Invited manager verifies token via GET /api/locations/verify-invite', async () => {
@@ -640,9 +644,9 @@ describe('SimpleHours: Organisation, Locations, Roles & Custom URLs Architecture
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.data.token).toBeDefined();
-            expect(res.body.data.user.role).toBe('Manager');
-            expect(res.body.data.user.location_id).toBe(newLocationId);
+            // Accepting an invitation never signs anyone in.
+            expect(res.body.data.token).toBeUndefined();
+            expect(res.body.data.requires_sign_in).toBe(true);
         });
 
         it('Owner deactivates and reactivates location', async () => {

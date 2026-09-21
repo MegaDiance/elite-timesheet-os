@@ -58,14 +58,14 @@ describe('Transactional Email Service Tests', () => {
 
             expect(result.success).toBe(false);
             expect(result.provider).toBe('resend');
-            expect(result.error).toContain('RESEND_API_KEY is not configured');
+            expect(result.error).toBe('NOT_CONFIGURED');
         } finally {
             process.env.EMAIL_PROVIDER = originalProvider;
             if (originalKey) process.env.RESEND_API_KEY = originalKey;
         }
     });
 
-    it('should parse and report error details from Resend API when HTTP response is not ok', async () => {
+    it('should report a generic failure (and never reroute) when Resend rejects the message', async () => {
         const originalProvider = process.env.EMAIL_PROVIDER;
         const originalKey = process.env.RESEND_API_KEY;
         const originalFetch = global.fetch;
@@ -93,7 +93,8 @@ describe('Transactional Email Service Tests', () => {
 
             expect(result.success).toBe(false);
             expect(result.provider).toBe('resend');
-            expect(result.error).toContain('domain elitetimesheet.com is not verified');
+            // Provider response text is never surfaced; only a generic code.
+            expect(result.error).toBe('PROVIDER_REJECTED');
         } finally {
             process.env.EMAIL_PROVIDER = originalProvider;
             if (originalKey) process.env.RESEND_API_KEY = originalKey;

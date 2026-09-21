@@ -131,7 +131,7 @@ export default function Login() {
       });
 
       if (response.data.require_login_verification) {
-        navigate(`/verify-login?email=${encodeURIComponent(response.data.email || email.trim())}`);
+        navigate(`/verify-login?challenge=${encodeURIComponent(response.data.challenge_id || '')}`);
         return;
       }
 

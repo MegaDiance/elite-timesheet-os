@@ -28,7 +28,7 @@ const keyCandidates = [
     path.join(__dirname, '../../key.rtf'),
 ];
 
-for (const kPath of process.env.NODE_ENV === 'production' ? [] : keyCandidates) {
+for (const kPath of process.env.NODE_ENV === 'development' ? keyCandidates : []) {
     if (fs.existsSync(kPath) && !process.env.RESEND_API_KEY) {
         const content = fs.readFileSync(kPath, 'utf8');
         const match = content.match(/re_[a-zA-Z0-9_]+/);
@@ -41,6 +41,11 @@ for (const kPath of process.env.NODE_ENV === 'production' ? [] : keyCandidates) 
 }
 
 const app = express();
+
+// Only trust X-Forwarded-For from known proxy hops. Railway terminates TLS in one proxy,
+// so production defaults to 1 hop. Locally (no proxy) the header is ignored entirely.
+const trustProxy = process.env.TRUST_PROXY ?? (process.env.NODE_ENV === 'production' ? '1' : 'false');
+app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true');
 
 // Secure CORS configuration
 const publicUrl = process.env.PUBLIC_URL

@@ -1,7 +1,8 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query, withTransaction } from '../services/db';
-import { hashPassword, comparePassword, generateToken } from '../services/auth';
+import { hashPassword, verifyToken } from '../services/auth';
+import { validateSession } from '../services/sessionService';
 import { requireAuth, requireTenantContext, requireOrgOwner, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
 import { sendTransactionalEmail } from '../services/emailService';
 
@@ -23,9 +24,9 @@ router.get(['/invitations/verify', '/verify-invite'], async (req: any, res: Resp
              FROM location_invitations li
              JOIN locations l ON li.location_id = l.id
              JOIN organisations o ON li.org_id = o.id
-             WHERE (li.token = $1 OR li.token_hash = $2)
+             WHERE li.token_hash = $1
              LIMIT 1`,
-            [token, tokenHash]
+            [tokenHash]
         );
 
         if (inviteRes.rows.length === 0) {
@@ -49,7 +50,7 @@ router.get(['/invitations/verify', '/verify-invite'], async (req: any, res: Resp
         let userExists = false;
         let userName = null;
         try {
-            const userRes = await query('SELECT id FROM users WHERE LOWER(email) = $1', [invite.email.toLowerCase()]);
+            const userRes = await query("SELECT id FROM users WHERE LOWER(email) = $1 AND password_hash IS NOT NULL AND password_hash <> 'PENDING_SETUP'", [invite.email.toLowerCase()]);
             userExists = userRes.rows.length > 0;
             if (userExists) {
                 const empRes = await query('SELECT full_name FROM employees WHERE user_id = $1', [userRes.rows[0].id]);
@@ -76,24 +77,49 @@ router.get(['/invitations/verify', '/verify-invite'], async (req: any, res: Resp
 });
 
 /**
- * Public: Accept a location invitation
+ * Resolves the signed-in user from the Authorization header, requiring a live server session.
+ * Returns null when the request is not authenticated.
+ */
+async function sessionUserFromRequest(req: any): Promise<{ id: string; email: string } | null> {
+    const header = req.headers?.authorization;
+    if (!header || !header.startsWith('Bearer ')) return null;
+    let decoded: any;
+    try {
+        decoded = verifyToken(header.slice(7));
+    } catch {
+        return null;
+    }
+    if (!decoded?.id || !decoded?.session_id || decoded.scope === '2fa_pending') return null;
+    const validation = await validateSession(decoded.session_id);
+    if (!validation.valid || validation.session?.user_id !== decoded.id) return null;
+    const userRes = await query('SELECT id, email FROM users WHERE id = $1 AND is_active = true', [decoded.id]);
+    return userRes.rows[0] || null;
+}
+
+/**
+ * Public: Accept a location invitation.
+ *
+ * Possessing the invitation token never authenticates anyone:
+ * - If an account already exists for the invited email, the caller must already be signed in
+ *   as that account (live session); otherwise 401 SIGN_IN_REQUIRED.
+ * - If no usable account exists, the caller sets a password and must then sign in normally.
+ * No login token is ever returned from this endpoint.
  */
 router.post(['/invitations/accept', '/accept-invite'], async (req: any, res: Response) => {
     try {
-        const { token, full_name, password } = req.body;
-        if (!token) {
+        const { token, password } = req.body || {};
+        if (!token || typeof token !== 'string') {
             return res.status(400).json({ success: false, error: { message: 'Invitation token is required.' } });
         }
 
         const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
         const inviteRes = await query(
-            `SELECT li.*, l.name as location_name, o.name as org_name
+            `SELECT li.*, l.name as location_name
              FROM location_invitations li
-             JOIN locations l ON li.location_id = l.id
-             JOIN organisations o ON (li.org_id = o.id OR l.org_id = o.id)
-             WHERE (li.token = $1 OR li.token_hash = $2)
+             JOIN locations l ON li.location_id = l.id AND l.org_id = li.org_id
+             WHERE li.token_hash = $1
              LIMIT 1`,
-            [token.trim(), tokenHash]
+            [tokenHash]
         );
 
         if (inviteRes.rows.length === 0) {
@@ -105,124 +131,98 @@ router.post(['/invitations/accept', '/accept-invite'], async (req: any, res: Res
         if (invite.accepted_at) {
             return res.status(400).json({ success: false, error: { code: 'INVITATION_ALREADY_ACCEPTED', message: 'This invitation has already been accepted.' } });
         }
-
         if (invite.cancelled_at) {
             return res.status(400).json({ success: false, error: { code: 'INVITATION_CANCELLED', message: 'This invitation has been revoked.' } });
         }
-
         if (new Date(invite.expires_at) < new Date()) {
             return res.status(400).json({ success: false, error: { code: 'INVITATION_EXPIRED', message: 'This invitation has expired.' } });
         }
 
         const cleanEmail = invite.email.trim().toLowerCase();
-        let targetUserId: string;
-
-        // Check if user already exists
         const existingUserRes = await query('SELECT id, password_hash FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+        const existingUser = existingUserRes.rows[0];
+        const hasUsableAccount = Boolean(existingUser && existingUser.password_hash && existingUser.password_hash !== 'PENDING_SETUP');
 
-        if (existingUserRes.rows.length > 0) {
-            // Existing user: verify credentials if password supplied, or link directly
-            const existingUser = existingUserRes.rows[0];
-            targetUserId = existingUser.id;
+        let targetUserId: string;
+        let newPasswordHash: string | null = null;
 
-            if (password) {
-                const isValid = await comparePassword(password, existingUser.password_hash);
-                if (!isValid) {
-                    return res.status(401).json({ success: false, error: { message: 'Invalid existing account password.' } });
-                }
+        if (hasUsableAccount) {
+            const sessionUser = await sessionUserFromRequest(req);
+            if (!sessionUser) {
+                return res.status(401).json({
+                    success: false,
+                    error: { code: 'SIGN_IN_REQUIRED', message: 'An account already exists for this email. Sign in to that account, then open the invitation link again.' }
+                });
             }
+            if (sessionUser.id !== existingUser.id) {
+                return res.status(403).json({
+                    success: false,
+                    error: { code: 'INVITATION_EMAIL_MISMATCH', message: 'This invitation was sent to a different email address than the account you are signed in with.' }
+                });
+            }
+            targetUserId = existingUser.id;
         } else {
-            // New user: password is required
-            if (!password || password.length < 8) {
+            if (!password || typeof password !== 'string' || password.length < 8) {
                 return res.status(400).json({ success: false, error: { message: 'A secure password of at least 8 characters is required.' } });
             }
-            const effectiveName = (full_name && full_name.trim()) || cleanEmail.split('@')[0];
-
-            targetUserId = crypto.randomUUID();
-            const passHash = await hashPassword(password);
-
-            await query(
-                `INSERT INTO users (id, org_id, email, password_hash, role, is_active)
-                 VALUES ($1, $2, $3, $4, $5, true)`,
-                [targetUserId, invite.org_id, cleanEmail, passHash, invite.role === 'manager' ? 'Manager' : 'Employee']
-            );
+            newPasswordHash = await hashPassword(password);
+            targetUserId = existingUser ? existingUser.id : crypto.randomUUID();
         }
 
-        // Add to organisation_members if not present
-        await query(
-            `INSERT INTO organisation_members (id, organisation_id, user_id, role)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (organisation_id, user_id) DO NOTHING`,
-            [crypto.randomUUID(), invite.org_id, targetUserId, invite.role === 'manager' ? 'Manager' : 'Employee']
-        ).catch(() => {});
+        const accepted = await withTransaction(async (tx) => {
+            // Atomic single use: the first request to flip accepted_at wins.
+            const claim = await tx(
+                `UPDATE location_invitations SET accepted_at = NOW()
+                 WHERE id = $1 AND accepted_at IS NULL AND cancelled_at IS NULL AND expires_at > NOW()
+                 RETURNING id`,
+                [invite.id]
+            );
+            if (claim.rows.length === 0) return false;
 
-        // Add to location_memberships
-        try {
-            await query(
+            const legacyOrgRole = invite.role === 'manager' ? 'Manager' : 'Employee';
+            if (!existingUser) {
+                await tx(
+                    `INSERT INTO users (id, org_id, email, password_hash, role, is_active)
+                     VALUES ($1, $2, $3, $4, $5, true)`,
+                    [targetUserId, invite.org_id, cleanEmail, newPasswordHash, legacyOrgRole]
+                );
+            } else if (newPasswordHash) {
+                await tx('UPDATE users SET password_hash = $1, is_active = true WHERE id = $2', [newPasswordHash, targetUserId]);
+            }
+
+            await tx(
+                `INSERT INTO organisation_members (id, organisation_id, user_id, role)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (organisation_id, user_id) DO NOTHING`,
+                [crypto.randomUUID(), invite.org_id, targetUserId, legacyOrgRole]
+            );
+
+            await tx(
                 `INSERT INTO location_memberships (id, location_id, user_id, role, is_active)
                  VALUES ($1, $2, $3, $4, true)
-                 ON CONFLICT (user_id, location_id) DO UPDATE SET role = EXCLUDED.role, is_active = true`,
+                 ON CONFLICT (location_id, user_id) DO UPDATE SET role = EXCLUDED.role, is_active = true`,
                 [crypto.randomUUID(), invite.location_id, targetUserId, invite.role]
             );
-        } catch {
-            try {
-                await query(
-                    `INSERT INTO location_memberships (id, location_id, user_id, role, is_active)
-                     VALUES ($1, $2, $3, $4, true)
-                     ON CONFLICT (location_id, user_id) DO UPDATE SET role = EXCLUDED.role, is_active = true`,
-                    [crypto.randomUUID(), invite.location_id, targetUserId, invite.role]
-                );
-            } catch {
-                await query(
-                    `INSERT INTO location_memberships (id, location_id, user_id, role)
-                     VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (user_id, location_id) DO UPDATE SET role = EXCLUDED.role`,
-                    [crypto.randomUUID(), invite.location_id, targetUserId, invite.role]
-                ).catch(() => {});
-            }
-        }
 
-        // Mark invitation accepted
-        await query(
-            'UPDATE location_invitations SET accepted_at = NOW() WHERE id = $1',
-            [invite.id]
-        );
-
-        // Audit log
-        await query(
-            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, user_id, action, entity_type, entity_id, details)
-             VALUES ($1, $2, $3, NOW(), $4, $4, 'LOCATION_INVITATION_ACCEPTED', 'location_membership', $5, $6)`,
-            [
-                crypto.randomUUID(),
-                invite.org_id,
-                invite.location_id,
-                targetUserId,
-                invite.location_id,
-                `User ${cleanEmail} joined ${invite.location_name} as ${invite.role}`
-            ]
-        ).catch(() => {});
-
-        const sessionToken = generateToken({
-            id: targetUserId,
-            email: cleanEmail,
-            organisation_id: invite.org_id,
-            location_id: invite.location_id,
-            role: invite.role === 'manager' ? 'Manager' : 'Employee'
+            await tx(
+                `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_type, entity_id, details)
+                 VALUES ($1, $2, $3, NOW(), $4, 'LOCATION_INVITATION_ACCEPTED', 'location_membership', $5, $6)`,
+                [crypto.randomUUID(), invite.org_id, invite.location_id, targetUserId, invite.location_id,
+                 `User ${cleanEmail} joined ${invite.location_name} as ${invite.role}`]
+            );
+            return true;
         });
+
+        if (!accepted) {
+            return res.status(400).json({ success: false, error: { code: 'INVITATION_NOT_AVAILABLE', message: 'This invitation is no longer available.' } });
+        }
 
         res.json({
             success: true,
-            data: {
-                token: sessionToken,
-                user: {
-                    id: targetUserId,
-                    email: cleanEmail,
-                    role: invite.role === 'manager' ? 'Manager' : 'Employee',
-                    location_id: invite.location_id,
-                    organisation_id: invite.org_id
-                }
-            },
-            message: `You have successfully joined ${invite.location_name} as ${invite.role}.`
+            data: { requires_sign_in: !hasUsableAccount, location_name: invite.location_name },
+            message: hasUsableAccount
+                ? `You have joined ${invite.location_name}.`
+                : `Your account is ready. Sign in to continue.`
         });
     } catch (err: any) {
         console.error('[LOCATIONS ACCEPT INVITE ERROR]', err);
@@ -604,13 +604,11 @@ router.post('/:id/invite', requireOrgOwner, async (req: AuthRequest, res: Respon
                 email: cleanEmail,
                 role: assignRole,
                 location_name: location.name,
-                delivery_status: deliveryStatus,
-                invite_url: inviteUrl,
-                token: token
+                delivery_status: deliveryStatus
             },
             message: deliveryStatus === 'delivered' || deliveryStatus === 'sent'
                 ? `Invitation sent to ${cleanEmail}.`
-                : `Invitation created, but email could not be delivered. You can copy the invitation link directly.`
+                : `Invitation created, but the email could not be delivered. Please try again later.`
         });
     } catch (err: any) {
         console.error('[LOCATION INVITE ERROR]', err);

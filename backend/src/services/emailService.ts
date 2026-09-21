@@ -1,7 +1,18 @@
 /**
- * Transactional Email Service Abstraction
- * Supports Resend, Postmark, SendGrid, SMTP, or audited fallback transport.
- * Never leaks API keys or credentials to the client.
+ * Transactional email delivery.
+ *
+ * Security rules (see docs/security/hierarchy-audit-and-design.md, finding C4):
+ * - A message is only ever sent to `options.to`, which callers must take from
+ *   trusted server-side state (the users / invitations tables), never from a
+ *   request body or a provider response.
+ * - There is NO fallback / rerouting recipient. If the provider rejects a send
+ *   (e.g. Resend 403 for an unverified domain) the send fails and the caller
+ *   receives a generic error code. Provider response bodies are never parsed
+ *   for alternative addresses and never returned to API clients.
+ * - The mock transport is used automatically only in tests and in an explicit
+ *   NODE_ENV=development environment. Message bodies (which may contain
+ *   one-time links or codes) are printed only in development, never in tests
+ *   or production.
  */
 
 export interface EmailOptions {
@@ -11,65 +22,91 @@ export interface EmailOptions {
     text?: string;
 }
 
+export type EmailFailureCode = 'NOT_CONFIGURED' | 'PROVIDER_REJECTED' | 'NETWORK_ERROR' | 'INVALID_RECIPIENT';
+
 export interface EmailDeliveryResult {
     success: boolean;
     provider: string;
     messageId?: string;
-    error?: string;
-    reroutedTo?: string;
+    /** Generic failure code. Safe to store; never contains provider response text. */
+    error?: EmailFailureCode;
+}
+
+export interface CapturedEmail extends EmailOptions {
+    messageId: string;
+    sentAt: string;
+}
+
+// Messages "sent" through the mock transport while NODE_ENV=test, for assertions.
+const testOutbox: CapturedEmail[] = [];
+
+export function getTestOutbox(): CapturedEmail[] {
+    return testOutbox;
+}
+
+export function clearTestOutbox(): void {
+    testOutbox.length = 0;
+}
+
+type ProviderName = 'resend' | 'postmark' | 'mock' | 'none';
+
+function resolveProvider(): ProviderName {
+    const configured = (process.env.EMAIL_PROVIDER || '').trim().toLowerCase();
+    const env = process.env.NODE_ENV;
+
+    if (configured === 'resend') return 'resend';
+    if (configured === 'postmark') return 'postmark';
+    if (configured === 'mock' || configured === 'dev-mock' || configured === 'test') {
+        // The mock transport never delivers mail, so it is refused in production.
+        return env === 'production' ? 'none' : 'mock';
+    }
+
+    if (env === 'test') return 'mock';
+    if (process.env.RESEND_API_KEY) return 'resend';
+    if (process.env.POSTMARK_SERVER_TOKEN) return 'postmark';
+    if (env === 'development') return 'mock';
+    return 'none';
 }
 
 /**
- * Dispatches an email using the configured provider via environment variables.
- * If no provider API key is configured, safely falls back to audited development transport.
+ * True when a real (or, outside production, mock) transport is available.
+ * Flows that depend on email (invitations, password reset, 2FA) must check
+ * this and fail clearly instead of silently producing an undeliverable secret.
+ */
+export function isEmailDeliveryConfigured(): boolean {
+    const provider = resolveProvider();
+    if (provider === 'resend') return Boolean(process.env.RESEND_API_KEY);
+    if (provider === 'postmark') return Boolean(process.env.POSTMARK_SERVER_TOKEN);
+    return provider === 'mock';
+}
+
+function isPlausibleRecipient(address: string): boolean {
+    return typeof address === 'string' && /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(address.trim());
+}
+
+function maskForLog(address: string): string {
+    const [local, domain] = address.split('@');
+    if (!domain) return '***';
+    return `${local.slice(0, 1)}***@${domain}`;
+}
+
+/**
+ * Sends one transactional email to exactly `options.to`.
  */
 export async function sendTransactionalEmail(options: EmailOptions): Promise<EmailDeliveryResult> {
-    const isTestEnv = process.env.NODE_ENV === 'test';
-    const provider = (process.env.EMAIL_PROVIDER || (isTestEnv ? 'dev-mock' : 'auto')).toLowerCase();
-    const fromAddress = process.env.EMAIL_FROM || 'Elite Timesheet <onboarding@resend.dev>';
+    const provider = resolveProvider();
+    const fromAddress = process.env.EMAIL_FROM || 'SimpleHours <onboarding@resend.dev>';
+    const text = options.text || options.html.replace(/<[^>]*>?/gm, '');
 
-    // 1. Resend Provider
-    if (provider === 'resend' || (!isTestEnv && provider === 'auto' && process.env.RESEND_API_KEY)) {
+    if (!isPlausibleRecipient(options.to)) {
+        return { success: false, provider, error: 'INVALID_RECIPIENT' };
+    }
+
+    if (provider === 'resend') {
         if (!process.env.RESEND_API_KEY) {
-            return {
-                success: false,
-                provider: 'resend',
-                error: 'RESEND_API_KEY is not configured on the server.',
-            };
+            console.error('[EMAIL] Resend selected but RESEND_API_KEY is not set.');
+            return { success: false, provider, error: 'NOT_CONFIGURED' };
         }
-
-        const devRecipient = process.env.RESEND_TEST_RECIPIENT || 'dennistomang@gmail.com';
-        const isLocalDomain = options.to.endsWith('.local') || options.to.endsWith('.test') || options.to.endsWith('.example');
-        const targetRecipient = isLocalDomain ? devRecipient : options.to;
-        const isRerouted = targetRecipient.toLowerCase() !== options.to.toLowerCase();
-
-        const buildPayload = (sendTo: string, isReroute: boolean) => {
-            let finalHtml = options.html;
-            let finalText = options.text || options.html.replace(/<[^>]*>?/gm, '');
-            let finalSubject = options.subject;
-
-            if (isReroute) {
-                finalSubject = `[For: ${options.to}] ${options.subject}`;
-                const bannerHtml = `
-                <div style="background-color: #1e1b4b; border: 1px solid #6366f1; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #e0e7ff; font-size: 13px; line-height: 1.5;">
-                  <div style="font-weight: 700; color: #818cf8; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; margin-bottom: 4px;">Resend Testing Sandbox Notice</div>
-                  <div>This email was intended for <strong>${options.to}</strong>.</div>
-                  <div style="color: #94a3b8; font-size: 12px; margin-top: 4px;">Delivered to your verified account <strong>${sendTo}</strong> because Resend sandbox requires a verified custom domain at resend.com/domains to send to external recipients.</div>
-                </div>
-                `;
-                finalHtml = finalHtml.replace(/<body[^>]*>/i, `$&${bannerHtml}`);
-                finalText = `[Resend Sandbox Notice: Originally dispatched to ${options.to}. Delivered to ${sendTo}]\n\n${finalText}`;
-            }
-
-            return {
-                from: fromAddress,
-                to: sendTo,
-                subject: finalSubject,
-                html: finalHtml,
-                text: finalText,
-            };
-        };
-
         try {
             const res = await fetch('https://api.resend.com/emails', {
                 method: 'POST',
@@ -77,80 +114,26 @@ export async function sendTransactionalEmail(options: EmailOptions): Promise<Ema
                     'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(buildPayload(targetRecipient, isRerouted)),
+                body: JSON.stringify({ from: fromAddress, to: options.to, subject: options.subject, html: options.html, text }),
             });
-
             if (res.ok) {
-                const data: any = await res.json();
-                console.log(`[EMAIL DISPATCHED] Resend delivered email to ${targetRecipient}${isRerouted ? ` (rerouted from ${options.to})` : ''} (ID: ${data.id})`);
-                return { 
-                    success: true, 
-                    provider: 'resend', 
-                    messageId: data.id, 
-                    ...(isRerouted ? { reroutedTo: targetRecipient } : {}) 
-                };
+                const data: any = await res.json().catch(() => ({}));
+                return { success: true, provider, messageId: data?.id };
             }
-
-            // If Resend rejected, check error details
-            let errorMsg = `Resend HTTP ${res.status}`;
-            let errData: any = {};
-            try {
-                errData = await res.json();
-                if (errData.message) errorMsg = errData.message;
-                else if (errData.error) errorMsg = typeof errData.error === 'string' ? errData.error : JSON.stringify(errData.error);
-            } catch {
-                errorMsg = `Resend HTTP ${res.status} ${res.statusText || ''}`.trim();
-            }
-
-            // Check if Resend rejected because of testing restriction:
-            const matchAllowed = errorMsg.match(/\(([^)]+@.+?)\)/);
-            const verifiedAccount = matchAllowed ? matchAllowed[1].trim() : devRecipient;
-
-            if (res.status === 403 && verifiedAccount && verifiedAccount.toLowerCase() !== targetRecipient.toLowerCase()) {
-                console.warn(`[RESEND RETRY] Initial dispatch to ${targetRecipient} rejected by Resend sandbox. Retrying to verified developer address: ${verifiedAccount}`);
-                
-                const retryRes = await fetch('https://api.resend.com/emails', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(buildPayload(verifiedAccount, true)),
-                });
-
-                if (retryRes.ok) {
-                    const retryData: any = await retryRes.json();
-                    console.log(`[EMAIL REROUTED & DISPATCHED] Resend delivered to ${verifiedAccount} for intended recipient ${options.to} (ID: ${retryData.id})`);
-                    return {
-                        success: true,
-                        provider: 'resend',
-                        messageId: retryData.id,
-                        reroutedTo: verifiedAccount
-                    };
-                } else {
-                    const retryErr = await retryRes.json().catch(() => ({}));
-                    console.error(`[EMAIL RETRY FAILED] Failed retry to ${verifiedAccount}:`, retryErr);
-                }
-            }
-
-            console.error(`[EMAIL ERROR] Resend dispatch failed for ${options.to}:`, errorMsg);
-            return { success: false, provider: 'resend', error: errorMsg };
-        } catch (err: any) {
-            console.error(`[EMAIL NETWORK ERROR] Failed to contact Resend API:`, err.message);
-            return { success: false, provider: 'resend', error: err.message || 'Network error communicating with Resend' };
+            // Log only the status. The response body is not parsed for anything.
+            console.error(`[EMAIL] Resend rejected message to ${maskForLog(options.to)} (HTTP ${res.status}).`);
+            return { success: false, provider, error: 'PROVIDER_REJECTED' };
+        } catch {
+            console.error(`[EMAIL] Network error contacting Resend for ${maskForLog(options.to)}.`);
+            return { success: false, provider, error: 'NETWORK_ERROR' };
         }
     }
 
-    // 2. Postmark Provider
-    if (provider === 'postmark' || (provider === 'auto' && process.env.POSTMARK_SERVER_TOKEN)) {
+    if (provider === 'postmark') {
         if (!process.env.POSTMARK_SERVER_TOKEN) {
-            return {
-                success: false,
-                provider: 'postmark',
-                error: 'POSTMARK_SERVER_TOKEN is not configured on the server.',
-            };
+            console.error('[EMAIL] Postmark selected but POSTMARK_SERVER_TOKEN is not set.');
+            return { success: false, provider, error: 'NOT_CONFIGURED' };
         }
-
         try {
             const res = await fetch('https://api.postmarkapp.com/email', {
                 method: 'POST',
@@ -158,45 +141,33 @@ export async function sendTransactionalEmail(options: EmailOptions): Promise<Ema
                     'X-Postmark-Server-Token': process.env.POSTMARK_SERVER_TOKEN,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    From: fromAddress,
-                    To: options.to,
-                    Subject: options.subject,
-                    HtmlBody: options.html,
-                    TextBody: options.text || options.html.replace(/<[^>]*>?/gm, ''),
-                }),
+                body: JSON.stringify({ From: fromAddress, To: options.to, Subject: options.subject, HtmlBody: options.html, TextBody: text }),
             });
-
             if (res.ok) {
-                const data: any = await res.json();
-                return { success: true, provider: 'postmark', messageId: data.MessageID };
-            } else {
-                const errData: any = await res.json().catch(() => ({}));
-                return { success: false, provider: 'postmark', error: errData.Message || `Postmark HTTP ${res.status}` };
+                const data: any = await res.json().catch(() => ({}));
+                return { success: true, provider, messageId: data?.MessageID };
             }
-        } catch (err: any) {
-            return { success: false, provider: 'postmark', error: err.message || 'Network error communicating with Postmark' };
+            console.error(`[EMAIL] Postmark rejected message to ${maskForLog(options.to)} (HTTP ${res.status}).`);
+            return { success: false, provider, error: 'PROVIDER_REJECTED' };
+        } catch {
+            console.error(`[EMAIL] Network error contacting Postmark for ${maskForLog(options.to)}.`);
+            return { success: false, provider, error: 'NETWORK_ERROR' };
         }
     }
 
-    // 3. Audited Dev / Test Transport (Only when explicitly configured or in test mode)
-    if (provider === 'dev-mock' || provider === 'test' || process.env.NODE_ENV === 'test') {
-        const simulatedId = 'dev-' + Math.random().toString(36).substring(2, 11);
-        console.log(`[EMAIL DISPATCHED - DEV/TEST] Provider: dev-mock | To: ${options.to} | Subject: "${options.subject}" | MessageId: ${simulatedId}`);
-
-        return {
-            success: true,
-            provider: 'dev-mock',
-            messageId: simulatedId,
-        };
+    if (provider === 'mock') {
+        const messageId = `mock-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        if (process.env.NODE_ENV === 'test') {
+            testOutbox.push({ ...options, text, messageId, sentAt: new Date().toISOString() });
+        } else if (process.env.NODE_ENV === 'development') {
+            // Development only: print the message so one-time links can be used locally.
+            console.log(`\n[EMAIL:DEV-ONLY] To: ${options.to}\nSubject: ${options.subject}\n${text}\n`);
+        }
+        return { success: true, provider, messageId };
     }
 
-    // 4. No provider configured
-    return {
-        success: false,
-        provider,
-        error: `No transactional email provider credentials configured (RESEND_API_KEY required).`,
-    };
+    console.error('[EMAIL] No email provider is configured; message not sent.');
+    return { success: false, provider, error: 'NOT_CONFIGURED' };
 }
 
 /**

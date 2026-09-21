@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { getTestOutbox } from '../src/services/emailService';
 import app from '../src/index';
 import { newDb, DataType } from 'pg-mem';
 import { setPool, query } from '../src/services/db';
@@ -117,6 +118,7 @@ describe('Stage 2: Security Hardening, Session Management & Login Monitoring Int
                 device_info TEXT,
                 expires_at TIMESTAMPTZ NOT NULL,
                 consumed BOOLEAN DEFAULT false,
+                attempts INTEGER DEFAULT 0,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
 
@@ -410,23 +412,39 @@ describe('Stage 2: Security Hardening, Session Management & Login Monitoring Int
             const challenge = challengeRes.rows[0];
             expect(challenge.verification_code).toBeDefined();
 
-            // Attempting to verify with incorrect code should fail
+            // The code is only delivered by email; the stored value is a hash.
+            const mail = getTestOutbox().filter((m) => m.to === 'employee@apex.local').pop();
+            const emailedCode = /\b(\d{6})\b/.exec(mail?.text || '')?.[1] as string;
+            expect(emailedCode).toBeDefined();
+            expect(loginRes.body.challenge_id).toBe(challenge.id);
+
+            // A bare code (no challenge reference) is refused
+            const bareVerify = await request(app)
+                .post('/api/auth/verify-login')
+                .send({ code: emailedCode });
+            expect(bareVerify.status).toBe(400);
+
+            // An incorrect code for the right challenge is refused
             const badVerify = await request(app)
                 .post('/api/auth/verify-login')
-                .send({ code: '999999' });
-
+                .send({ challenge_id: challenge.id, code: emailedCode === '999999' ? '999998' : '999999' });
             expect(badVerify.status).toBe(400);
 
-            // Verifying with correct code should succeed and issue valid session
+            // The stored hash is never accepted as the code
+            const hashVerify = await request(app)
+                .post('/api/auth/verify-login')
+                .send({ challenge_id: challenge.id, code: challenge.verification_code });
+            expect(hashVerify.status).toBe(400);
+
+            // Challenge id + emailed code succeeds and issues a valid session
             const goodVerify = await request(app)
                 .post('/api/auth/verify-login')
-                .send({ code: challenge.verification_code });
+                .send({ challenge_id: challenge.id, code: emailedCode });
 
             expect(goodVerify.status).toBe(200);
             expect(goodVerify.body.success).toBe(true);
             expect(goodVerify.body.data.token).toBeDefined();
 
-            // Verify token allows access
             const authCheck = await request(app)
                 .get('/api/organisation/me')
                 .set('Authorization', `Bearer ${goodVerify.body.data.token}`);
@@ -436,7 +454,7 @@ describe('Stage 2: Security Hardening, Session Management & Login Monitoring Int
             // Challenge cannot be replayed (single-use)
             const replayVerify = await request(app)
                 .post('/api/auth/verify-login')
-                .send({ code: challenge.verification_code });
+                .send({ challenge_id: challenge.id, code: emailedCode });
 
             expect(replayVerify.status).toBe(400);
         });
