@@ -32,3 +32,22 @@ export function fmtISO(d: Date): string {
     return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
 }
 
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function isIsoDate(value: unknown): value is string {
+    if (typeof value !== 'string' || !ISO_DATE.test(value)) return false;
+    const [y, m, d] = value.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/** True when `value` is the first day of a pay period (so a client cannot address a shifted "period"). */
+export function isFortnightStart(value: unknown): value is string {
+    return isIsoDate(value) && getFortnightStartIso(value) === value;
+}
+
+export function parseIsoDateUtc(value: string): Date {
+    const [y, m, d] = value.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+}

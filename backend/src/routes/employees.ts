@@ -1,596 +1,285 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
-import { calcHours, parseSmartTime } from '../services/timeParser';
-import { sendTransactionalEmail, buildEmployeeInviteEmailTemplate } from '../services/emailService';
-import { revokeAllUserSessions } from '../services/sessionService';
-
-const router = Router();
-router.use(requireAuth, requireTenantContext);
+import { query, withTransaction } from '../services/db';
+import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { AccessContext, HttpError, badRequest, isUuid, loadBranch, loadWorker, resolveBranchFilter, writeAudit } from '../services/policy';
+import { isValidEmail } from '../services/authUtils';
+import { loadBreakSettings, normaliseDaySegments } from '../services/segments';
 
 /**
- * Roles an organisation user may set on an employee's login. 'Platform Admin' (or any
- * other string) can never be granted through a tenant API: platform operators are
- * provisioned only by the bootstrap script. Only a Company Admin/Owner may grant
- * 'Company Admin'; everyone else can only create 'Employee' logins.
+ * Workers (stored in the `employees` table).
+ *
+ * A worker is an operational record — someone who is rostered, timesheeted and reported on.
+ * Workers never sign in and are not linked to accounts. Every worker belongs to exactly one
+ * branch of its organisation, and every request here is authorised against that stored branch:
+ * the Organisation Owner in any branch, a Branch Admin only in the branches assigned to them.
  */
-const TENANT_GRANTABLE_ROLES = ['Employee', 'Manager', 'Company Admin'] as const;
+const router = Router();
+router.use(requireAuth);
 
-function resolveGrantableRole(callerRole: string | undefined, requested: unknown): { ok: true; role: string } | { ok: false } {
-    const wanted = requested === undefined || requested === null || requested === '' ? 'Employee' : requested;
-    if (typeof wanted !== 'string' || !(TENANT_GRANTABLE_ROLES as readonly string[]).includes(wanted)) {
-        return { ok: false };
-    }
-    const caller = (callerRole || '').trim().toLowerCase();
-    const callerIsOrgAdmin = caller === 'company admin' || caller === 'owner';
-    if (!callerIsOrgAdmin) {
-        return { ok: true, role: 'Employee' };
-    }
-    return { ok: true, role: wanted };
+const WORKER_COLUMNS = 'e.id, e.org_id, e.location_id, e.full_name, e.department, e.email, e.phone, e.contracted_hours, e.is_active, e.deleted_at';
+const PHONE_PATTERN = /^[0-9+()\-.\s]{3,40}$/;
+const MAX_FORTNIGHT_HOURS = 336;
+const MAX_TEMPLATE_ROWS = 100;
+
+const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === '23505';
+const duplicateName = (name: string) => new HttpError(409, 'DUPLICATE_WORKER', `A worker named "${name}" already exists in this organisation. Deactivated workers keep their name.`);
+
+function optionalText(value: unknown, label: string, max: number): string | null {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string') throw badRequest('VALIDATION_FAILED', `${label} must be text.`);
+    const text = value.trim();
+    if (text.length > max) throw badRequest('VALIDATION_FAILED', `${label} must be ${max} characters at most.`);
+    return text || null;
 }
 
-// Get all employees for the organization
-router.get('/', requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
+function readWorkerFields(body: any) {
+    const fullName = typeof body?.full_name === 'string' ? body.full_name.trim() : '';
+    if (!fullName || fullName.length > 120) throw badRequest('VALIDATION_FAILED', 'full_name is required (120 characters at most).');
+
+    const email = optionalText(body?.email, 'Email', 254);
+    if (email && !isValidEmail(email)) throw badRequest('VALIDATION_FAILED', 'Enter a valid email address.');
+
+    const phone = optionalText(body?.phone, 'Phone', 40);
+    if (phone && !PHONE_PATTERN.test(phone)) throw badRequest('VALIDATION_FAILED', 'Enter a valid phone number.');
+
+    let contractedHours = 76;
+    if (body?.contracted_hours !== undefined && body.contracted_hours !== null && body.contracted_hours !== '') {
+        contractedHours = Number(body.contracted_hours);
+        if (!Number.isFinite(contractedHours) || contractedHours < 0 || contractedHours > MAX_FORTNIGHT_HOURS) {
+            throw badRequest('VALIDATION_FAILED', `contracted_hours must be between 0 and ${MAX_FORTNIGHT_HOURS}.`);
+        }
+    }
+
+    return {
+        full_name: fullName,
+        department: optionalText(body?.department, 'Department', 120),
+        email: email ? email.toLowerCase() : null,
+        phone,
+        contracted_hours: contractedHours,
+    };
+}
+
+/** A client-supplied branch id is only ever a request: it is loaded from this organisation and checked against the caller's scope. */
+async function loadActiveTargetBranch(ctx: AccessContext, requested: unknown) {
+    if (!isUuid(requested)) throw badRequest('VALIDATION_FAILED', 'location_id must be a branch id.');
+    const branch = await loadBranch(ctx, Permission.WORKERS_MANAGE, requested);
+    if (!branch.is_active) throw badRequest('BRANCH_INACTIVE', `Branch "${branch.name}" is deactivated. Choose an active branch.`);
+    return branch;
+}
+
+router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
+        const ctx = req.auth!;
+        const branchIds = resolveBranchFilter(ctx, Permission.WORKERS_MANAGE, req.query.location_id);
         const includeInactive = req.query.include_inactive === 'true';
-        const hasLocFilter = Boolean(req.user?.location_id) && ['Manager'].includes(req.user?.role || '');
-        const params = hasLocFilter ? [orgId, req.user!.location_id] : [orgId];
-        const locCondition = hasLocFilter ? ' AND (e.location_id = $2 OR e.location_id IS NULL)' : '';
 
-        const sql = includeInactive
-            ? `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
-               (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
-               FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1${locCondition}`
-            : `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
-               (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
-               FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1 AND e.is_active = true AND e.deleted_at IS NULL${locCondition}`;
+        const result = await query(
+            `SELECT ${WORKER_COLUMNS}, l.name AS location_name
+               FROM employees e
+               JOIN locations l ON l.id = e.location_id AND l.org_id = e.org_id
+              WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[])
+                AND ($3::boolean OR (e.is_active = true AND e.deleted_at IS NULL))
+              ORDER BY e.full_name ASC`,
+            [ctx.orgId, branchIds, includeInactive]
+        );
+        const workers = result.rows;
 
-        let result;
-        try {
-            result = await query(sql, params);
-        } catch {
-            const fallbackSql = includeInactive
-                ? `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
-                   (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
-                   FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1`
-                : `SELECT e.*, u.id as user_account_id, u.email as user_email, u.role as user_role, u.is_active as user_is_active, 
-                   (u.password_hash = 'PENDING_SETUP') as is_pending_setup 
-                   FROM employees e LEFT JOIN users u ON e.user_id = u.id WHERE e.org_id = $1 AND e.is_active = true AND e.deleted_at IS NULL`;
-            result = await query(fallbackSql, [orgId]);
+        const templates = await query(
+            'SELECT * FROM roster_templates WHERE employee_id = ANY($1::uuid[]) ORDER BY day_index ASC',
+            [workers.map((w: any) => w.id)]
+        );
+        const byWorker = new Map<string, any[]>();
+        for (const row of templates.rows) {
+            const list = byWorker.get(row.employee_id);
+            if (list) list.push(row); else byWorker.set(row.employee_id, [row]);
         }
-        const emps = result.rows;
-
-        for (const emp of emps) {
-            const tmplResult = await query('SELECT * FROM roster_templates WHERE employee_id = $1 ORDER BY day_index ASC', [emp.id]);
-            emp.template = tmplResult.rows;
-            emp.status = emp.deleted_at ? 'Deleted' : (emp.is_pending_setup ? 'Pending Setup' : (emp.is_active ? 'Active' : 'Inactive'));
+        for (const worker of workers) {
+            worker.template = byWorker.get(worker.id) || [];
+            worker.status = worker.deleted_at ? 'Deleted' : (worker.is_active ? 'Active' : 'Inactive');
         }
 
-        res.json({ success: true, data: emps });
-    } catch (err: any) {
-        console.error('[EMPLOYEES GET ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve employees list.' } });
+        res.json({ success: true, data: workers });
+    } catch (err) {
+        sendError(res, err, 'WORKER LIST ERROR');
     }
 });
 
-router.post('/', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
+router.post('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const { full_name, department, email, phone, contracted_hours, create_account, role, location_id } = req.body;
-
-        if (!full_name) {
-            return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'full_name is required' } });
+        const ctx = req.auth!;
+        const fields = readWorkerFields(req.body);
+        if (req.body?.location_id === undefined || req.body.location_id === null || req.body.location_id === '') {
+            throw badRequest('VALIDATION_FAILED', 'location_id is required: every worker belongs to a branch.');
         }
+        const branch = await loadActiveTargetBranch(ctx, req.body.location_id);
 
-        let targetLocationId = location_id || req.user?.location_id || null;
-        if (req.user?.location_id && ['Manager'].includes(req.user?.role || '')) {
-            if (location_id && location_id !== req.user.location_id) {
-                return res.status(403).json({
-                    success: false,
-                    error: {
-                        code: 'LOCATION_FORBIDDEN',
-                        message: 'You cannot create employees for another location.'
-                    }
-                });
-            }
-            targetLocationId = req.user.location_id;
-        }
-
-        const empId = crypto.randomUUID();
-        let userId: string | null = req.body.user_id || null;
-        let token: string | null = null;
-
-        if (create_account && email) {
-            const cleanEmail = email.trim().toLowerCase();
-            const existingUser = await query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
-            if (existingUser.rows.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: { code: 'EMAIL_IN_USE', message: `An account with email ${cleanEmail} already exists.` }
-                });
-            }
-
-            const grant = resolveGrantableRole(req.user?.role, role);
-            if (!grant.ok) {
-                return res.status(400).json({ success: false, error: { code: 'INVALID_ROLE', message: 'Role must be one of: Employee, Manager, Company Admin.' } });
-            }
-            const userRole = grant.role;
-            userId = crypto.randomUUID();
-
-            await query(
-                `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [userId, orgId, cleanEmail, 'PENDING_SETUP', userRole, false]
-            );
-
-            await query(
-                `INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)`,
-                [crypto.randomUUID(), orgId, userId, userRole]
-            );
-
-            token = crypto.randomBytes(32).toString('hex');
-            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-            await query('INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [tokenHash, userId, expiresAt]);
-        } else if (userId) {
-            // Explicit user_id supplied: verify that the user is a member of this tenant
-            const memberCheck = await query('SELECT id FROM organisation_members WHERE organisation_id = $1 AND user_id = $2', [orgId, userId]);
-            if (memberCheck.rows.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: { code: 'INVALID_USER_MEMBERSHIP', message: 'Provided user does not belong to this organisation.' }
-                });
-            }
-        } else if (email) {
-            // Find existing user if already a registered member of this organization
-            const cleanEmail = email.trim().toLowerCase();
-            const existingUser = await query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
-            if (existingUser.rows.length > 0) {
-                const candUserId = existingUser.rows[0].id;
-                const memberCheck = await query('SELECT id FROM organisation_members WHERE organisation_id = $1 AND user_id = $2', [orgId, candUserId]);
-                if (memberCheck.rows.length > 0) {
-                    userId = candUserId;
-                }
-            }
-        }
-
+        let created;
         try {
-            await query(
-                `INSERT INTO employees (id, org_id, user_id, full_name, department, email, phone, contracted_hours, location_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [empId, orgId, userId, full_name, department || null, email || null, phone || null, contracted_hours || 76, targetLocationId]
+            created = await query(
+                `INSERT INTO employees (id, org_id, location_id, full_name, department, email, phone, contracted_hours)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active, deleted_at`,
+                [crypto.randomUUID(), ctx.orgId, branch.id, fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours]
             );
-        } catch {
-            await query(
-                `INSERT INTO employees (id, org_id, user_id, full_name, department, email, phone, contracted_hours)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [empId, orgId, userId, full_name, department || null, email || null, phone || null, contracted_hours || 76]
+        } catch (err) {
+            if (isUniqueViolation(err)) throw duplicateName(fields.full_name);
+            throw err;
+        }
+        const worker = created.rows[0];
+
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_CREATED', entityType: 'worker', entityId: worker.id, branchId: branch.id, details: `Created worker ${worker.full_name} in branch "${branch.name}"` });
+        res.status(201).json({ success: true, data: { ...worker, location_name: branch.name } });
+    } catch (err) {
+        sendError(res, err, 'WORKER CREATE ERROR');
+    }
+});
+
+router.put('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const fields = readWorkerFields(req.body);
+
+        // Moving a worker needs access to the branch they are in (loadWorker) and the branch they are going to.
+        // Without a location_id in the body the worker stays where they are.
+        const requested = req.body?.location_id;
+        const wantsBranch = requested !== undefined && requested !== null && requested !== '';
+        const target = wantsBranch && String(requested).toLowerCase() !== worker.location_id.toLowerCase()
+            ? await loadActiveTargetBranch(ctx, requested)
+            : null;
+        const branchId: string = target ? target.id : worker.location_id;
+
+        let updated;
+        try {
+            updated = await query(
+                `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, location_id = $6
+                  WHERE id = $7 AND org_id = $8
+                  RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active, deleted_at`,
+                [fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours, branchId, worker.id, ctx.orgId]
             );
+        } catch (err) {
+            if (isUniqueViolation(err)) throw duplicateName(fields.full_name);
+            throw err;
         }
 
-        await query(
-            `INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_id, details, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'organisation')`,
-            [crypto.randomUUID(), orgId, targetLocationId, new Date().toISOString(), req.user?.id, 'CREATED', empId, `Created employee ${full_name}`]
-        ).catch(() => {});
-
-        let inviteLink = null;
-        let emailSent = false;
-        let emailProvider = 'none';
-
-        if (create_account && email && token) {
-            const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';
-            inviteLink = `${origin}/accept-invite?token=${token}`;
-
-            const template = buildEmployeeInviteEmailTemplate({
-                inviteLink,
-                employeeName: full_name,
-                recipientEmail: email
-            });
-
-            const deliveryResult = await sendTransactionalEmail({
-                to: email,
-                subject: template.subject,
-                html: template.html,
-                text: template.text
-            });
-
-            emailSent = deliveryResult.success;
-            emailProvider = deliveryResult.provider;
-
-            await query(
-                `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, emailSent ? 'INVITE_SENT' : 'INVITE_FAILED', empId, `Dispatched account invitation to ${email} (provider: ${emailProvider})`]
-            );
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_UPDATED', entityType: 'worker', entityId: worker.id, branchId, previousValue: worker.full_name, newValue: fields.full_name, details: `Updated worker ${fields.full_name}` });
+        if (target) {
+            const from = await query('SELECT name FROM locations WHERE id = $1 AND org_id = $2', [worker.location_id, ctx.orgId]);
+            await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_MOVED', entityType: 'worker', entityId: worker.id, branchId: target.id, previousValue: from.rows[0]?.name ?? null, newValue: target.name, details: `Moved worker ${fields.full_name} to branch "${target.name}"` });
         }
+        res.json({ success: true, data: updated.rows[0] });
+    } catch (err) {
+        sendError(res, err, 'WORKER UPDATE ERROR');
+    }
+});
 
-        res.json({ 
-            success: true, 
-            data: { 
-                id: empId, 
-                user_id: userId, 
-                inviteLink, 
-                email_sent: emailSent, 
-                provider: emailProvider,
-                message: emailSent ? `Account invitation emailed to ${email}` : (create_account ? 'Account created but email delivery failed' : undefined)
-            } 
+/** Deactivating keeps every roster, timesheet and report row; the worker just stops appearing in active lists. */
+router.post('/:id/deactivate', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        await query('UPDATE employees SET is_active = false, deleted_at = NOW() WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_DEACTIVATED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Deactivated worker ${worker.full_name}` });
+        res.json({ success: true });
+    } catch (err) {
+        sendError(res, err, 'WORKER DEACTIVATE ERROR');
+    }
+});
+
+router.post('/:id/reactivate', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        await query('UPDATE employees SET is_active = true, deleted_at = NULL WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_REACTIVATED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Reactivated worker ${worker.full_name}` });
+        res.json({ success: true });
+    } catch (err) {
+        sendError(res, err, 'WORKER REACTIVATE ERROR');
+    }
+});
+
+/** Permanent deletion is refused once a worker has approved timesheets: that is payroll history. Deactivate instead. */
+router.delete('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+
+        const deleted = await withTransaction(async (tx) => {
+            const approved = await tx(
+                "SELECT 1 FROM timesheet_submissions WHERE employee_id = $1 AND org_id = $2 AND status = 'Approved' LIMIT 1",
+                [worker.id, ctx.orgId]
+            );
+            if (approved.rows.length > 0) return false;
+
+            await tx('DELETE FROM roster_templates WHERE employee_id = $1', [worker.id]);
+            await tx('DELETE FROM shift_segments WHERE record_id IN (SELECT id FROM daily_records WHERE employee_id = $1 AND org_id = $2)', [worker.id, ctx.orgId]);
+            await tx('DELETE FROM daily_records WHERE employee_id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+            await tx('DELETE FROM timesheet_submissions WHERE employee_id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+            await tx('DELETE FROM employees WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+            return true;
         });
-    } catch (err: any) {
-        console.error('[EMPLOYEES CREATE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create employee profile.' } });
-    }
-});
 
-function checkEmployeeLocationAccess(req: AuthRequest, empLocationId: string | null | undefined): boolean {
-    if (!req.user?.location_id) return true;
-    if (['Platform Admin', 'Company Admin', 'Admin'].includes(req.user.role || '')) return true;
-    if (!empLocationId) return true;
-    return empLocationId === req.user.location_id;
-}
-
-router.put('/:id', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const empId = req.params.id;
-        const { full_name, department, email, phone, contracted_hours, create_account, role } = req.body;
-
-        const empCheck = await query('SELECT * FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        if (empCheck.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
-        
-        const emp = empCheck.rows[0];
-        if (!checkEmployeeLocationAccess(req, emp.location_id)) {
-            return res.status(403).json({
-                success: false,
-                error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' }
-            });
-        }
-        let userId = emp.user_id;
-        let inviteLink = null;
-        let emailSent = false;
-        let emailProvider = 'none';
-
-        if (create_account && !userId) {
-            if (!email) {
-                return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Email is required to create a user account' } });
-            }
-            const cleanEmail = email.trim().toLowerCase();
-            const existingUser = await query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
-            if (existingUser.rows.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: { code: 'EMAIL_IN_USE', message: `An account with email ${cleanEmail} already exists.` }
-                });
-            }
-
-            const grant = resolveGrantableRole(req.user?.role, role);
-            if (!grant.ok) {
-                return res.status(400).json({ success: false, error: { code: 'INVALID_ROLE', message: 'Role must be one of: Employee, Manager, Company Admin.' } });
-            }
-            const userRole = grant.role;
-            userId = crypto.randomUUID();
-
-            await query(
-                `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [userId, orgId, cleanEmail, 'PENDING_SETUP', userRole, false]
-            );
-
-            await query(
-                `INSERT INTO organisation_members (id, organisation_id, user_id, role) VALUES ($1, $2, $3, $4)`,
-                [crypto.randomUUID(), orgId, userId, userRole]
-            );
-
-            const token = crypto.randomBytes(32).toString('hex');
-            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-            const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-            await query('INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [tokenHash, userId, expiresAt]);
-
-            const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';
-            inviteLink = `${origin}/accept-invite?token=${token}`;
-
-            const template = buildEmployeeInviteEmailTemplate({
-                inviteLink,
-                employeeName: full_name || emp.full_name,
-                recipientEmail: email
-            });
-
-            const deliveryResult = await sendTransactionalEmail({
-                to: email,
-                subject: template.subject,
-                html: template.html,
-                text: template.text
-            });
-
-            emailSent = deliveryResult.success;
-            emailProvider = deliveryResult.provider;
-        } else if (req.body.user_id && req.body.user_id !== emp.user_id) {
-            // Explicit user_id supplied: verify that the user is a member of this tenant
-            const memberCheck = await query('SELECT id FROM organisation_members WHERE organisation_id = $1 AND user_id = $2', [orgId, req.body.user_id]);
-            if (memberCheck.rows.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: { code: 'INVALID_USER_MEMBERSHIP', message: 'Provided user does not belong to this organisation.' }
-                });
-            }
-            userId = req.body.user_id;
+        if (!deleted) {
+            throw new HttpError(409, 'WORKER_HAS_APPROVED_TIMESHEETS', 'This worker has approved timesheets, which are payroll history. Deactivate the worker instead.');
         }
 
-        await query(
-            `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, user_id = $6 WHERE id = $7 AND org_id = $8`,
-            [full_name, department, email, phone, contracted_hours, userId, empId, orgId]
-        );
-
-        await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'UPDATED', empId, `Updated employee ${full_name}`]
-        );
-
-        res.json({ success: true, data: { inviteLink, email_sent: emailSent, provider: emailProvider } });
-    } catch (err: any) {
-        console.error('[EMPLOYEES UPDATE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update employee details.' } });
-    }
-});
-
-router.post('/:id/deactivate', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const empId = req.params.id;
-        let empRes;
-        try {
-            empRes = await query('SELECT user_id, location_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        } catch {
-            empRes = await query('SELECT user_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        }
-        if (empRes.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
-        if (!checkEmployeeLocationAccess(req, empRes.rows[0]?.location_id)) {
-            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
-        }
-
-        await query('UPDATE employees SET is_active = false, deleted_at = $1 WHERE id = $2 AND org_id = $3', [new Date().toISOString(), empId, orgId]);
-        if (empRes.rows.length > 0 && empRes.rows[0].user_id) {
-            const userId = empRes.rows[0].user_id;
-            // 1. Remove user membership from this organisation
-            await query('DELETE FROM organisation_members WHERE user_id = $1 AND organisation_id = $2', [userId, orgId]);
-
-            // 2. Revoke active sessions for this user in this tenant
-            await query('UPDATE sessions SET is_active = false, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2', [userId, orgId]);
-
-            // 3. Only deactivate the global user record and revoke all sessions if no memberships remain anywhere
-            const remainingMemberships = await query('SELECT id FROM organisation_members WHERE user_id = $1', [userId]);
-            if (remainingMemberships.rows.length === 0) {
-                await query('UPDATE users SET is_active = false WHERE id = $1', [userId]);
-                await revokeAllUserSessions(userId);
-            }
-        }
-        await query(`INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_id, details, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'organisation')`, [crypto.randomUUID(), orgId, empRes.rows[0]?.location_id || null, new Date().toISOString(), req.user?.id, 'DEACTIVATED', empId, `Deactivated employee ${empId}`]).catch(() => {});
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_DELETED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Permanently deleted worker ${worker.full_name}` });
         res.json({ success: true });
-    } catch (err: any) {
-        console.error('[EMPLOYEES DEACTIVATE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to deactivate employee.' } });
+    } catch (err) {
+        sendError(res, err, 'WORKER DELETE ERROR');
     }
 });
 
-router.post('/:id/reactivate', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
+/**
+ * Replaces the worker's fortnightly roster template (day_index 0–13, day 0 is the Sunday a pay
+ * period starts on). Each day is validated with the same segment rules as the roster itself.
+ */
+router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const empId = req.params.id;
-        let empRes;
-        try {
-            empRes = await query('SELECT location_id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        } catch {
-            empRes = await query('SELECT id FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        }
-        if (empRes.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
-        if (!checkEmployeeLocationAccess(req, empRes.rows[0]?.location_id)) {
-            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
+        const ctx = req.auth!;
+        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+
+        const templates = req.body?.templates;
+        if (!Array.isArray(templates) || templates.length > MAX_TEMPLATE_ROWS) {
+            throw badRequest('VALIDATION_FAILED', `templates must be a list of at most ${MAX_TEMPLATE_ROWS} rows.`);
         }
 
-        await query('UPDATE employees SET is_active = true, deleted_at = NULL WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        await query(`INSERT INTO audit_logs (id, org_id, location_id, timestamp, actor_id, action, entity_id, details, scope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'organisation')`, [crypto.randomUUID(), orgId, empRes.rows[0]?.location_id || null, new Date().toISOString(), req.user?.id, 'RESTORED', empId, `Restored employee ${empId}`]).catch(() => {});
-        res.json({ success: true });
-    } catch (err: any) {
-        console.error('[EMPLOYEES REACTIVATE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to reactivate employee.' } });
-    }
-});
-
-router.delete('/:id', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const empId = req.params.id;
-
-        const empCheck = await query('SELECT * FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        if (empCheck.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
-        }
-        const emp = empCheck.rows[0];
-        if (!checkEmployeeLocationAccess(req, emp.location_id)) {
-            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
-        }
-
-        // Guard: Cannot delete employee with approved/locked historical payroll records
-        const approvedCheck = await query(
-            "SELECT id FROM timesheet_submissions WHERE employee_id = $1 AND org_id = $2 AND status IN ('Approved', 'Locked') LIMIT 1",
-            [empId, orgId]
-        );
-        if (approvedCheck.rows.length > 0) {
-            return res.status(403).json({
-                success: false,
-                error: {
-                    code: 'EMPLOYEE_HAS_APPROVED_PAYROLL',
-                    message: 'Cannot permanently delete an employee with approved timesheets or payroll history. Deactivate the employee instead.'
-                }
-            });
-        }
-
-        // Clean up linked user account if exists (scoped to tenant!)
-        if (emp.user_id && emp.user_id !== req.user?.id) {
-            await query('DELETE FROM organisation_members WHERE user_id = $1 AND organisation_id = $2', [emp.user_id, orgId]);
-            // Only remove user credential if no other org memberships exist
-            const remainingMemberships = await query('SELECT id FROM organisation_members WHERE user_id = $1', [emp.user_id]);
-            if (remainingMemberships.rows.length === 0) {
-                await query('DELETE FROM invitation_tokens WHERE user_id = $1', [emp.user_id]);
-                await query('DELETE FROM reset_tokens WHERE user_id = $1', [emp.user_id]);
-                await query('DELETE FROM two_factor_codes WHERE user_id = $1', [emp.user_id]);
-                await query('DELETE FROM users WHERE id = $1 AND role = \'Employee\'', [emp.user_id]);
-            }
-        }
-
-        // Clean up roster templates, records, submissions (scoped to orgId)
-        await query('DELETE FROM roster_templates WHERE employee_id = $1', [empId]);
-        await query('DELETE FROM shift_segments WHERE record_id IN (SELECT id FROM daily_records WHERE employee_id = $1 AND org_id = $2)', [empId, orgId]);
-        await query('DELETE FROM daily_records WHERE employee_id = $1 AND org_id = $2', [empId, orgId]);
-        await query('DELETE FROM timesheet_submissions WHERE employee_id = $1 AND org_id = $2', [empId, orgId]);
-        await query('DELETE FROM leave_requests WHERE employee_id = $1 AND org_id = $2', [empId, orgId]);
-
-        // Delete employee row
-        await query('DELETE FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-
-        await query(`INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'PERMANENTLY_DELETED', empId, `Permanently deleted employee ${emp.full_name}`]);
-        res.json({ success: true });
-    } catch (err: any) {
-        console.error('[EMPLOYEES DELETE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete employee.' } });
-    }
-});
-
-router.post('/:id/templates', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const empId = req.params.id;
-        const { templates } = req.body; // Array of template objects
-
-        const empCheck = await query('SELECT * FROM employees WHERE id = $1 AND org_id = $2', [empId, orgId]);
-        if (empCheck.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
-        if (!checkEmployeeLocationAccess(req, empCheck.rows[0].location_id)) {
-            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
-        }
-
-        await query('DELETE FROM roster_templates WHERE employee_id = $1', [empId]);
-
-        let orgSettings = { break_mins_weekday: 30, break_mins_weekend: 0, break_threshold_hours: 6 };
-        try {
-            const orgRes = await query(
-                'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
-                [orgId]
-            );
-            if (orgRes.rows[0]) {
-                orgSettings = {
-                    break_mins_weekday: orgRes.rows[0].break_mins_weekday ?? 30,
-                    break_mins_weekend: orgRes.rows[0].break_mins_weekend ?? 0,
-                    break_threshold_hours: orgRes.rows[0].break_threshold_hours ?? 6
-                };
-            }
-        } catch {}
-
+        const byDay = new Map<number, any[]>();
         for (const t of templates) {
-            const rIn = t.roster_in ? (parseSmartTime(t.roster_in) || null) : null;
-            const rOut = t.roster_out ? (parseSmartTime(t.roster_out) || null) : null;
-            const isWeekend = (t.day_index % 7 === 0 || t.day_index % 7 === 6);
-            const breakOptions = {
-                breakMins: isWeekend ? Number(orgSettings.break_mins_weekend) : Number(orgSettings.break_mins_weekday),
-                breakThresholdHours: Number(orgSettings.break_threshold_hours)
-            };
-            const h = (rIn && rOut) 
-                ? calcHours(rIn, rOut, breakOptions) 
-                : Math.max(0, Math.round(Number(t.roster_hours || 0) * 100) / 100);
-
-            await query(`
-                INSERT INTO roster_templates (id, employee_id, day_index, segment_type, roster_in, roster_out, roster_hours)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-            `, [crypto.randomUUID(), empId, t.day_index, t.segment_type || 'WORK', rIn, rOut, h]);
+            const dayIndex = t?.day_index;
+            if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 13) {
+                throw badRequest('VALIDATION_FAILED', 'day_index must be a whole number from 0 to 13.');
+            }
+            // Templates only describe the roster, never worked hours.
+            const row = { segment_type: t.segment_type || 'WORK', roster_in: t.roster_in, roster_out: t.roster_out, roster_hours: t.roster_hours };
+            byDay.set(dayIndex, [...(byDay.get(dayIndex) || []), row]);
         }
+
+        const settings = await loadBreakSettings(ctx.orgId);
+        const rows: any[][] = [];
+        for (const [dayIndex, dayRows] of byDay) {
+            const isWeekend = dayIndex % 7 === 0 || dayIndex % 7 === 6;
+            const rule = { breakMins: isWeekend ? settings.break_mins_weekend : settings.break_mins_weekday, thresholdHours: settings.break_threshold_hours };
+            for (const seg of normaliseDaySegments(dayRows, rule).segments) {
+                rows.push([crypto.randomUUID(), worker.id, dayIndex, seg.segment_type, seg.roster_in, seg.roster_out, seg.roster_hours]);
+            }
+        }
+
+        await withTransaction(async (tx) => {
+            await tx('DELETE FROM roster_templates WHERE employee_id = $1', [worker.id]);
+            for (const row of rows) {
+                await tx(
+                    `INSERT INTO roster_templates (id, employee_id, day_index, segment_type, roster_in, roster_out, roster_hours)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    row
+                );
+            }
+        });
 
         res.json({ success: true });
-    } catch (err: any) {
-        console.error('[EMPLOYEES TEMPLATES ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update roster template.' } });
-    }
-});
-
-router.post('/:id/send-invitation', requireAuth, requireAnyPermission([Permission.BRANCH_MANAGE_STAFF, Permission.ORGANISATION_MANAGE_USERS]), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const empId = req.params.id;
-
-        const empCheck = await query(`
-            SELECT e.*, u.id as user_account_id, u.email as user_email, u.password_hash 
-            FROM employees e 
-            LEFT JOIN users u ON e.user_id = u.id 
-            WHERE e.id = $1 AND e.org_id = $2
-        `, [empId, orgId]);
-
-        if (empCheck.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Employee not found' } });
-        }
-        if (!checkEmployeeLocationAccess(req, empCheck.rows[0].location_id)) {
-            return res.status(403).json({ success: false, error: { code: 'LOCATION_FORBIDDEN', message: 'You do not have permission to modify employees in another location.' } });
-        }
-
-        let emp = empCheck.rows[0];
-        let userAccountId = emp.user_account_id;
-        let recipientEmail = emp.user_email || emp.email;
-
-        if (!userAccountId) {
-            if (!recipientEmail) {
-                return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Employee has no email address assigned' } });
-            }
-            userAccountId = crypto.randomUUID();
-            await query(
-                `INSERT INTO users (id, org_id, email, password_hash, role, is_active) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [userAccountId, orgId, recipientEmail, 'PENDING_SETUP', 'Employee', false]
-            );
-            await query(`UPDATE employees SET user_id = $1 WHERE id = $2`, [userAccountId, empId]);
-        } else if (emp.password_hash !== 'PENDING_SETUP') {
-            return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Employee account is already setup' } });
-        }
-
-        // Delete any existing tokens for this user to invalidate them
-        await query('DELETE FROM invitation_tokens WHERE user_id = $1', [userAccountId]);
-
-        // Generate new token
-        const token = crypto.randomBytes(32).toString('hex');
-        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-        
-        await query(
-            'INSERT INTO invitation_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', 
-            [tokenHash, userAccountId, expiresAt]
-        );
-
-        const origin = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:3000';
-        const inviteLink = `${origin}/accept-invite?token=${token}`;
-
-        const template = buildEmployeeInviteEmailTemplate({
-            inviteLink,
-            employeeName: emp.full_name,
-            recipientEmail
-        });
-
-        const deliveryResult = await sendTransactionalEmail({
-            to: recipientEmail,
-            subject: template.subject,
-            html: template.html,
-            text: template.text
-        });
-
-        await query(
-            'INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, entity_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7)', 
-            [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, deliveryResult.success ? 'INVITE_SENT' : 'INVITE_FAILED', empId, `Admin resent invitation to ${recipientEmail} (provider: ${deliveryResult.provider})`]
-        );
-
-        res.json({ 
-            success: true, 
-            data: { 
-                inviteLink, 
-                email_sent: deliveryResult.success,
-                provider: deliveryResult.provider,
-                message: deliveryResult.success ? `Invitation email resent to ${recipientEmail}` : `Token created, but email delivery failed: ${deliveryResult.error}`
-            } 
-        });
-    } catch (err: any) {
-        console.error('[EMPLOYEES SEND INVITE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to dispatch employee invitation.' } });
+    } catch (err) {
+        sendError(res, err, 'WORKER TEMPLATE ERROR');
     }
 });
 

@@ -1,80 +1,59 @@
 import { Router, Response } from 'express';
-import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
+import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { badRequest, resolveBranchFilter, writeAudit } from '../services/policy';
+import { isFortnightStart } from '../services/periodUtils';
 import { generatePayrollReport, convertReportToCsv, generatePrintableHtml } from '../services/reportService';
 
+/**
+ * Payroll-hours reports. The Owner sees every branch; a Branch Admin sees only assigned branches.
+ * `location_id` narrows the report to one branch inside that scope.
+ */
 const router = Router();
-router.use(requireAuth, requireTenantContext);
+router.use(requireAuth);
 
-/**
- * GET /api/reports/payroll
- * Returns JSON aggregation of payroll data for the given fortnight
- */
-router.get('/payroll', requireAuth, requireTenantContext, requireAnyPermission([Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
+async function buildReport(req: AuthRequest) {
+    const startDate = req.query.start_date;
+    if (!isFortnightStart(startDate)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period (YYYY-MM-DD).');
+    const branchIds = resolveBranchFilter(req.auth!, Permission.REPORTS_VIEW, req.query.location_id);
+    return generatePayrollReport(req.auth!.orgId, startDate, branchIds);
+}
+
+router.get('/payroll', requirePermission(Permission.REPORTS_VIEW), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id!;
-        const startDate = (req.query.start_date || req.query.startDate) as string;
-
-        if (!startDate) {
-            return res.status(400).json({ success: false, error: { message: 'start_date query parameter is required (YYYY-MM-DD)' } });
-        }
-
-        const report = await generatePayrollReport(orgId, startDate);
-        res.json({ success: true, data: report });
-    } catch (err: any) {
-        console.error('[REPORT PAYROLL ERROR]', err);
-        res.status(500).json({ success: false, error: { message: 'Failed to generate payroll report.' } });
+        res.json({ success: true, data: await buildReport(req) });
+    } catch (err) {
+        sendError(res, err, 'REPORT ERROR');
     }
 });
 
-/**
- * GET /api/reports/export/csv
- * Downloads RFC 4180 standard CSV file for accountant / payroll processing
- */
-router.get('/export/csv', requireAuth, requireTenantContext, requireAnyPermission([Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
+async function auditExport(req: AuthRequest, format: string, rows: number, period: string) {
+    const ctx = req.auth!;
+    await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'PAYROLL_EXPORTED', entityType: 'report', details: `${format} export, fortnight ${period}, ${rows} workers` });
+}
+
+/** RFC 4180 CSV for payroll processing. */
+router.get('/export/csv', requirePermission(Permission.REPORTS_VIEW), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id!;
-        const startDate = (req.query.start_date || req.query.startDate) as string;
-
-        if (!startDate) {
-            return res.status(400).json({ success: false, error: { message: 'start_date query parameter is required (YYYY-MM-DD)' } });
-        }
-
-        const report = await generatePayrollReport(orgId, startDate);
-        const csv = convertReportToCsv(report);
-
+        const report = await buildReport(req);
+        await auditExport(req, 'CSV', report.employees.length, report.fortnight_start);
         const safeOrgName = report.org_name.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const filename = `Payroll_${safeOrgName}_${startDate}.csv`;
-
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.send(csv);
-    } catch (err: any) {
-        console.error('[REPORT CSV ERROR]', err);
-        res.status(500).json({ success: false, error: { message: 'Failed to export payroll CSV.' } });
+        res.setHeader('Content-Disposition', `attachment; filename="Payroll_${safeOrgName}_${report.fortnight_start}.csv"`);
+        res.send(convertReportToCsv(report));
+    } catch (err) {
+        sendError(res, err, 'REPORT CSV ERROR');
     }
 });
 
-/**
- * GET /api/reports/export/pdf
- * Returns a printable HTML document ready for window.print() or headless print-to-pdf
- */
-router.get('/export/pdf', requireAuth, requireTenantContext, requireAnyPermission([Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
+/** Printable HTML document (window.print() → PDF). */
+router.get('/export/pdf', requirePermission(Permission.REPORTS_VIEW), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id!;
-        const startDate = (req.query.start_date || req.query.startDate) as string;
-
-        if (!startDate) {
-            return res.status(400).json({ success: false, error: { message: 'start_date query parameter is required (YYYY-MM-DD)' } });
-        }
-
-        const report = await generatePayrollReport(orgId, startDate);
-        const html = generatePrintableHtml(report);
-
+        const report = await buildReport(req);
+        await auditExport(req, 'PDF', report.employees.length, report.fortnight_start);
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.send(html);
-    } catch (err: any) {
-        console.error('[REPORT PDF ERROR]', err);
-        res.status(500).json({ success: false, error: { message: 'Failed to export payroll PDF.' } });
+        res.send(generatePrintableHtml(report));
+    } catch (err) {
+        sendError(res, err, 'REPORT PDF ERROR');
     }
 });
 

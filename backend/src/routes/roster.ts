@@ -1,58 +1,44 @@
 import { Router, Response } from 'express';
 import { autoRosterAll, autoLogAll } from '../services/rosterService';
-import { requireAuth, requireTenantContext, requireAnyBranchPermission, Permission, AuthRequest } from '../middleware/auth';
-import { query } from '../services/db';
+import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { badRequest, resolveBranchFilter } from '../services/policy';
+import { isFortnightStart } from '../services/periodUtils';
 
 const router = Router();
-router.use(requireAuth, requireTenantContext);
+router.use(requireAuth);
 
-router.post('/auto-roster', requireAnyBranchPermission(Permission.ROSTER_CREATE), async (req: AuthRequest, res: Response) => {
+function readBulkRequest(req: AuthRequest, permission: Permission) {
+    const { start_date, selected_days, location_id } = req.body || {};
+    if (!isFortnightStart(start_date)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period.');
+    if (selected_days !== undefined && (!Array.isArray(selected_days) || selected_days.some((d: unknown) => !Number.isInteger(d) || (d as number) < 0 || (d as number) > 13))) {
+        throw badRequest('VALIDATION_FAILED', 'selected_days must be day numbers between 0 and 13.');
+    }
+    return {
+        orgId: req.auth!.orgId,
+        // Optional branch filter, checked against the caller's scope. Locked branches and approved timesheets are skipped.
+        branchIds: resolveBranchFilter(req.auth!, permission, location_id),
+        fortnightStartIso: start_date as string,
+        selectedDays: selected_days as number[] | undefined,
+        actorId: req.auth!.userId,
+    };
+}
+
+router.post('/auto-roster', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        if (!orgId) return res.status(400).json({ error: 'Missing orgId' });
-        const { start_date, selected_days } = req.body;
-        if (!start_date) return res.status(400).json({ success: false, error: { message: 'start_date required' }});
-
-        // Block if roster is locked for this fortnight
-        const lockRes = await query('SELECT roster_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
-        if (lockRes.rows[0]?.roster_locked) {
-            return res.status(423).json({ success: false, error: { code: 'ROSTER_LOCKED', message: 'The roster for this fortnight is locked and cannot be modified.' } });
-        }
-
-        const [year, month, day] = start_date.split('-');
-        const dt = new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0);
-
-        await autoRosterAll(orgId, dt, selected_days, req.user?.id, req.user?.location_id);
-        res.json({ success: true });
-    } catch (err: any) {
-        console.error('[ROSTER AUTO-ROSTER ERROR]', err);
-        res.status(500).json({ success: false, error: { message: 'Failed to generate automatic roster.' }});
+        const result = await autoRosterAll(readBulkRequest(req, Permission.ROSTERS_MANAGE));
+        res.json({ success: true, data: result });
+    } catch (err) {
+        sendError(res, err, 'ROSTER AUTO-ROSTER ERROR');
     }
 });
 
-router.post('/auto-log', requireAuth, requireAnyBranchPermission(Permission.ROSTER_UPDATE), async (req: AuthRequest, res: Response) => {
+router.post('/auto-log', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        if (!orgId) return res.status(400).json({ error: 'Missing orgId' });
-        const { start_date, selected_days } = req.body;
-        if (!start_date) return res.status(400).json({ success: false, error: { message: 'start_date required' }});
-
-        // Block if timesheet is locked for this fortnight
-        const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
-        if (lockRes.rows[0]?.timesheet_locked) {
-            return res.status(423).json({ success: false, error: { code: 'TIMESHEET_LOCKED', message: 'The timesheet for this fortnight is locked and cannot be modified.' } });
-        }
-
-        const [year, month, day] = start_date.split('-');
-        const dt = new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0);
-
-        await autoLogAll(orgId, dt, selected_days, req.user?.id, req.user?.location_id);
-        res.json({ success: true });
-    } catch (err: any) {
-        console.error('[ROSTER AUTO-LOG ERROR]', err);
-        res.status(500).json({ success: false, error: { message: 'Failed to auto-log timesheet actuals.' }});
+        const result = await autoLogAll(readBulkRequest(req, Permission.TIMESHEETS_MANAGE));
+        res.json({ success: true, data: result });
+    } catch (err) {
+        sendError(res, err, 'ROSTER AUTO-LOG ERROR');
     }
 });
 
 export default router;
-

@@ -1,167 +1,98 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { query } from '../services/db';
+import { query, withTransaction } from '../services/db';
 import { comparePassword } from '../services/auth';
-import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
+import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { HttpError, badRequest, loadBranch, resolveBranchFilter, writeAudit } from '../services/policy';
+import { isFortnightStart } from '../services/periodUtils';
 
+/**
+ * Pay-period locks. A lock belongs to ONE branch and ONE fortnight:
+ *   roster_locked     — the rostered side of that branch's days cannot change
+ *   timesheet_locked  — the worked side of that branch's days cannot change
+ */
 const router = Router();
-router.use(requireAuth, requireTenantContext);
+router.use(requireAuth);
 
-router.get('/', async (req: AuthRequest, res: Response) => {
+router.get('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const result = await query('SELECT start_date, roster_locked, timesheet_locked, is_published FROM fortnight_locks WHERE org_id = $1', [orgId]);
+        const ctx = req.auth!;
+        const branchIds = resolveBranchFilter(ctx, Permission.PERIODS_LOCK, req.query.location_id);
+        const params: any[] = [ctx.orgId, branchIds];
+        let sql = `SELECT location_id, start_date, roster_locked, timesheet_locked
+                     FROM fortnight_locks WHERE org_id = $1 AND location_id = ANY($2::uuid[])`;
+        if (req.query.start_date !== undefined) {
+            if (!isFortnightStart(req.query.start_date)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period.');
+            params.push(req.query.start_date);
+            sql += ` AND start_date = $${params.length}`;
+        }
+        const result = await query(sql, params);
         res.json({ success: true, data: result.rows });
-    } catch (err: any) {
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+    } catch (err) {
+        sendError(res, err, 'LOCKS GET ERROR');
     }
 });
 
-router.post('/', requireAuth, requireAnyPermission([Permission.TIMESHEET_LOCK, Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
+/**
+ * POST /api/locks  { location_id, start_date, roster_locked?, timesheet_locked?, password }
+ * Changes only the flag(s) supplied. `password` is the caller's own password, or the
+ * organisation's lock password for the flag being changed.
+ */
+router.post('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const { start_date, roster_locked, timesheet_locked, is_published, password } = req.body;
-
-        if (!password) {
-            return res.status(400).json({ success: false, error: { message: 'Password required to update lock status.' } });
+        const ctx = req.auth!;
+        const { location_id, start_date, roster_locked, timesheet_locked, password } = req.body || {};
+        if (!isFortnightStart(start_date)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period.');
+        if (roster_locked === undefined && timesheet_locked === undefined) throw badRequest('VALIDATION_FAILED', 'Nothing to change.');
+        for (const flag of [roster_locked, timesheet_locked]) {
+            if (flag !== undefined && typeof flag !== 'boolean') throw badRequest('VALIDATION_FAILED', 'Lock flags must be true or false.');
         }
+        if (typeof password !== 'string' || !password) throw badRequest('PASSWORD_REQUIRED', 'Enter your password to change a lock.');
 
-        const orgRes = await query('SELECT roster_lock_password_hash, timesheet_lock_password_hash FROM organisations WHERE id = $1', [orgId]);
-        const orgData = orgRes.rows[0];
+        const branch = await loadBranch(ctx, Permission.PERIODS_LOCK, location_id);
 
-        const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [req.user?.id]);
-        if (userRes.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { message: 'User not found.' } });
+        const [userRes, orgRes] = await Promise.all([
+            query('SELECT password_hash FROM users WHERE id = $1', [ctx.userId]),
+            query('SELECT roster_lock_password_hash, timesheet_lock_password_hash FROM organisations WHERE id = $1', [ctx.orgId]),
+        ]);
+        const candidates: string[] = [userRes.rows[0].password_hash];
+        if (roster_locked !== undefined && timesheet_locked === undefined && orgRes.rows[0].roster_lock_password_hash) candidates.push(orgRes.rows[0].roster_lock_password_hash);
+        if (timesheet_locked !== undefined && roster_locked === undefined && orgRes.rows[0].timesheet_lock_password_hash) candidates.push(orgRes.rows[0].timesheet_lock_password_hash);
+
+        let passwordOk = false;
+        for (const hash of candidates) {
+            if (hash && await comparePassword(password, hash)) { passwordOk = true; break; }
         }
-        const userPasswordHash = userRes.rows[0].password_hash;
+        // 403, not 401: the session is still valid, so the client must not sign the user out.
+        if (!passwordOk) throw new HttpError(403, 'INVALID_PASSWORD', 'That password is not correct. The lock was not changed.');
 
-        // Current lock state
-        const currentLockRes = await query('SELECT roster_locked, timesheet_locked, is_published FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
-        const currentLock = currentLockRes.rows[0] || { roster_locked: false, timesheet_locked: false, is_published: false };
-
-        const isChangingRoster = roster_locked !== undefined && Boolean(roster_locked) !== Boolean(currentLock.roster_locked);
-        const isChangingTimesheet = timesheet_locked !== undefined && Boolean(timesheet_locked) !== Boolean(currentLock.timesheet_locked);
-
-        let validAuth = false;
-        // Check admin master password fallback
-        if (userPasswordHash && await comparePassword(password, userPasswordHash)) {
-            validAuth = true;
-        } else {
-            // Check dedicated lock passwords
-            if (isChangingRoster && orgData?.roster_lock_password_hash) {
-                if (await comparePassword(password, orgData.roster_lock_password_hash)) {
-                    validAuth = true;
-                }
-            } else if (isChangingTimesheet && orgData?.timesheet_lock_password_hash) {
-                if (await comparePassword(password, orgData.timesheet_lock_password_hash)) {
-                    validAuth = true;
-                }
-            }
-        }
-
-        if (!validAuth) {
-            const errorMsg = isChangingRoster && orgData?.roster_lock_password_hash
-                ? 'Invalid Roster Lock password. Access denied.'
-                : isChangingTimesheet && orgData?.timesheet_lock_password_hash
-                    ? 'Invalid Timesheet Lock password. Access denied.'
-                    : 'Invalid password. Lock update denied.';
-            return res.status(401).json({ success: false, error: { message: errorMsg } });
-        }
-
-        // If unlocking roster, automatically unpublish to prevent leaking unfinished draft shifts
-        let finalPublished = is_published !== undefined ? Boolean(is_published) : Boolean(currentLock.is_published);
-        if (roster_locked === false && currentLock.is_published) {
-            finalPublished = false;
-        }
-
-        await query(
-            `INSERT INTO fortnight_locks (id, org_id, start_date, roster_locked, timesheet_locked, is_published)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT(org_id, start_date) DO UPDATE SET 
-                 roster_locked = EXCLUDED.roster_locked,
-                 timesheet_locked = EXCLUDED.timesheet_locked,
-                 is_published = EXCLUDED.is_published`,
-            [crypto.randomUUID(), orgId, start_date, roster_locked ? true : false, timesheet_locked ? true : false, finalPublished]
-        );
-
-        await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, details) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'LOCKED', `Updated lock/publish state for fortnight ${start_date}`]
-        );
-
-        res.json({ success: true, published: finalPublished });
-    } catch (err: any) {
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
-    }
-});
-
-router.post('/publish', requireAuth, requireAnyPermission([Permission.TIMESHEET_LOCK, Permission.ORGANISATION_UPDATE]), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const { start_date, is_published } = req.body;
-
-        if (!start_date) {
-            return res.status(400).json({ success: false, error: { message: 'start_date is required.' } });
-        }
-
-        const shouldPublish = is_published !== false;
-
-        // Check if roster is locked before publishing
-        const currentLockRes = await query('SELECT roster_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, start_date]);
-        const isRosterLocked = Boolean(currentLockRes.rows[0]?.roster_locked);
-
-        if (shouldPublish && !isRosterLocked) {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'ROSTER_NOT_LOCKED',
-                    message: 'The roster must be locked and finalised before pushing it to employees.'
-                }
-            });
-        }
-
-        await query(
-            `INSERT INTO fortnight_locks (id, org_id, start_date, is_published)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT(org_id, start_date) DO UPDATE SET 
-                 is_published = EXCLUDED.is_published`,
-            [crypto.randomUUID(), orgId, start_date, shouldPublish]
-        );
-
-        await query(
-            `INSERT INTO audit_logs (id, org_id, timestamp, actor_id, action, details) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [crypto.randomUUID(), orgId, new Date().toISOString(), req.user?.id, 'ROSTER_PUBLISHED', `${shouldPublish ? 'Published' : 'Unpublished'} roster for fortnight ${start_date}`]
-        );
-
-        // If publishing, automatically post system announcement to the organisation
-        if (shouldPublish) {
-            const authorName = req.user?.email ? req.user.email.split('@')[0] : 'Management';
-            const [y, m, d] = start_date.split('-').map(Number);
-            const startDt = new Date(Date.UTC(y, m - 1, d));
-            const endDt = new Date(startDt);
-            endDt.setUTCDate(startDt.getUTCDate() + 13);
-            const endDateStr = endDt.toISOString().split('T')[0];
-
-            await query(
-                `INSERT INTO organisation_announcements (id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [
-                    crypto.randomUUID(),
-                    orgId,
-                    req.user?.id,
-                    authorName,
-                    req.user?.role || 'Management',
-                    'Official Roster Release',
-                    `The official staff roster for the fortnight from ${start_date} to ${endDateStr} has been finalised, locked, and published. Please check your schedule in the portal.`,
-                    true,
-                    'roster_alert'
-                ]
+        const result = await withTransaction(async (tx) => {
+            const before = (await tx(
+                'SELECT roster_locked, timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND location_id = $2 AND start_date = $3 FOR UPDATE',
+                [ctx.orgId, branch.id, start_date]
+            )).rows[0] || { roster_locked: false, timesheet_locked: false };
+            const after = {
+                roster_locked: roster_locked === undefined ? before.roster_locked : roster_locked,
+                timesheet_locked: timesheet_locked === undefined ? before.timesheet_locked : timesheet_locked,
+            };
+            await tx(
+                `INSERT INTO fortnight_locks (id, org_id, location_id, start_date, roster_locked, timesheet_locked)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (org_id, location_id, start_date) DO UPDATE
+                    SET roster_locked = EXCLUDED.roster_locked, timesheet_locked = EXCLUDED.timesheet_locked`,
+                [crypto.randomUUID(), ctx.orgId, branch.id, start_date, after.roster_locked, after.timesheet_locked]
             );
-        }
+            return { before, after };
+        });
 
-        res.json({ success: true, published: shouldPublish });
-    } catch (err: any) {
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        await writeAudit({
+            orgId: ctx.orgId, actorId: ctx.userId, action: 'PERIOD_LOCK_CHANGED', entityType: 'fortnight_locks', branchId: branch.id,
+            previousValue: JSON.stringify(result.before), newValue: JSON.stringify(result.after),
+            details: `Fortnight ${start_date}, branch "${branch.name}"`
+        });
+        res.json({ success: true, data: { location_id: branch.id, start_date, ...result.after } });
+    } catch (err) {
+        sendError(res, err, 'LOCKS UPDATE ERROR');
     }
 });
 

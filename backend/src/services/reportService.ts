@@ -1,11 +1,12 @@
 import { query } from './db';
-import { fmtISO, addDays } from './periodUtils';
-import { classifyShiftHours, getWeekdayName } from './classificationService';
+import { fmtISO, addDays, parseIsoDateUtc } from './periodUtils';
+import { classifySegmentHours, getWeekdayName } from './classificationService';
 
 export interface EmployeePayrollSummary {
     employee_id: string;
     full_name: string;
     department: string;
+    location_name: string;
     contracted_hours: number;
     rostered_hours: number;
     actual_hours: number;
@@ -17,6 +18,8 @@ export interface EmployeePayrollSummary {
     sick_hours: number;
     annual_hours: number;
     til_hours: number;
+    lwip_hours: number;
+    other_hours: number;
     unplanned_hours: number;
     submission_status: string;
 }
@@ -40,178 +43,122 @@ export interface PayrollReport {
         total_sick: number;
         total_annual: number;
         total_til: number;
+        total_lwip: number;
+        total_other: number;
         total_unplanned: number;
     };
 }
 
-export async function generatePayrollReport(orgId: string, startDate: string): Promise<PayrollReport> {
-    const orgRes = await query('SELECT name FROM organisations WHERE id = $1', [orgId]);
-    const orgName = orgRes.rows[0]?.name || 'Organization';
+/**
+ * Payroll hours for one fortnight, limited to the workers of `branchIds` (the branches the caller
+ * is authorised for — resolved by the route from the database, never from the client).
+ */
+export async function generatePayrollReport(orgId: string, startDate: string, branchIds: string[]): Promise<PayrollReport> {
+    const orgRes = await query('SELECT COALESCE(display_name, name) AS name FROM organisations WHERE id = $1', [orgId]);
+    const orgName = orgRes.rows[0]?.name || 'Organisation';
 
-    const [y, m, d] = startDate.split('-').map(Number);
-    const fnStart = new Date(Date.UTC(y, m - 1, d));
-    const fnEnd = addDays(fnStart, 13);
-    const endDateIso = fmtISO(fnEnd);
+    const fnStart = parseIsoDateUtc(startDate);
+    const endDateIso = fmtISO(addDays(fnStart, 13));
 
-    // Fetch public holidays
     const holRes = await query('SELECT holiday_date, name FROM public_holidays WHERE org_id = $1', [orgId]);
     const holidayMap = new Map<string, string>();
-    holRes.rows.forEach((h: any) => holidayMap.set(h.holiday_date, h.name));
+    holRes.rows.forEach((h: any) => holidayMap.set(String(h.holiday_date), h.name));
 
-    // Fetch employees
     const empRes = await query(
-        'SELECT id, full_name, department, contracted_hours FROM employees WHERE org_id = $1 AND is_active = true AND deleted_at IS NULL ORDER BY full_name ASC',
-        [orgId]
+        `SELECT e.id, e.full_name, e.department, e.contracted_hours, e.location_id, l.name AS location_name,
+                COALESCE(ts.status, 'Draft') AS status, COALESCE(fl.timesheet_locked, false) AS timesheet_locked
+           FROM employees e
+           JOIN locations l ON l.id = e.location_id
+           LEFT JOIN timesheet_submissions ts ON ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3
+           LEFT JOIN fortnight_locks fl ON fl.org_id = e.org_id AND fl.location_id = e.location_id AND fl.start_date = $3
+          WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true AND e.deleted_at IS NULL
+          ORDER BY e.full_name ASC`,
+        [orgId, branchIds, startDate]
     );
 
-    // Fetch submissions
-    const subRes = await query('SELECT employee_id, status FROM timesheet_submissions WHERE org_id = $1 AND start_date = $2', [orgId, startDate]);
-    const subMap = new Map<string, string>();
-    subRes.rows.forEach((s: any) => subMap.set(s.employee_id, s.status));
-
-    // Fetch fortnight lock
-    const lockRes = await query('SELECT timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND start_date = $2', [orgId, startDate]);
-    const isTimesheetLocked = lockRes.rows[0]?.timesheet_locked || false;
-
-    // Single batch fetch of all daily records and shift segments for this fortnight (eliminates N+1 query)
-    const batchRecordsRes = await query(
-        `SELECT dr.id as record_id, dr.employee_id, dr.record_date, dr.has_actuals,
-                ss.id as segment_id, ss.segment_type, ss.roster_in, ss.roster_out, ss.roster_hours,
-                ss.actual_in, ss.actual_out, ss.actual_hours, ss.actual_segment_type, ss.is_unplanned
-         FROM daily_records dr
-         JOIN shift_segments ss ON ss.record_id = dr.id
-         WHERE dr.org_id = $1 AND dr.record_date >= $2 AND dr.record_date <= $3`,
-        [orgId, startDate, endDateIso]
+    // Single batch fetch of all segments for these workers in this fortnight (no N+1)
+    const segRes = await query(
+        `SELECT dr.employee_id, dr.record_date, dr.has_actuals,
+                ss.segment_type, ss.roster_hours, ss.actual_in, ss.actual_out, ss.actual_hours, ss.actual_segment_type, ss.is_unplanned
+           FROM daily_records dr
+           JOIN shift_segments ss ON ss.record_id = dr.id
+          WHERE dr.org_id = $1 AND dr.employee_id = ANY($2::uuid[]) AND dr.record_date >= $3 AND dr.record_date <= $4`,
+        [orgId, empRes.rows.map((e: any) => e.id), startDate, endDateIso]
     );
-
-    const segmentsByEmpAndDate = new Map<string, any[]>();
-    for (const row of batchRecordsRes.rows) {
-        const rawDate = String(row.record_date).split('T')[0];
-        const key = `${row.employee_id}_${rawDate}`;
-        const list = segmentsByEmpAndDate.get(key) || [];
+    const segmentsByWorker = new Map<string, any[]>();
+    for (const row of segRes.rows) {
+        const list = segmentsByWorker.get(row.employee_id) || [];
         list.push(row);
-        segmentsByEmpAndDate.set(key, list);
+        segmentsByWorker.set(row.employee_id, list);
     }
 
+    const round2 = (n: number) => Math.round(n * 100) / 100;
     const employeesSummary: EmployeePayrollSummary[] = [];
 
-    const totals = {
-        total_contracted: 0,
-        total_rostered: 0,
-        total_actual: 0,
-        total_variance: 0,
-        total_normal: 0,
-        total_saturday: 0,
-        total_sunday: 0,
-        total_public_holiday: 0,
-        total_sick: 0,
-        total_annual: 0,
-        total_til: 0,
-        total_unplanned: 0
-    };
-
     for (const emp of empRes.rows) {
-        let rostered = 0;
-        let actual = 0;
-        let normal = 0;
-        let sat = 0;
-        let sun = 0;
-        let holiday = 0;
-        let sick = 0;
-        let annual = 0;
-        let til = 0;
-        let unplanned = 0;
+        const sums = { rostered: 0, actual: 0, normal: 0, sat: 0, sun: 0, holiday: 0, sick: 0, annual: 0, til: 0, lwip: 0, other: 0, unplanned: 0 };
 
-        for (let i = 0; i < 14; i++) {
-            const dayDate = addDays(fnStart, i);
-            const dateIso = fmtISO(dayDate);
-            const weekday = getWeekdayName(dateIso);
-            const isPublicHoliday = holidayMap.has(dateIso);
+        for (const seg of segmentsByWorker.get(emp.id) || []) {
+            const dateIso = String(seg.record_date);
+            const rHours = Number(seg.roster_hours || 0);
+            const aHours = Number(seg.actual_hours || 0);
+            sums.rostered += rHours;
+            sums.actual += aHours;
 
-            const daySegments = segmentsByEmpAndDate.get(`${emp.id}_${dateIso}`) || [];
+            // Pay categories come from worked hours once a day has any; a day with no worked hours yet shows its roster.
+            const type: string = (seg.has_actuals && seg.actual_segment_type) || seg.segment_type;
+            const hours = seg.has_actuals ? aHours : rHours;
+            if (hours === 0) continue;
 
-            for (const seg of daySegments) {
-                const rHours = Number(seg.roster_hours || 0);
-                const aHours = Number(seg.actual_hours || 0);
-                rostered += rHours;
-                actual += aHours;
-
-                const effectiveType = seg.actual_segment_type || seg.segment_type || 'WORK';
-                const activeHours = (seg.actual_in && seg.actual_out) ? aHours : rHours;
-
-                if (seg.actual_in && seg.actual_out) {
-                    const classified = await classifyShiftHours(orgId, dateIso, seg.actual_in, seg.actual_out, effectiveType);
-                    classified.forEach(c => {
-                        normal += c.normalHours;
-                        sat += c.saturdayHours;
-                        sun += c.sundayHours;
-                        holiday += c.publicHolidayHours;
-                    });
-                } else if (effectiveType === 'WORK') {
-                    if (isPublicHoliday) holiday += activeHours;
-                    else if (weekday === 'Sat') sat += activeHours;
-                    else if (weekday === 'Sun') sun += activeHours;
-                    else normal += activeHours;
+            if (type === 'WORK') {
+                if (seg.has_actuals && seg.actual_in && seg.actual_out) {
+                    for (const c of classifySegmentHours({ recordDate: dateIso, startTime: String(seg.actual_in), endTime: String(seg.actual_out), netHours: aHours, segmentType: type, holidays: holidayMap })) {
+                        sums.normal += c.normalHours;
+                        sums.sat += c.saturdayHours;
+                        sums.sun += c.sundayHours;
+                        sums.holiday += c.publicHolidayHours;
+                    }
+                } else {
+                    const weekday = getWeekdayName(dateIso);
+                    if (holidayMap.has(dateIso)) sums.holiday += hours;
+                    else if (weekday === 'Sat') sums.sat += hours;
+                    else if (weekday === 'Sun') sums.sun += hours;
+                    else sums.normal += hours;
                 }
+            } else if (type === 'Sick') sums.sick += hours;
+            else if (type === 'Annual') sums.annual += hours;
+            else if (type === 'TIL') sums.til += hours;
+            else if (type === 'LWIP') sums.lwip += hours;
+            else sums.other += hours;
 
-                if (effectiveType === 'Sick') sick += activeHours;
-                else if (effectiveType === 'Annual') annual += activeHours;
-                else if (effectiveType === 'TIL') til += activeHours;
-
-                if (seg.is_unplanned) {
-                    unplanned += activeHours;
-                }
-            }
+            if (seg.is_unplanned) sums.unplanned += hours;
         }
 
         const contracted = Number(emp.contracted_hours ?? 76);
-        const variance = Math.round((actual - contracted) * 100) / 100;
-        let status = subMap.get(emp.id) || 'Draft';
-        if (isTimesheetLocked && status === 'Approved') {
-            status = 'Locked';
-        }
-
-        const summary: EmployeePayrollSummary = {
+        employeesSummary.push({
             employee_id: emp.id,
             full_name: emp.full_name,
             department: emp.department || 'General',
+            location_name: emp.location_name,
             contracted_hours: contracted,
-            rostered_hours: Math.round(rostered * 100) / 100,
-            actual_hours: Math.round(actual * 100) / 100,
-            variance_hours: variance,
-            normal_hours: Math.round(normal * 100) / 100,
-            saturday_hours: Math.round(sat * 100) / 100,
-            sunday_hours: Math.round(sun * 100) / 100,
-            public_holiday_hours: Math.round(holiday * 100) / 100,
-            sick_hours: Math.round(sick * 100) / 100,
-            annual_hours: Math.round(annual * 100) / 100,
-            til_hours: Math.round(til * 100) / 100,
-            unplanned_hours: Math.round(unplanned * 100) / 100,
-            submission_status: status
-        };
-
-        employeesSummary.push(summary);
-
-        totals.total_contracted += summary.contracted_hours;
-        totals.total_rostered += summary.rostered_hours;
-        totals.total_actual += summary.actual_hours;
-        totals.total_variance += summary.variance_hours;
-        totals.total_normal += summary.normal_hours;
-        totals.total_saturday += summary.saturday_hours;
-        totals.total_sunday += summary.sunday_hours;
-        totals.total_public_holiday += summary.public_holiday_hours;
-        totals.total_sick += summary.sick_hours;
-        totals.total_annual += summary.annual_hours;
-        totals.total_til += summary.til_hours;
-        totals.total_unplanned += summary.unplanned_hours;
+            rostered_hours: round2(sums.rostered),
+            actual_hours: round2(sums.actual),
+            variance_hours: round2(sums.actual - contracted),
+            normal_hours: round2(sums.normal),
+            saturday_hours: round2(sums.sat),
+            sunday_hours: round2(sums.sun),
+            public_holiday_hours: round2(sums.holiday),
+            sick_hours: round2(sums.sick),
+            annual_hours: round2(sums.annual),
+            til_hours: round2(sums.til),
+            lwip_hours: round2(sums.lwip),
+            other_hours: round2(sums.other),
+            unplanned_hours: round2(sums.unplanned),
+            submission_status: emp.status === 'Approved' && emp.timesheet_locked ? 'Locked' : emp.status
+        });
     }
 
-    // Round totals
-    Object.keys(totals).forEach(k => {
-        // @ts-ignore
-        totals[k] = Math.round(totals[k] * 100) / 100;
-    });
-
+    const total = (pick: (e: EmployeePayrollSummary) => number) => round2(employeesSummary.reduce((acc, e) => acc + pick(e), 0));
     return {
         org_id: orgId,
         org_name: orgName,
@@ -219,13 +166,29 @@ export async function generatePayrollReport(orgId: string, startDate: string): P
         fortnight_end: endDateIso,
         generated_at: new Date().toISOString(),
         employees: employeesSummary,
-        totals
+        totals: {
+            total_contracted: total(e => e.contracted_hours),
+            total_rostered: total(e => e.rostered_hours),
+            total_actual: total(e => e.actual_hours),
+            total_variance: total(e => e.variance_hours),
+            total_normal: total(e => e.normal_hours),
+            total_saturday: total(e => e.saturday_hours),
+            total_sunday: total(e => e.sunday_hours),
+            total_public_holiday: total(e => e.public_holiday_hours),
+            total_sick: total(e => e.sick_hours),
+            total_annual: total(e => e.annual_hours),
+            total_til: total(e => e.til_hours),
+            total_lwip: total(e => e.lwip_hours),
+            total_other: total(e => e.other_hours),
+            total_unplanned: total(e => e.unplanned_hours),
+        }
     };
 }
 
 export function convertReportToCsv(report: PayrollReport): string {
     const headers = [
         'Employee Name',
+        'Branch',
         'Department',
         'Contracted (h)',
         'Rostered (h)',
@@ -238,6 +201,8 @@ export function convertReportToCsv(report: PayrollReport): string {
         'Sick Leave (h)',
         'Annual Leave (h)',
         'TIL (h)',
+        'LWIP (h)',
+        'Other (h)',
         'Unplanned (h)',
         'Timesheet Status'
     ];
@@ -261,6 +226,7 @@ export function convertReportToCsv(report: PayrollReport): string {
     report.employees.forEach(emp => {
         rows.push([
             escapeCsv(emp.full_name),
+            escapeCsv(emp.location_name),
             escapeCsv(emp.department),
             emp.contracted_hours.toFixed(2),
             emp.rostered_hours.toFixed(2),
@@ -273,6 +239,8 @@ export function convertReportToCsv(report: PayrollReport): string {
             emp.sick_hours.toFixed(2),
             emp.annual_hours.toFixed(2),
             emp.til_hours.toFixed(2),
+            emp.lwip_hours.toFixed(2),
+            emp.other_hours.toFixed(2),
             emp.unplanned_hours.toFixed(2),
             escapeCsv(emp.submission_status)
         ].join(','));
@@ -281,6 +249,7 @@ export function convertReportToCsv(report: PayrollReport): string {
     // Add totals row
     rows.push([
         escapeCsv('TOTALS'),
+        escapeCsv(''),
         escapeCsv(''),
         report.totals.total_contracted.toFixed(2),
         report.totals.total_rostered.toFixed(2),
@@ -293,6 +262,8 @@ export function convertReportToCsv(report: PayrollReport): string {
         report.totals.total_sick.toFixed(2),
         report.totals.total_annual.toFixed(2),
         report.totals.total_til.toFixed(2),
+        report.totals.total_lwip.toFixed(2),
+        report.totals.total_other.toFixed(2),
         report.totals.total_unplanned.toFixed(2),
         escapeCsv('')
     ].join(','));
@@ -315,7 +286,7 @@ export function generatePrintableHtml(report: PayrollReport): string {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Payroll Report - ${escapeHtml(report.org_name)} - ${report.fortnight_start}</title>
+    <title>Payroll Report - ${escapeHtml(report.org_name)} - ${escapeHtml(report.fortnight_start)}</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; color: #1e293b; padding: 24px; background: #fff; }
         .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-b: 2px solid #e2e8f0; padding-bottom: 16px; }
@@ -328,10 +299,7 @@ export function generatePrintableHtml(report: PayrollReport): string {
         .text-left { text-align: left; }
         .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
         .badge-approved { background: #dcfce7; color: #15803d; }
-        .badge-submitted { background: #dbeafe; color: #1d4ed8; }
-        .badge-under_review { background: #fef3c7; color: #b45309; }
         .badge-draft { background: #f3f4f6; color: #4b5563; }
-        .badge-rejected { background: #fee2e2; color: #b91c1c; }
         .badge-locked { background: #fef3c7; color: #b45309; }
         .signatures {
             margin-top: 40px;
@@ -368,6 +336,7 @@ export function generatePrintableHtml(report: PayrollReport): string {
         <thead>
             <tr>
                 <th class="text-left">Employee</th>
+                <th class="text-left">Branch</th>
                 <th class="text-left">Department</th>
                 <th>Contract</th>
                 <th>Roster</th>
@@ -380,6 +349,8 @@ export function generatePrintableHtml(report: PayrollReport): string {
                 <th>Sick</th>
                 <th>Annual</th>
                 <th>TIL</th>
+                <th>LWIP</th>
+                <th>Other</th>
                 <th>Unplanned</th>
                 <th>Status</th>
             </tr>
@@ -388,6 +359,7 @@ export function generatePrintableHtml(report: PayrollReport): string {
             ${report.employees.map(e => `
                 <tr>
                     <td class="text-left"><strong>${escapeHtml(e.full_name)}</strong></td>
+                    <td class="text-left">${escapeHtml(e.location_name)}</td>
                     <td class="text-left">${escapeHtml(e.department)}</td>
                     <td>${e.contracted_hours.toFixed(1)}h</td>
                     <td>${e.rostered_hours.toFixed(1)}h</td>
@@ -402,15 +374,18 @@ export function generatePrintableHtml(report: PayrollReport): string {
                     <td>${e.sick_hours.toFixed(1)}h</td>
                     <td>${e.annual_hours.toFixed(1)}h</td>
                     <td>${e.til_hours.toFixed(1)}h</td>
+                    <td>${e.lwip_hours.toFixed(1)}h</td>
+                    <td>${e.other_hours.toFixed(1)}h</td>
                     <td>${e.unplanned_hours.toFixed(1)}h</td>
                     <td style="text-align:center;">
-                        <span class="badge badge-${e.submission_status.toLowerCase().replace(' ', '-')}">${e.submission_status}</span>
+                        <span class="badge badge-${escapeHtml(e.submission_status.toLowerCase())}">${escapeHtml(e.submission_status)}</span>
                     </td>
                 </tr>
             `).join('')}
             <tr class="total-row">
                 <td class="text-left">TOTALS</td>
                 <td class="text-left">${report.employees.length} Staff</td>
+                <td></td>
                 <td>${report.totals.total_contracted.toFixed(1)}h</td>
                 <td>${report.totals.total_rostered.toFixed(1)}h</td>
                 <td>${report.totals.total_actual.toFixed(1)}h</td>
@@ -422,6 +397,8 @@ export function generatePrintableHtml(report: PayrollReport): string {
                 <td>${report.totals.total_sick.toFixed(1)}h</td>
                 <td>${report.totals.total_annual.toFixed(1)}h</td>
                 <td>${report.totals.total_til.toFixed(1)}h</td>
+                <td>${report.totals.total_lwip.toFixed(1)}h</td>
+                <td>${report.totals.total_other.toFixed(1)}h</td>
                 <td>${report.totals.total_unplanned.toFixed(1)}h</td>
                 <td>-</td>
             </tr>
@@ -430,11 +407,11 @@ export function generatePrintableHtml(report: PayrollReport): string {
 
     <div class="signatures">
         <div class="sig-block">
-            <strong>Prepared / Reviewed By (Payroll Officer / Manager):</strong>
+            <strong>Prepared / Reviewed By:</strong>
             <div style="margin-top: 24px;">Signature: ___________________________ Date: ____________</div>
         </div>
         <div class="sig-block">
-            <strong>Authorised By (Director / Executive):</strong>
+            <strong>Authorised By:</strong>
             <div style="margin-top: 24px;">Signature: ___________________________ Date: ____________</div>
         </div>
     </div>

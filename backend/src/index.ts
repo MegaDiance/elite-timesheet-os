@@ -6,39 +6,24 @@ import employeesRoutes from './routes/employees';
 import recordsRoutes from './routes/records';
 import locksRoutes from './routes/locks';
 import organisationRoutes from './routes/organisation';
-import platformRoutes from './routes/platform';
 import locationsRoutes from './routes/locations';
+import branchAdminsRoutes from './routes/branchAdmins';
+import signupRoutes from './routes/signup';
+import rosterRoutes from './routes/roster';
+import submissionsRoutes from './routes/submissions';
+import holidaysRoutes from './routes/holidays';
+import reportsRoutes from './routes/reports';
+import xeroRoutes from './routes/xero';
+import auditRoutes from './routes/audit';
+import announcementsRoutes from './routes/announcements';
+import dashboardRoutes from './routes/dashboard';
 import { initDB } from './services/db';
 import path from 'path';
-import os from 'os';
 import fs from 'fs';
 
 dotenv.config();
 dotenv.config({ path: path.join(__dirname, '../.env') });
 dotenv.config({ path: path.join(__dirname, '../../.env') });
-dotenv.config({ path: path.join(os.homedir(), '.env') });
-
-// Check for key file fallbacks (supports .txt, .rtf, TextEdit files)
-const keyCandidates = [
-    path.join(__dirname, '../key.txt'),
-    path.join(__dirname, '../key.txt.rtf'),
-    path.join(__dirname, '../key.rtf'),
-    path.join(__dirname, '../../key.txt'),
-    path.join(__dirname, '../../key.txt.rtf'),
-    path.join(__dirname, '../../key.rtf'),
-];
-
-for (const kPath of process.env.NODE_ENV === 'development' ? keyCandidates : []) {
-    if (fs.existsSync(kPath) && !process.env.RESEND_API_KEY) {
-        const content = fs.readFileSync(kPath, 'utf8');
-        const match = content.match(/re_[a-zA-Z0-9_]+/);
-        if (match) {
-            process.env.RESEND_API_KEY = match[0];
-            console.log(`[ENV] Loaded RESEND_API_KEY from ${path.basename(kPath)}`);
-            break;
-        }
-    }
-}
 
 const app = express();
 
@@ -51,30 +36,24 @@ app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProx
 const publicUrl = process.env.PUBLIC_URL
     || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined);
 
-const allowedOrigins = [
-    process.env.FRONTEND_URL,
-    publicUrl,
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:3002',
-    'http://localhost:3003',
-    'http://localhost:3004',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    'http://127.0.0.1:3002',
-    'http://127.0.0.1:3003',
-    'http://127.0.0.1:3004',
-].filter(Boolean);
+// The frontend is served from this same service, so production only needs its own public URL.
+// Outside production any local dev-server port is allowed (compared by parsed host, not by prefix).
+const allowedOrigins = new Set([process.env.FRONTEND_URL, publicUrl].filter(Boolean).map(o => (o as string).replace(/\/+$/, '')));
+
+function isLocalDevOrigin(origin: string): boolean {
+    if (process.env.NODE_ENV === 'production') return false;
+    try {
+        const url = new URL(origin);
+        return url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname) && !url.username && !url.password;
+    } catch {
+        return false;
+    }
+}
 
 app.use(cors({
-    origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. mobile apps, curl, supertest, local server)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.includes(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
-            return callback(null, true);
-        }
-        return callback(new Error('Cross-Origin Request Blocked by Security Policy'));
-    },
+    // Requests without an Origin (curl, server-to-server, tests) carry no browser credentials to protect.
+    // A refused origin simply gets no CORS headers, so the browser blocks the response.
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin)),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -98,17 +77,6 @@ app.use((_req, res, next) => {
     next();
 });
 
-import rosterRoutes from './routes/roster';
-import portalRoutes from './routes/portal';
-import submissionsRoutes from './routes/submissions';
-import holidaysRoutes from './routes/holidays';
-import reportsRoutes from './routes/reports';
-import xeroRoutes from './routes/xero';
-import auditRoutes from './routes/audit';
-import announcementsRoutes from './routes/announcements';
-import dashboardRoutes from './routes/dashboard';
-import membershipsRoutes from './routes/memberships';
-
 // Health check (used by Railway to decide the deploy succeeded)
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', uptime: process.uptime() });
@@ -116,7 +84,8 @@ app.get('/health', (_req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api', membershipsRoutes);
+app.use('/api/signup', signupRoutes);
+app.use('/api/branch-admins', branchAdminsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/employees', employeesRoutes);
 app.use('/api/records', recordsRoutes);
@@ -124,9 +93,7 @@ app.use('/api/locks', locksRoutes);
 app.use('/api/organisation', organisationRoutes);
 app.use('/api/organisation/holidays', holidaysRoutes);
 app.use('/api/locations', locationsRoutes);
-app.use('/api/platform', platformRoutes);
 app.use('/api/roster', rosterRoutes);
-app.use('/api/portal', portalRoutes);
 app.use('/api/submissions', submissionsRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/xero', xeroRoutes);
@@ -166,9 +133,9 @@ app.use('/api', (_req, res) => {
 });
 
 // Error handling
-app.use((err: any, req: any, res: any, next: any) => {
+app.use((err: any, _req: any, res: any, _next: any) => {
     console.error('[ERROR]', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } });
 });
 
 const PORT = process.env.PORT || 4000;

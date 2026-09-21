@@ -1,31 +1,25 @@
-import { sendTransactionalEmail, buildOrgInviteEmailTemplate, buildEmployeeInviteEmailTemplate } from '../src/services/emailService';
+import { sendTransactionalEmail, buildOrganisationSetupEmailTemplate, buildBranchAdminInviteEmailTemplate } from '../src/services/emailService';
 
 describe('Transactional Email Service Tests', () => {
-    it('should generate branded org invite email template with correct links and recipients', () => {
-        const inviteLink = 'http://localhost:5173/setup-org?token=testtoken123';
-        const recipientEmail = 'founder@startup.io';
-
-        const template = buildOrgInviteEmailTemplate({ inviteLink, recipientEmail });
-
-        expect(template.subject).toContain('Welcome to Elite Timesheet OS');
-        expect(template.html).toContain(inviteLink);
-        expect(template.html).toContain(recipientEmail);
-        expect(template.text).toContain(inviteLink);
-        expect(template.text).toContain(recipientEmail);
+    it('builds the organisation set-up email with the link and recipient, escaped', () => {
+        const setupLink = 'https://app.simplehours.test/setup-organisation?token=abc';
+        const template = buildOrganisationSetupEmailTemplate({ setupLink, recipientEmail: 'founder@startup.io' });
+        expect(template.subject).toBe('Set up your SimpleHours organisation');
+        expect(template.html).toContain(setupLink);
+        expect(template.text).toContain('founder@startup.io');
+        expect(template.html).not.toMatch(/Elite Timesheet/i);
     });
 
-    it('should generate branded employee invite email template with employee name', () => {
-        const inviteLink = 'http://localhost:5173/accept-invite?token=emptoken456';
-        const employeeName = 'Sarah Connor';
-        const recipientEmail = 'sarah@skynet.com';
-
-        const template = buildEmployeeInviteEmailTemplate({ inviteLink, employeeName, recipientEmail });
-
-        expect(template.subject).toContain('Timesheet Portal Account Invitation');
-        expect(template.html).toContain('Sarah Connor');
-        expect(template.html).toContain(inviteLink);
-        expect(template.text).toContain('Sarah Connor');
-        expect(template.text).toContain(recipientEmail);
+    it('builds the Branch Admin invitation naming the organisation and branches, escaping HTML', () => {
+        const template = buildBranchAdminInviteEmailTemplate({
+            inviteLink: 'https://app.simplehours.test/accept-invite?token=abc',
+            recipientEmail: 'sarah@abc.test',
+            organisationName: '<b>ABC</b> Health',
+            branchNames: ['Melbourne', 'Richmond'],
+        });
+        expect(template.text).toContain('Melbourne, Richmond');
+        expect(template.html).toContain('&lt;b&gt;ABC&lt;/b&gt; Health');
+        expect(template.html).not.toContain('<b>ABC</b>');
     });
 
     it('should dispatch email via dev-mock transport and return delivery result without credentials leak', async () => {
@@ -80,7 +74,7 @@ describe('Transactional Email Service Tests', () => {
             statusText: 'Forbidden',
             json: async () => ({
                 statusCode: 403,
-                message: 'The domain elitetimesheet.com is not verified. Please verify your domain.'
+                message: 'The domain example.com is not verified. Please verify your domain.'
             })
         } as any);
 

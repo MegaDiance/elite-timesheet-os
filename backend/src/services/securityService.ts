@@ -158,10 +158,7 @@ export async function assessLoginRisk(
         }
 
         return { isSuspicious: false };
-    } catch (err: any) {
-        if (err.message && err.message.includes('relation "login_history" does not exist')) {
-            return { isSuspicious: false };
-        }
+    } catch (err) {
         console.error('[RISK ASSESSMENT ERROR]', err);
         return { isSuspicious: false };
     }
@@ -172,8 +169,7 @@ export async function assessLoginRisk(
  */
 export async function createLoginChallenge(
     userId: string,
-    orgId: string | undefined,
-    role: string | undefined,
+    orgId: string,
     clientInfo: ClientInfo
 ): Promise<{ token: string; code: string; challengeId: string }> {
     const rawToken = crypto.randomBytes(32).toString('hex');
@@ -183,46 +179,23 @@ export async function createLoginChallenge(
     const challengeId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
 
-    try {
-        await query(
-            `INSERT INTO login_verification_challenges 
-                (id, user_id, org_id, role, token_hash, verification_code, ip_address, approx_location, user_agent, device_info, expires_at, consumed, attempts)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, 0)`,
-            [
-                challengeId,
-                userId,
-                orgId || null,
-                role || null,
-                tokenHash,
-                codeHash,
-                clientInfo.ip,
-                clientInfo.approxLocation,
-                clientInfo.userAgent,
-                clientInfo.deviceInfo,
-                expiresAt
-            ]
-        );
-    } catch {
-        // Fallback for mock schemas missing the attempts column
-        await query(
-            `INSERT INTO login_verification_challenges 
-                (id, user_id, org_id, role, token_hash, verification_code, ip_address, approx_location, user_agent, device_info, expires_at, consumed)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false)`,
-            [
-                challengeId,
-                userId,
-                orgId || null,
-                role || null,
-                tokenHash,
-                codeHash,
-                clientInfo.ip,
-                clientInfo.approxLocation,
-                clientInfo.userAgent,
-                clientInfo.deviceInfo,
-                expiresAt
-            ]
-        );
-    }
+    await query(
+        `INSERT INTO login_verification_challenges
+            (id, user_id, org_id, token_hash, verification_code, ip_address, approx_location, user_agent, device_info, expires_at, consumed, attempts)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, 0)`,
+        [
+            challengeId,
+            userId,
+            orgId,
+            tokenHash,
+            codeHash,
+            clientInfo.ip,
+            clientInfo.approxLocation,
+            clientInfo.userAgent,
+            clientInfo.deviceInfo,
+            expiresAt
+        ]
+    );
 
     return { token: rawToken, code, challengeId };
 }

@@ -210,6 +210,12 @@ export function transformPayrollToXeroTimesheets(report: PayrollReport): XeroTim
         if (emp.til_hours > 0) {
             lines.push({ earnings_rate: 'Time in Lieu (TIL)', tracking_category: emp.department, number_of_units: emp.til_hours });
         }
+        if (emp.lwip_hours > 0) {
+            lines.push({ earnings_rate: 'LWIP', tracking_category: emp.department, number_of_units: emp.lwip_hours });
+        }
+        if (emp.other_hours > 0) {
+            lines.push({ earnings_rate: 'Other', tracking_category: emp.department, number_of_units: emp.other_hours });
+        }
 
         const totalHours = Math.round(lines.reduce((acc, l) => acc + l.number_of_units, 0) * 100) / 100;
         const status = (emp.submission_status === 'Approved' || emp.submission_status === 'Locked') ? 'APPROVED' : 'DRAFT';

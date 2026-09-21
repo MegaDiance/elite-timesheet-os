@@ -1,5 +1,3 @@
-import { query } from './db';
-
 export interface ShiftClassification {
     date: string;
     dayOfWeek: string;
@@ -44,127 +42,67 @@ export function addDaysToIso(dateIso: string, n: number): string {
 }
 
 /**
- * Classifies a shift's worked hours across calendar dates, accounting for midnight crossovers.
+ * Classifies one timed segment's paid hours across calendar dates, accounting for midnight crossovers.
  * E.g. Friday 22:00 -> Saturday 02:00 splits into:
  *   - Friday: 2 hours (Normal)
  *   - Saturday: 2 hours (Saturday)
- * If a date is a public holiday, all worked hours on that calendar date are classified as public holiday hours.
- * Does NOT calculate penalty rates or multipliers.
+ * If a date is a public holiday, all work hours on that calendar date are public holiday hours.
+ *
+ * `netHours` is the segment's stored paid hours — already net of the day's break (see
+ * services/segments.ts). Classification never re-derives a break of its own, so the category
+ * columns always add up to the hours that were recorded. When a segment crosses midnight the
+ * unpaid time comes off the longer slice. Does NOT calculate penalty rates or multipliers.
  */
-export async function classifyShiftHours(
-    orgId: string,
-    recordDate: string,
-    startTime: string,
-    endTime: string,
-    segmentType: string = 'WORK'
-): Promise<ShiftClassification[]> {
-    const isLeave = ['Sick', 'Annual', 'TIL'].includes(segmentType);
-    
-    // Check public holidays for this organization
-    const holidayRes = await query('SELECT holiday_date, name FROM public_holidays WHERE org_id = $1', [orgId]);
-    const holidayMap = new Map<string, string>();
-    if (holidayRes && holidayRes.rows) {
-        holidayRes.rows.forEach((h: any) => holidayMap.set(h.holiday_date, h.name));
-    }
+export function classifySegmentHours(params: {
+    recordDate: string;
+    startTime: string;
+    endTime: string;
+    netHours: number;
+    segmentType: string;
+    holidays: Map<string, string>;
+}): ShiftClassification[] {
+    const isLeave = params.segmentType !== 'WORK';
+    const startM = timeToMinutes(params.startTime);
+    const endM = timeToMinutes(params.endTime);
+    if (startM === endM) return [];
 
-    const startM = timeToMinutes(startTime);
-    const endM = timeToMinutes(endTime);
+    const slices: { date: string; minutes: number }[] = endM > startM
+        ? [{ date: params.recordDate, minutes: endM - startM }]
+        : [
+            { date: params.recordDate, minutes: 1440 - startM },
+            { date: addDaysToIso(params.recordDate, 1), minutes: endM },
+        ];
 
-    // If times are invalid or identical
-    if (startM === endM) {
-        return [];
-    }
+    const rawMinutes = slices.reduce((acc, s) => acc + s.minutes, 0);
+    const unpaidMinutes = Math.max(0, rawMinutes - Math.round(params.netHours * 60));
+    const longerSlice = slices.length === 1 || slices[0].minutes >= slices[1].minutes ? 0 : 1;
 
-    const crossesMidnight = endM < startM;
-    const slices: { date: string, minutes: number }[] = [];
-
-    if (!crossesMidnight) {
-        // Entire shift on recordDate
-        slices.push({ date: recordDate, minutes: endM - startM });
-    } else {
-        // Shift crosses midnight into next day
-        const day1Minutes = 1440 - startM;
-        const day2Minutes = endM;
-        const nextDate = addDaysToIso(recordDate, 1);
-
-        slices.push({ date: recordDate, minutes: day1Minutes });
-        slices.push({ date: nextDate, minutes: day2Minutes });
-    }
-
-    // Query organization break configurations with safe defaults
-    let breakMinsWeekday = 30;
-    let breakMinsWeekend = 0;
-    let breakThresholdHours = 6;
-    try {
-        const orgRes = await query(
-            'SELECT break_mins_weekday, break_mins_weekend, break_threshold_hours FROM organisations WHERE id = $1',
-            [orgId]
-        );
-        if (orgRes && orgRes.rows && orgRes.rows.length > 0) {
-            const row = orgRes.rows[0];
-            breakMinsWeekday = Number(row.break_mins_weekday ?? 30);
-            breakMinsWeekend = Number(row.break_mins_weekend ?? 0);
-            breakThresholdHours = Number(row.break_threshold_hours ?? 6);
-        }
-    } catch {
-        // Fallback to defaults if table or columns not yet seeded
-    }
-
-    const startWeekday = getWeekdayName(recordDate);
-    const isHoliday = holidayMap.has(recordDate);
-    const isWeekend = !isHoliday && ['Sat', 'Sun'].includes(startWeekday);
-    const configuredBreakMins = isWeekend ? breakMinsWeekend : breakMinsWeekday;
-    const thresholdMinutes = breakThresholdHours * 60;
-
-    const totalMinutes = slices.reduce((acc, s) => acc + s.minutes, 0);
-    const breakDeductionM = totalMinutes >= thresholdMinutes ? configuredBreakMins : 0;
-    
     return slices.map((s, idx) => {
-        // Deduct break from the longer slice
-        let netMinutes = s.minutes;
-        if (breakDeductionM > 0) {
-            if (slices.length === 1) {
-                netMinutes = Math.max(0, netMinutes - breakDeductionM);
-            } else if (idx === (slices[0].minutes >= slices[1].minutes ? 0 : 1)) {
-                netMinutes = Math.max(0, netMinutes - breakDeductionM);
-            }
-        }
-
+        const netMinutes = idx === longerSlice ? Math.max(0, s.minutes - unpaidMinutes) : s.minutes;
         const hours = Math.round((netMinutes / 60) * 100) / 100;
         const weekday = getWeekdayName(s.date);
-        const isPublicHoliday = holidayMap.has(s.date);
-        const holidayName = holidayMap.get(s.date);
+        const isPublicHoliday = params.holidays.has(s.date);
 
-        let normalHours = 0;
-        let saturdayHours = 0;
-        let sundayHours = 0;
-        let publicHolidayHours = 0;
-        let leaveHours = 0;
-
-        if (isLeave) {
-            leaveHours = hours;
-        } else if (isPublicHoliday) {
-            publicHolidayHours = hours;
-        } else if (weekday === 'Sat') {
-            saturdayHours = hours;
-        } else if (weekday === 'Sun') {
-            sundayHours = hours;
-        } else {
-            normalHours = hours;
-        }
-
-        return {
+        const result: ShiftClassification = {
             date: s.date,
             dayOfWeek: weekday,
             isPublicHoliday,
-            holidayName,
-            normalHours,
-            saturdayHours,
-            sundayHours,
-            publicHolidayHours,
-            leaveHours,
-            leaveType: isLeave ? segmentType : undefined,
+            holidayName: params.holidays.get(s.date),
+            normalHours: 0,
+            saturdayHours: 0,
+            sundayHours: 0,
+            publicHolidayHours: 0,
+            leaveHours: 0,
+            leaveType: isLeave ? params.segmentType : undefined,
             totalHours: hours
         };
+
+        if (isLeave) result.leaveHours = hours;
+        else if (isPublicHoliday) result.publicHolidayHours = hours;
+        else if (weekday === 'Sat') result.saturdayHours = hours;
+        else if (weekday === 'Sun') result.sundayHours = hours;
+        else result.normalHours = hours;
+
+        return result;
     });
 }

@@ -71,24 +71,3 @@ export function parseSmartTime(val?: string): string {
     
     return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
-
-export function calcHours(
-    start?: string, 
-    end?: string, 
-    options?: { breakMins?: number; breakThresholdHours?: number }
-): number {
-    if (!start || !end) return 0;
-    const [h1, m1] = start.split(':').map(Number);
-    const [h2, m2] = end.split(':').map(Number);
-    let diff = (h2 * 60 + (m2 || 0)) - (h1 * 60 + (m1 || 0));
-    if (diff < 0) diff += 24 * 60;
-    let h = diff / 60;
-    
-    const threshold = options?.breakThresholdHours ?? 6;
-    const breakMins = options?.breakMins !== undefined ? options.breakMins : 30;
-    
-    if (breakMins > 0 && h >= threshold) {
-        h -= (breakMins / 60);
-    }
-    return Math.max(0, Math.round(h * 100) / 100);
-}

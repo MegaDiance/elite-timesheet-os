@@ -1,4 +1,4 @@
-import { parseSmartTime, calcHours } from '../src/services/timeParser';
+import { parseSmartTime } from '../src/services/timeParser';
 
 describe('timeParser', () => {
     describe('parseSmartTime', () => {
@@ -38,29 +38,6 @@ describe('timeParser', () => {
         it('should handle edge cases and invalid input', () => {
             expect(parseSmartTime('')).toBe('');
             expect(parseSmartTime('invalid')).toBe('');
-        });
-    });
-
-    describe('calcHours', () => {
-        it('should calculate basic hours without lunch break', () => {
-            expect(calcHours('09:00', '13:00')).toBe(4);
-        });
-
-        it('should calculate hours with 0.5 lunch break for shifts >= 6 hours', () => {
-            expect(calcHours('09:00', '17:00')).toBe(7.5);
-            expect(calcHours('08:30', '16:30')).toBe(7.5);
-        });
-
-        it('should handle overnight shifts (crossing midnight)', () => {
-            expect(calcHours('22:00', '02:00')).toBe(4);
-            expect(calcHours('20:00', '06:00')).toBe(9.5); // 10 hrs - 0.5 break
-        });
-
-        it('should format to 2 decimal places maximum, never 4 decimal places', () => {
-            // 09:00 to 17:10 = 8h 10m - 30m break = 7h 40m = 7.666666... hrs
-            const h = calcHours('09:00', '17:10');
-            expect(h).toBe(7.67);
-            expect(h.toString().split('.')[1]?.length || 0).toBeLessThanOrEqual(2);
         });
     });
 });

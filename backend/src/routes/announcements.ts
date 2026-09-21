@@ -1,12 +1,29 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { AccessContext, Role, badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
 
+/**
+ * Management noticeboard.
+ *
+ * The audience is the organisation's accounts: the Organisation Owner and its Branch Admins.
+ * Posts, reactions and threaded replies are organisation-wide. Any authenticated account may
+ * read, post, react and reply. Authors may delete their own posts and replies; deleting someone
+ * else's requires announcements.moderate.
+ */
 const router = Router();
-router.use(requireAuth, requireTenantContext);
+router.use(requireAuth);
 
-const isValidUUID = (val?: string | string[]) => Boolean(typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+const MAX_TITLE_LENGTH = 200;
+const MAX_CONTENT_LENGTH = 5000;
+const MAX_EMOJI_LENGTH = 32;
+
+/** Denormalised label stored with each post / reply. Display only — never used for authorisation. */
+const ROLE_LABELS: Record<Role, string> = {
+    OWNER: 'Organisation Owner',
+    BRANCH_ADMIN: 'Branch Admin',
+};
 
 interface ReactionSummary {
     emoji: string;
@@ -15,488 +32,287 @@ interface ReactionSummary {
     users: string[];
 }
 
-/**
- * Aggregates raw reaction rows into grouped summaries with user details
- */
-function aggregateReactions(rows: any[], currentUserId?: string): Record<string, ReactionSummary[]> {
-    const map: Record<string, Record<string, { count: number; user_reacted: boolean; users: string[] }>> = {};
-    for (const r of rows) {
-        if (!map[r.announcement_id]) {
-            map[r.announcement_id] = {};
-        }
-        if (!map[r.announcement_id][r.emoji]) {
-            map[r.announcement_id][r.emoji] = { count: 0, user_reacted: false, users: [] };
-        }
-        map[r.announcement_id][r.emoji].count += 1;
-        if (r.user_name) {
-            map[r.announcement_id][r.emoji].users.push(r.user_name);
-        }
-        if (r.user_id === currentUserId) {
-            map[r.announcement_id][r.emoji].user_reacted = true;
-        }
-    }
+const authorName = (ctx: AccessContext) => ctx.fullName || ctx.email;
+const canModerate = (ctx: AccessContext) => hasPermission(ctx, Permission.ANNOUNCEMENTS_MODERATE);
+const canDelete = (ctx: AccessContext, authorId: string | null) => canModerate(ctx) || authorId === ctx.userId;
 
+function readContent(value: unknown, emptyMessage: string): string {
+    const content = typeof value === 'string' ? value.trim() : '';
+    if (!content) throw badRequest('VALIDATION_FAILED', emptyMessage);
+    if (content.length > MAX_CONTENT_LENGTH) {
+        throw badRequest('VALIDATION_FAILED', `Messages can be ${MAX_CONTENT_LENGTH} characters at most.`);
+    }
+    return content;
+}
+
+function readTitle(value: unknown): string | null {
+    const title = typeof value === 'string' ? value.trim() : '';
+    if (title.length > MAX_TITLE_LENGTH) {
+        throw badRequest('VALIDATION_FAILED', `Titles can be ${MAX_TITLE_LENGTH} characters at most.`);
+    }
+    return title || null;
+}
+
+/** Groups raw reaction rows into per-announcement emoji summaries. */
+function aggregateReactions(rows: any[], currentUserId: string): Record<string, ReactionSummary[]> {
     const result: Record<string, ReactionSummary[]> = {};
-    for (const [annId, emojis] of Object.entries(map)) {
-        result[annId] = Object.entries(emojis).map(([emoji, meta]) => ({
-            emoji,
-            count: meta.count,
-            user_reacted: meta.user_reacted,
-            users: meta.users
-        }));
+    for (const row of rows) {
+        const summaries = result[row.announcement_id] || (result[row.announcement_id] = []);
+        let summary = summaries.find(s => s.emoji === row.emoji);
+        if (!summary) {
+            summary = { emoji: row.emoji, count: 0, user_reacted: false, users: [] };
+            summaries.push(summary);
+        }
+        summary.count += 1;
+        if (row.user_name) summary.users.push(row.user_name);
+        if (row.user_id === currentUserId) summary.user_reacted = true;
     }
     return result;
 }
 
+/** Loads a post of the caller's organisation. Anything else (bad id, other tenant) is a 404. */
+async function loadAnnouncement(ctx: AccessContext, id: unknown): Promise<{ id: string; author_id: string | null; title: string | null }> {
+    if (!isUuid(id)) throw notFound('Announcement');
+    const res = await query('SELECT id, author_id, title FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, ctx.orgId]);
+    if (res.rows.length === 0) throw notFound('Announcement');
+    return res.rows[0];
+}
+
 /**
  * GET /api/announcements
- * Lists announcements with reactions, replies count, attached replies, and tenant chat permissions.
+ * The latest 50 posts with their reactions and replies.
  */
 router.get('/', async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        if (!orgId) {
-            return res.status(400).json({ success: false, error: { message: 'Organisation context required.' } });
-        }
+        const ctx = req.auth!;
 
-        const role = req.user?.role || 'Employee';
-        const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
-
-        // Fetch announcements
-        const annRes = await query(
+        const posts = await query(
             `SELECT id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type, created_at
-             FROM organisation_announcements 
-             WHERE org_id = $1 
-             ORDER BY created_at DESC 
-             LIMIT 50`,
-            [orgId]
+               FROM organisation_announcements
+              WHERE org_id = $1
+              ORDER BY created_at DESC
+              LIMIT 50`,
+            [ctx.orgId]
         );
+        const postIds = posts.rows.map((p: any) => p.id);
 
-        // Fetch reactions
-        let reactionsMap: Record<string, ReactionSummary[]> = {};
-        try {
-            const reactRes = await query(
-                `SELECT announcement_id, emoji, user_id, user_name 
-                 FROM announcement_reactions 
-                 WHERE org_id = $1`,
-                [orgId]
-            );
-            reactionsMap = aggregateReactions(reactRes.rows, req.user?.id);
-        } catch {
-            // fallback if reactions table is being initialized
-        }
-
-        // Fetch replies
-        let repliesMap: Record<string, any[]> = {};
-        try {
-            const repliesRes = await query(
+        const [reactions, replies] = await Promise.all([
+            query(
+                `SELECT announcement_id, emoji, user_id, user_name
+                   FROM announcement_reactions
+                  WHERE org_id = $1 AND announcement_id = ANY($2::uuid[])
+                  ORDER BY created_at ASC`,
+                [ctx.orgId, postIds]
+            ),
+            query(
                 `SELECT id, announcement_id, org_id, author_id, author_name, author_role, content, created_at
-                 FROM announcement_replies
-                 WHERE org_id = $1
-                 ORDER BY created_at ASC`,
-                [orgId]
-            );
-            for (const reply of repliesRes.rows) {
-                if (!repliesMap[reply.announcement_id]) {
-                    repliesMap[reply.announcement_id] = [];
-                }
-                repliesMap[reply.announcement_id].push(reply);
-            }
-        } catch {
-            // fallback
+                   FROM announcement_replies
+                  WHERE org_id = $1 AND announcement_id = ANY($2::uuid[])
+                  ORDER BY created_at ASC`,
+                [ctx.orgId, postIds]
+            ),
+        ]);
+
+        const reactionsByPost = aggregateReactions(reactions.rows, ctx.userId);
+        const repliesByPost: Record<string, any[]> = {};
+        for (const reply of replies.rows) {
+            (repliesByPost[reply.announcement_id] || (repliesByPost[reply.announcement_id] = []))
+                .push({ ...reply, can_delete: canDelete(ctx, reply.author_id) });
         }
 
-        // Fetch chat permissions
-        let allowEmployeeChat = true;
-        try {
-            const orgRes = await query('SELECT allow_employee_chat FROM organisations WHERE id = $1', [orgId]);
-            if (orgRes.rows.length > 0 && orgRes.rows[0].allow_employee_chat !== null && orgRes.rows[0].allow_employee_chat !== undefined) {
-                allowEmployeeChat = Boolean(orgRes.rows[0].allow_employee_chat);
-            }
-        } catch {}
-
-        const announcements = annRes.rows.map((ann: any) => {
-            const replies = repliesMap[ann.id] || [];
+        const data = posts.rows.map((post: any) => {
+            const postReplies = repliesByPost[post.id] || [];
             return {
-                ...ann,
-                reactions: reactionsMap[ann.id] || [],
-                replies,
-                reply_count: replies.length
+                ...post,
+                can_delete: canDelete(ctx, post.author_id),
+                reactions: reactionsByPost[post.id] || [],
+                replies: postReplies,
+                reply_count: postReplies.length,
             };
         });
 
         res.json({
             success: true,
-            data: announcements,
-            permissions: {
-                allow_employee_chat: allowEmployeeChat,
-                can_post: isMgmt || allowEmployeeChat
-            }
+            data,
+            permissions: { can_post: true, can_moderate: canModerate(ctx) },
         });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS GET ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve announcements.' } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS LIST ERROR');
     }
 });
 
 /**
- * POST /api/announcements
- * Allows organisation members to post, respecting allow_employee_chat permissions.
+ * POST /api/announcements  { title?, content }
  */
-router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/', async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const { title, content } = req.body;
+        const ctx = req.auth!;
+        const title = readTitle(req.body?.title);
+        const content = readContent(req.body?.content, 'Announcement content is required.');
 
-        if (!content || !content.trim()) {
-            return res.status(400).json({ success: false, error: { message: 'Announcement content is required.' } });
-        }
-
-        const role = req.user?.role || 'Employee';
-        const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
-
-        // Check if employee chat is permitted
-        if (!isMgmt) {
-            try {
-                const orgRes = await query('SELECT allow_employee_chat FROM organisations WHERE id = $1', [orgId]);
-                if (orgRes.rows.length > 0 && orgRes.rows[0].allow_employee_chat === false) {
-                    return res.status(403).json({
-                        success: false,
-                        error: {
-                            code: 'CHAT_DISABLED',
-                            message: 'Team chat has been restricted to management by administrators.'
-                        }
-                    });
-                }
-            } catch {}
-        }
-
-        let authorName = req.user?.email ? req.user.email.split('@')[0] : 'Team Member';
-        try {
-            const emp = await query('SELECT full_name FROM employees WHERE user_id = $1 AND org_id = $2', [req.user?.id, orgId]);
-            if (emp.rows.length > 0 && emp.rows[0].full_name) {
-                authorName = emp.rows[0].full_name;
-            }
-        } catch {}
-
-        const id = crypto.randomUUID();
-        const isEmployee = role === 'Employee';
-
-        await query(
+        const inserted = await query(
             `INSERT INTO organisation_announcements (id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [
-                id,
-                orgId,
-                req.user?.id,
-                authorName,
-                role,
-                title?.trim() || null,
-                content.trim(),
-                false,
-                isEmployee ? 'team_message' : 'general'
-            ]
+             VALUES ($1, $2, $3, $4, $5, $6, $7, false, 'general')
+             RETURNING id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type, created_at`,
+            [crypto.randomUUID(), ctx.orgId, ctx.userId, authorName(ctx), ROLE_LABELS[ctx.role], title, content]
         );
 
-        res.json({
+        res.status(201).json({
             success: true,
-            data: {
-                id,
-                org_id: orgId,
-                title: title?.trim() || null,
-                content: content.trim(),
-                author_id: req.user?.id,
-                author_name: authorName,
-                author_role: role,
-                announcement_type: isEmployee ? 'team_message' : 'general',
-                is_system: false,
-                reactions: [],
-                replies: [],
-                reply_count: 0,
-                created_at: new Date().toISOString()
-            }
+            data: { ...inserted.rows[0], can_delete: true, reactions: [], replies: [], reply_count: 0 },
         });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS POST ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to publish announcement.' } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS POST ERROR');
     }
 });
 
 /**
- * POST /api/announcements/:id/reactions
- * Toggles an emoji reaction on an announcement (adds if not exists, removes if exists).
+ * POST /api/announcements/:id/reactions  { emoji }
+ * Toggles the caller's reaction: removes it when present, adds it otherwise.
  */
-router.post('/:id/reactions', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/:id/reactions', async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const { id } = req.params;
-        const { emoji } = req.body;
+        const ctx = req.auth!;
+        const announcement = await loadAnnouncement(ctx, req.params.id);
 
-        if (!isValidUUID(id)) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
-        }
+        const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji.trim() : '';
+        if (!emoji || emoji.length > MAX_EMOJI_LENGTH) throw badRequest('VALIDATION_FAILED', 'Valid emoji is required.');
 
-        if (!emoji || typeof emoji !== 'string' || !emoji.trim()) {
-            return res.status(400).json({ success: false, error: { message: 'Valid emoji is required.' } });
-        }
-
-        const cleanEmoji = emoji.trim();
-
-        // Verify announcement exists in organisation
-        const ann = await query('SELECT id FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
-        if (ann.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
-        }
-
-        // Check if user already reacted with this emoji
-        const existing = await query(
-            'SELECT id FROM announcement_reactions WHERE announcement_id = $1 AND org_id = $2 AND user_id = $3 AND emoji = $4',
-            [id, orgId, req.user?.id, cleanEmoji]
+        const removed = await query(
+            'DELETE FROM announcement_reactions WHERE announcement_id = $1 AND org_id = $2 AND user_id = $3 AND emoji = $4 RETURNING id',
+            [announcement.id, ctx.orgId, ctx.userId, emoji]
         );
-
-        if (existing.rows.length > 0) {
-            // Toggle off: remove reaction
-            await query('DELETE FROM announcement_reactions WHERE id = $1', [existing.rows[0].id]);
-        } else {
-            // Toggle on: add reaction
-            let userName = req.user?.email ? req.user.email.split('@')[0] : 'Colleague';
-            try {
-                const emp = await query('SELECT full_name FROM employees WHERE user_id = $1 AND org_id = $2', [req.user?.id, orgId]);
-                if (emp.rows.length > 0 && emp.rows[0].full_name) {
-                    userName = emp.rows[0].full_name;
-                }
-            } catch {}
-
+        if (removed.rows.length === 0) {
             await query(
                 `INSERT INTO announcement_reactions (id, announcement_id, org_id, user_id, user_name, emoji)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
-                [crypto.randomUUID(), id, orgId, req.user?.id, userName, cleanEmoji]
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (announcement_id, user_id, emoji) DO NOTHING`,
+                [crypto.randomUUID(), announcement.id, ctx.orgId, ctx.userId, authorName(ctx), emoji]
             );
         }
 
-        // Return updated reactions for this announcement
-        const updatedRows = await query(
-            'SELECT announcement_id, emoji, user_id, user_name FROM announcement_reactions WHERE announcement_id = $1 AND org_id = $2',
-            [id, orgId]
+        const updated = await query(
+            `SELECT announcement_id, emoji, user_id, user_name
+               FROM announcement_reactions
+              WHERE announcement_id = $1 AND org_id = $2
+              ORDER BY created_at ASC`,
+            [announcement.id, ctx.orgId]
         );
-        const announcementId = String(id);
-        const aggregated = aggregateReactions(updatedRows.rows, req.user?.id)[announcementId] || [];
 
         res.json({
             success: true,
             data: {
-                announcement_id: announcementId,
-                reactions: aggregated
-            }
+                announcement_id: announcement.id,
+                reactions: aggregateReactions(updated.rows, ctx.userId)[announcement.id] || [],
+            },
         });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS REACTION ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update reaction.' } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS REACTION ERROR');
     }
 });
 
 /**
  * GET /api/announcements/:id/replies
- * Retrieves threaded replies for a specific announcement.
  */
-router.get('/:id/replies', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/:id/replies', async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const { id } = req.params;
-
-        const ann = await query('SELECT id FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
-        if (ann.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
-        }
+        const ctx = req.auth!;
+        const announcement = await loadAnnouncement(ctx, req.params.id);
 
         const replies = await query(
             `SELECT id, announcement_id, org_id, author_id, author_name, author_role, content, created_at
-             FROM announcement_replies
-             WHERE announcement_id = $1 AND org_id = $2
-             ORDER BY created_at ASC`,
-            [id, orgId]
-        );
-
-        res.json({ success: true, data: replies.rows });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS GET REPLIES ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve replies.' } });
-    }
-});
-
-/**
- * POST /api/announcements/:id/replies
- * Adds a reply to an announcement thread.
- */
-router.post('/:id/replies', requireAuth, async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const { id } = req.params;
-        const { content } = req.body;
-
-        if (!isValidUUID(id)) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
-        }
-
-        if (!content || !content.trim()) {
-            return res.status(400).json({ success: false, error: { message: 'Reply content cannot be empty.' } });
-        }
-
-        // Verify announcement exists in tenant
-        const ann = await query('SELECT id FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
-        if (ann.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
-        }
-
-        const role = req.user?.role || 'Employee';
-        const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
-
-        // Check if employee chat is permitted
-        if (!isMgmt) {
-            try {
-                const orgRes = await query('SELECT allow_employee_chat FROM organisations WHERE id = $1', [orgId]);
-                if (orgRes.rows.length > 0 && orgRes.rows[0].allow_employee_chat === false) {
-                    return res.status(403).json({
-                        success: false,
-                        error: {
-                            code: 'CHAT_DISABLED',
-                            message: 'Team chat has been restricted to management by administrators.'
-                        }
-                    });
-                }
-            } catch {}
-        }
-
-        let authorName = req.user?.email ? req.user.email.split('@')[0] : 'Team Member';
-        try {
-            const emp = await query('SELECT full_name FROM employees WHERE user_id = $1 AND org_id = $2', [req.user?.id, orgId]);
-            if (emp.rows.length > 0 && emp.rows[0].full_name) {
-                authorName = emp.rows[0].full_name;
-            }
-        } catch {}
-
-        const replyId = crypto.randomUUID();
-        await query(
-            `INSERT INTO announcement_replies (id, announcement_id, org_id, author_id, author_name, author_role, content)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [replyId, id, orgId, req.user?.id, authorName, role, content.trim()]
+               FROM announcement_replies
+              WHERE announcement_id = $1 AND org_id = $2
+              ORDER BY created_at ASC`,
+            [announcement.id, ctx.orgId]
         );
 
         res.json({
             success: true,
-            data: {
-                id: replyId,
-                announcement_id: id,
-                org_id: orgId,
-                author_id: req.user?.id,
-                author_name: authorName,
-                author_role: role,
-                content: content.trim(),
-                created_at: new Date().toISOString()
-            }
+            data: replies.rows.map((reply: any) => ({ ...reply, can_delete: canDelete(ctx, reply.author_id) })),
         });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS POST REPLY ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to post reply.' } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS REPLIES ERROR');
+    }
+});
+
+/**
+ * POST /api/announcements/:id/replies  { content }
+ */
+router.post('/:id/replies', async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const announcement = await loadAnnouncement(ctx, req.params.id);
+        const content = readContent(req.body?.content, 'Reply content cannot be empty.');
+
+        const inserted = await query(
+            `INSERT INTO announcement_replies (id, announcement_id, org_id, author_id, author_name, author_role, content)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, announcement_id, org_id, author_id, author_name, author_role, content, created_at`,
+            [crypto.randomUUID(), announcement.id, ctx.orgId, ctx.userId, authorName(ctx), ROLE_LABELS[ctx.role], content]
+        );
+
+        res.status(201).json({ success: true, data: { ...inserted.rows[0], can_delete: true } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS REPLY ERROR');
     }
 });
 
 /**
  * DELETE /api/announcements/:id/replies/:replyId
- * Deletes a reply (authors can delete own replies; management can moderate all replies).
+ * Authors delete their own replies; anyone else's needs announcements.moderate.
  */
-router.delete('/:id/replies/:replyId', requireAuth, async (req: AuthRequest, res: Response) => {
+router.delete('/:id/replies/:replyId', async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
+        const ctx = req.auth!;
         const { id, replyId } = req.params;
-        const userRole = req.user?.role || 'Employee';
-        const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(userRole);
-
-        if (!isValidUUID(id) || !isValidUUID(replyId)) {
-            return res.status(404).json({ success: false, error: { message: 'Reply not found.' } });
-        }
+        if (!isUuid(id) || !isUuid(replyId)) throw notFound('Reply');
 
         const existing = await query(
-            'SELECT author_id FROM announcement_replies WHERE id = $1 AND announcement_id = $2 AND org_id = $3',
-            [replyId, id, orgId]
+            'SELECT id, author_id FROM announcement_replies WHERE id = $1 AND announcement_id = $2 AND org_id = $3',
+            [replyId, id, ctx.orgId]
         );
+        const reply = existing.rows[0];
+        if (!reply) throw notFound('Reply');
+        if (!canDelete(ctx, reply.author_id)) throw forbidden('You can only delete your own replies.');
 
-        if (existing.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { message: 'Reply not found.' } });
+        await query('DELETE FROM announcement_replies WHERE id = $1 AND org_id = $2', [reply.id, ctx.orgId]);
+        if (reply.author_id !== ctx.userId) {
+            await writeAudit({
+                orgId: ctx.orgId, actorId: ctx.userId, action: 'ANNOUNCEMENT_REPLY_MODERATED', entityType: 'announcement_reply',
+                entityId: reply.id, targetUserId: reply.author_id, details: 'Removed a reply written by another account',
+            });
         }
-
-        if (!isMgmt && existing.rows[0].author_id !== req.user?.id) {
-            return res.status(403).json({ success: false, error: { message: 'You can only delete your own replies.' } });
-        }
-
-        await query('DELETE FROM announcement_replies WHERE id = $1 AND org_id = $2', [replyId, orgId]);
 
         res.json({ success: true, message: 'Reply deleted.' });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS DELETE REPLY ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete reply.' } });
-    }
-});
-
-/**
- * PATCH /api/announcements/permissions
- * Allows administrators and managers to toggle whether employees can participate in chat.
- */
-router.patch('/permissions', requireAuth, requireRole(['Admin', 'Company Admin', 'Platform Admin', 'Manager']), async (req: AuthRequest, res: Response) => {
-    try {
-        const orgId = req.user?.organisation_id;
-        const { allow_employee_chat } = req.body;
-
-        const val = allow_employee_chat !== false;
-        await query('UPDATE organisations SET allow_employee_chat = $1 WHERE id = $2', [val, orgId]);
-
-        res.json({
-            success: true,
-            allow_employee_chat: val,
-            message: val ? 'Employee chat is now enabled.' : 'Employee chat has been restricted.'
-        });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS PERMISSIONS ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update permissions.' } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS REPLY DELETE ERROR');
     }
 });
 
 /**
  * DELETE /api/announcements/:id
- * Allows managers/admins to delete any announcement, or employees to delete their own messages.
+ * Authors delete their own posts; anyone else's needs announcements.moderate.
+ * Reactions and replies go with the post (ON DELETE CASCADE).
  */
-router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const { id } = req.params;
-        const userRole = req.user?.role || 'Employee';
-        const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(userRole);
+        const ctx = req.auth!;
+        const announcement = await loadAnnouncement(ctx, req.params.id);
+        if (!canDelete(ctx, announcement.author_id)) throw forbidden('You can only delete your own messages.');
 
-        if (!isValidUUID(id)) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
+        await query('DELETE FROM organisation_announcements WHERE id = $1 AND org_id = $2', [announcement.id, ctx.orgId]);
+        if (announcement.author_id !== ctx.userId) {
+            await writeAudit({
+                orgId: ctx.orgId, actorId: ctx.userId, action: 'ANNOUNCEMENT_MODERATED', entityType: 'announcement',
+                entityId: announcement.id, targetUserId: announcement.author_id,
+                details: `Removed a post written by another account${announcement.title ? `: "${announcement.title}"` : ''}`,
+            });
         }
-
-        const existing = await query('SELECT author_id FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
-        if (existing.rows.length === 0) {
-            return res.status(404).json({ success: false, error: { message: 'Announcement not found.' } });
-        }
-
-        if (!isMgmt && existing.rows[0].author_id !== req.user?.id) {
-            return res.status(403).json({ success: false, error: { message: 'You can only delete your own messages.' } });
-        }
-
-        // Delete cascade replies and reactions
-        try {
-            await query('DELETE FROM announcement_reactions WHERE announcement_id = $1 AND org_id = $2', [id, orgId]);
-            await query('DELETE FROM announcement_replies WHERE announcement_id = $1 AND org_id = $2', [id, orgId]);
-        } catch {}
-
-        await query('DELETE FROM organisation_announcements WHERE id = $1 AND org_id = $2', [id, orgId]);
 
         res.json({ success: true, message: 'Announcement deleted.' });
-    } catch (err: any) {
-        console.error('[ANNOUNCEMENTS DELETE ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete announcement.' } });
+    } catch (err) {
+        sendError(res, err, 'ANNOUNCEMENTS DELETE ERROR');
     }
 });
 

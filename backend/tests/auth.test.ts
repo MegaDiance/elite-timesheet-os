@@ -1,96 +1,174 @@
+/**
+ * Authentication: login through the private organisation link, generic failures, organisation
+ * choice, two-step verification, sessions, password reset. Real PostgreSQL, real sessions.
+ */
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import app from '../src/index';
-import { newDb } from 'pg-mem';
-import { setPool } from '../src/services/db';
-import { clearAllRateLimits } from '../src/routes/auth';
+import { clearAllRateLimits } from '../src/services/authUtils';
+import { getTestOutbox, clearTestOutbox } from '../src/services/emailService';
+import { connectTestDb, resetTestDb, closeTestDb, sql } from './helpers/testDb';
+import { PASSWORD, World, bearer, buildWorld, createUser } from './helpers/fixtures';
 
-describe('Auth Routes', () => {
-    beforeAll(async () => {
-        const db = newDb();
-        db.public.registerFunction({
-            name: 'gen_random_uuid',
-            args: [],
-            returns: 'uuid',
-            implementation: () => '123e4567-e89b-12d3-a456-426614174000',
-        });
-        
-        db.public.none(`
-            CREATE TABLE organisations (id UUID PRIMARY KEY, name TEXT);
-            CREATE TABLE organisation_members(user_id UUID, role TEXT, organisation_id UUID); 
-            CREATE TABLE users (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                org_id UUID,
-                role TEXT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT,
-                two_factor_enabled BOOLEAN DEFAULT false,
-                is_active BOOLEAN DEFAULT true,
-                created_at TIMESTAMP DEFAULT NOW()
-            );
-        `);
-        
-        const { hashPassword } = require('../src/services/auth');
-        const hash = await hashPassword('password123');
-        db.public.none(`INSERT INTO users (email, password_hash, role) VALUES ('test@elite.local', '` + hash + `', 'Company Admin')`);
+let w: World;
+beforeAll(connectTestDb);
+afterAll(closeTestDb);
+beforeEach(async () => {
+    await resetTestDb();
+    clearAllRateLimits();
+    clearTestOutbox();
+    w = await buildWorld();
+});
 
-        const Pool = db.adapters.createPg().Pool;
-        setPool(new Pool());
-        clearAllRateLimits();
-    });
+const login = (email: string, password = PASSWORD, extra: object = {}) =>
+    request(app).post('/api/auth/login').send({ email, password, ...extra });
+const lastMailTo = (to: string) => [...getTestOutbox()].reverse().find(m => m.to === to)!;
 
-    beforeEach(() => {
-        clearAllRateLimits();
-    });
-
-    afterAll(() => {
-        clearAllRateLimits();
-    });
-
-    it('should fail with missing credentials', async () => {
-        const res = await request(app).post('/api/auth/login').send({});
-        expect(res.status).toBe(400);
-    });
-
-    it('should login with correct credentials', async () => {
-        const res = await request(app).post('/api/auth/login').send({
-            email: 'test@elite.local',
-            password: 'password123'
-        });
+describe('login', () => {
+    it('the Owner signs in through the private link and gets OWNER over every branch', async () => {
+        const res = await login(w.users.owner.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
         expect(res.status).toBe(200);
-        expect(res.body.success).toBe(true);
-        expect(res.body.data.token).toBeDefined();
+        expect(res.body.data.role).toBe('OWNER');
+        expect(res.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Geelong', 'Melbourne', 'Richmond']);
     });
 
-    it('should reject unauthorized organisation switching', async () => {
-        const loginRes = await request(app).post('/api/auth/login').send({
-            email: 'test@elite.local',
-            password: 'password123'
-        });
-        expect(loginRes.status).toBe(200);
-        const token = loginRes.body.data.token;
-
-        const switchRes = await request(app)
-            .post('/api/auth/switch-organisation')
-            .set('Authorization', `Bearer ${token}`)
-            .send({ organisation_id: '123e4567-e89b-12d3-a456-999999999999' });
-
-        expect(switchRes.status).toBe(403);
+    it('a Branch Admin gets BRANCH_ADMIN over their assigned branches only', async () => {
+        const res = await login(w.users.sarah.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
+        expect(res.body.data.role).toBe('BRANCH_ADMIN');
+        expect(res.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Melbourne', 'Richmond']);
+        expect(res.body.data.permissions).not.toContain('branch_admins.manage');
     });
 
-    it('should fail and rate limit after 5 failed attempts', async () => {
-        for(let i=0; i<5; i++) {
-            const res = await request(app).post('/api/auth/login').send({
-                email: 'test@elite.local',
-                password: 'wrong'
-            });
+    it('the token carries identity only: no role, organisation or branch', async () => {
+        const res = await login(w.users.owner.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
+        const claims = jwt.decode(res.body.data.token) as any;
+        expect(Object.keys(claims).sort()).toEqual(['exp', 'iat', 'sid', 'sub']);
+    });
+
+    it('wrong password, unknown email, no access to that organisation and an unknown link all look the same', async () => {
+        const responses = [
+            await login(w.users.owner.email, 'WrongPassword1', { organisation_slug: w.abc.portalSlug }),
+            await login('nobody@abc.test', PASSWORD, { organisation_slug: w.abc.portalSlug }),
+            await login(w.users.xavier.email, PASSWORD, { organisation_slug: w.abc.portalSlug }),
+            await login(w.users.owner.email, PASSWORD, { organisation_slug: 'not-a-real-link' }),
+        ];
+        for (const res of responses) {
             expect(res.status).toBe(401);
+            expect(res.body).toEqual({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.' } });
         }
+    });
 
-        const blocked = await request(app).post('/api/auth/login').send({
-            email: 'test@elite.local',
-            password: 'wrong'
-        });
-        expect(blocked.status).toBe(429);
+    it('an account with no organisation access, or a deactivated account, cannot sign in', async () => {
+        await createUser('orphan@abc.test');
+        expect((await login('orphan@abc.test')).status).toBe(401);
+        await sql('UPDATE users SET is_active = false WHERE id = $1', [w.users.sarah.id]);
+        expect((await login(w.users.sarah.email)).status).toBe(401);
+    });
+
+    it('without a link, someone with access to two organisations chooses one', async () => {
+        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
+        const choose = await login(w.users.greg.email);
+        expect(choose.body.require_organisation_selection).toBe(true);
+        expect(choose.body.organisations.map((o: any) => o.name).sort()).toEqual(['ABC Health', 'XYZ Care']);
+        const chosen = await login(w.users.greg.email, PASSWORD, { organisation_id: w.xyz.id });
+        expect(chosen.body.data.organisation.name).toBe('XYZ Care');
+    });
+
+    it('five failed attempts lock the email out for 15 minutes', async () => {
+        for (let i = 0; i < 5; i++) await login(w.users.owner.email, 'WrongPassword1');
+        expect((await login(w.users.owner.email)).status).toBe(429);
     });
 });
 
+describe('two-step verification', () => {
+    it('requires the emailed code; the pending token cannot call the API', async () => {
+        await sql('UPDATE users SET two_factor_enabled = true WHERE id = $1', [w.users.sarah.id]);
+        const first = await login(w.users.sarah.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
+        expect(first.body.require_2fa).toBe(true);
+        expect((await request(app).get('/api/auth/me').set(bearer(first.body.temp_token))).status).toBe(401);
+
+        const code = /\b(\d{6})\b/.exec(lastMailTo(w.users.sarah.email).text || '')![1];
+        const wrong = await request(app).post('/api/auth/verify-2fa').send({ temp_token: first.body.temp_token, code: code === '000000' ? '111111' : '000000' });
+        expect(wrong.status).toBe(400);
+        const ok = await request(app).post('/api/auth/verify-2fa').send({ temp_token: first.body.temp_token, code });
+        expect(ok.status).toBe(200);
+        expect(ok.body.data.role).toBe('BRANCH_ADMIN');
+    });
+
+    it('a code is refused once the account has lost access in between', async () => {
+        await sql('UPDATE users SET two_factor_enabled = true WHERE id = $1', [w.users.greg.id]);
+        const first = await login(w.users.greg.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
+        await sql('DELETE FROM branch_admins WHERE user_id = $1', [w.users.greg.id]);
+        const code = /\b(\d{6})\b/.exec(lastMailTo(w.users.greg.email).text || '')![1];
+        const res = await request(app).post('/api/auth/verify-2fa').send({ temp_token: first.body.temp_token, code });
+        expect(res.status).toBe(401);
+    });
+});
+
+describe('sessions', () => {
+    it('sign-out revokes the server session', async () => {
+        await request(app).post('/api/auth/logout').set(bearer(w.tokens.sarah));
+        expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.sarah))).status).toBe(401);
+    });
+
+    it('15 minutes of inactivity ends the session', async () => {
+        const { sid } = jwt.decode(w.tokens.sarah) as any;
+        await sql("UPDATE sessions SET last_active_at = NOW() - INTERVAL '16 minutes' WHERE id = $1", [sid]);
+        const res = await request(app).get('/api/auth/me').set(bearer(w.tokens.sarah));
+        expect(res.status).toBe(401);
+        expect(res.body.code).toBe('SESSION_EXPIRED');
+    });
+
+    it('switching organisation needs access there and replaces the session', async () => {
+        expect((await request(app).post('/api/auth/switch-organisation').set(bearer(w.tokens.sarah)).send({ organisation_id: w.xyz.id })).status).toBe(403);
+        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.sarah.id]);
+        const res = await request(app).post('/api/auth/switch-organisation').set(bearer(w.tokens.sarah)).send({ organisation_id: w.xyz.id });
+        expect(res.status).toBe(200);
+        expect(res.body.data.organisation.name).toBe('XYZ Care');
+        expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.sarah))).status).toBe(401);
+    });
+
+    it('you can revoke only your own sessions', async () => {
+        const { sid } = jwt.decode(w.tokens.greg) as any;
+        expect((await request(app).post('/api/auth/security/revoke-session').set(bearer(w.tokens.sarah)).send({ session_id: sid })).status).toBe(404);
+        expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.greg))).status).toBe(200);
+    });
+});
+
+describe('password reset', () => {
+    it('the emailed token works once, only as the raw token, and ends every session', async () => {
+        const generic = await request(app).post('/api/auth/forgot-password').send({ email: 'nobody@abc.test' });
+        const real = await request(app).post('/api/auth/forgot-password').send({ email: w.users.sarah.email });
+        expect(generic.body).toEqual(real.body);
+
+        const token = /token=([a-f0-9]{64})/.exec(lastMailTo(w.users.sarah.email).text || '')![1];
+        const hash = crypto.createHash('sha256').update(token).digest('hex');
+        expect((await request(app).post('/api/auth/reset-password').send({ token: hash, password: 'NewPassword1' })).status).toBe(400);
+        expect((await request(app).post('/api/auth/reset-password').send({ token, password: 'short' })).status).toBe(400);
+        expect((await request(app).post('/api/auth/reset-password').send({ token, password: 'NewPassword1' })).status).toBe(200);
+        expect((await request(app).post('/api/auth/reset-password').send({ token, password: 'NewPassword2' })).status).toBe(400);
+
+        expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.sarah))).status).toBe(401);
+        expect((await login(w.users.sarah.email, 'NewPassword1', { organisation_slug: w.abc.portalSlug })).status).toBe(200);
+    });
+});
+
+describe('private sign-in link', () => {
+    it('the public lookup returns display fields only, and a regenerated link stops working', async () => {
+        const res = await request(app).get(`/api/organisation/lookup/${w.abc.portalSlug}`);
+        expect(res.body.data).toEqual({ name: 'ABC Health', logo_url: null });
+
+        const regen = await request(app).post('/api/organisation/regenerate-portal-url').set(bearer(w.tokens.owner));
+        expect((await request(app).get(`/api/organisation/lookup/${w.abc.portalSlug}`)).status).toBe(404);
+        expect((await login(w.users.sarah.email, PASSWORD, { organisation_slug: w.abc.portalSlug })).status).toBe(401);
+        expect((await login(w.users.sarah.email, PASSWORD, { organisation_slug: regen.body.data.portal_slug })).status).toBe(200);
+    });
+
+    it('only the Owner is shown the private link', async () => {
+        const owner = await request(app).get('/api/organisation/me').set(bearer(w.tokens.owner));
+        const admin = await request(app).get('/api/organisation/me').set(bearer(w.tokens.sarah));
+        expect(owner.body.data.portal_slug).toBe(w.abc.portalSlug);
+        expect(admin.body.data.portal_slug).toBeUndefined();
+    });
+});

@@ -9,7 +9,8 @@ export interface SessionRecord {
     id: string;
     user_id: string;
     org_id?: string;
-    location_id?: string;
+    user_email: string;
+    user_full_name: string | null;
     ip_address?: string;
     approx_location?: string;
     device_info?: string;
@@ -30,65 +31,35 @@ export interface SessionValidationResult {
 const touchThrottleMap = new Map<string, number>();
 
 /**
- * Creates a new server-side session
+ * Creates a new server-side session bound to one organisation.
  */
 export async function createSession(
     userId: string,
-    orgId: string | undefined,
-    clientInfo: ClientInfo,
-    locationId?: string | null
-): Promise<{ sessionId: string; tokenHash: string }> {
+    orgId: string,
+    clientInfo: ClientInfo
+): Promise<{ sessionId: string }> {
     const sessionId = crypto.randomUUID();
-    const tokenIdentifier = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(tokenIdentifier).digest('hex');
+    const tokenHash = crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex');
+    const expiresAt = new Date(Date.now() + SESSION_MAX_LIFETIME_MS).toISOString();
 
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + SESSION_MAX_LIFETIME_MS).toISOString();
+    await query(
+        `INSERT INTO sessions
+            (id, user_id, org_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, true, NOW())`,
+        [
+            sessionId,
+            userId,
+            orgId,
+            tokenHash,
+            clientInfo.ip,
+            clientInfo.approxLocation,
+            clientInfo.userAgent,
+            clientInfo.deviceInfo,
+            expiresAt
+        ]
+    );
 
-    try {
-        await query(
-            `INSERT INTO sessions 
-                (id, user_id, org_id, location_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, true, NOW())`,
-            [
-                sessionId,
-                userId,
-                orgId || null,
-                locationId || null,
-                tokenHash,
-                clientInfo.ip,
-                clientInfo.approxLocation,
-                clientInfo.userAgent,
-                clientInfo.deviceInfo,
-                expiresAt
-            ]
-        );
-    } catch {
-        // Fallback for schemas without location_id
-        try {
-            await query(
-                `INSERT INTO sessions 
-                    (id, user_id, org_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, true, NOW())`,
-                [
-                    sessionId,
-                    userId,
-                    orgId || null,
-                    tokenHash,
-                    clientInfo.ip,
-                    clientInfo.approxLocation,
-                    clientInfo.userAgent,
-                    clientInfo.deviceInfo,
-                    expiresAt
-                ]
-            );
-        } catch (err: any) {
-            // Legacy minimal unit tests may not have created the sessions table
-            // Proceed with generated session ID to maintain compatibility
-        }
-    }
-
-    return { sessionId, tokenHash };
+    return { sessionId };
 }
 
 /**
@@ -101,7 +72,7 @@ export async function validateSession(sessionId: string): Promise<SessionValidat
 
     try {
         const res = await query(
-            `SELECT s.*, u.is_active as user_is_active 
+            `SELECT s.*, u.is_active as user_is_active, u.email as user_email, u.full_name as user_full_name
              FROM sessions s
              JOIN users u ON s.user_id = u.id
              WHERE s.id = $1`,
@@ -142,10 +113,7 @@ export async function validateSession(sessionId: string): Promise<SessionValidat
         }
 
         return { valid: true, session };
-    } catch (err: any) {
-        if (err.message && err.message.includes('relation "sessions" does not exist')) {
-            return { valid: true };
-        }
+    } catch (err) {
         console.error('[VALIDATE SESSION ERROR]', err);
         return { valid: false, reason: 'NOT_FOUND' };
     }
@@ -169,10 +137,7 @@ export async function touchSession(sessionId: string, force: boolean = false): P
             'UPDATE sessions SET last_active_at = NOW() WHERE id = $1 AND is_active = true',
             [sessionId]
         );
-    } catch (err: any) {
-        if (err.message && err.message.includes('relation "sessions" does not exist')) {
-            return;
-        }
+    } catch (err) {
         console.error('[TOUCH SESSION ERROR]', err);
     }
 }
@@ -208,12 +173,19 @@ export async function revokeAllUserSessions(userId: string, exceptSessionId?: st
                 [userId]
             );
         }
-    } catch (err: any) {
-        if (err.message && err.message.includes('relation "sessions" does not exist')) {
-            return;
-        }
+    } catch (err) {
         console.error('[REVOKE ALL SESSIONS ERROR]', err);
     }
+}
+
+/**
+ * Revokes a user's sessions in one organisation (used when their access there is removed).
+ */
+export async function revokeUserSessionsInOrganisation(userId: string, orgId: string): Promise<void> {
+    await query(
+        'UPDATE sessions SET is_active = false, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2 AND is_active = true',
+        [userId, orgId]
+    );
 }
 
 /**
@@ -278,10 +250,7 @@ export async function recordLoginAttempt(params: {
                 params.sessionId || null
             ]
         );
-    } catch (err: any) {
-        if (err.message && err.message.includes('relation "login_history" does not exist')) {
-            return;
-        }
+    } catch (err) {
         console.error('[RECORD LOGIN ATTEMPT ERROR]', err);
     }
 }

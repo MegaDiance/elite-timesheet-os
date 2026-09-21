@@ -1,46 +1,33 @@
 import { Router, Response } from 'express';
 import { query } from '../services/db';
-import { requireAuth, requireTenantContext, requireAnyPermission, Permission, AuthRequest } from '../middleware/auth';
-import crypto from 'crypto';
+import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 
+/**
+ * The organisation's audit trail. Only the Organisation Owner reads it, and nobody can change it:
+ * rows are written exclusively through writeAudit (services/policy).
+ */
 const router = Router();
-router.use(requireAuth, requireTenantContext);
+router.use(requireAuth);
 
-router.get('/', requireAnyPermission([Permission.ORGANISATION_VIEW, Permission.REPORT_VIEW]), async (req: AuthRequest, res: Response) => {
+router.get('/', requirePermission(Permission.AUDIT_VIEW), async (req: AuthRequest, res: Response) => {
     try {
-        const orgId = req.user?.organisation_id;
-        const hasLoc = Boolean(req.user?.location_id) && ['Manager'].includes(req.user?.role || '');
-        const params = hasLoc ? [orgId, req.user!.location_id] : [orgId];
-        const locClause = hasLoc ? ' AND (a.location_id = $2 OR a.location_id IS NULL)' : '';
-
-        let result;
-        try {
-            result = await query(`
-                SELECT a.*, u.email as actor_email
-                FROM audit_logs a
-                LEFT JOIN users u ON a.actor_id = u.id
-                WHERE a.org_id = $1 AND (a.scope = 'organisation' OR a.scope IS NULL)${locClause}
-                ORDER BY a.created_at DESC
-            `, params);
-        } catch {
-            result = await query(`
-                SELECT a.*, u.email as actor_email
-                FROM audit_logs a
-                LEFT JOIN users u ON a.actor_id = u.id
-                WHERE a.org_id = $1 AND (a.scope = 'organisation' OR a.scope IS NULL)${locClause}
-                ORDER BY a.timestamp DESC
-            `, params);
-        }
+        const result = await query(
+            `SELECT a.*, u.email AS actor_email, u.full_name AS actor_full_name
+               FROM audit_logs a
+               LEFT JOIN users u ON u.id = a.actor_id
+              WHERE a.org_id = $1
+              ORDER BY a.created_at DESC`,
+            [req.auth!.orgId]
+        );
         res.json({ success: true, data: result.rows });
-    } catch (err: any) {
-        console.error('[AUDIT GET ERROR]', err);
-        res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve audit logs.' } });
+    } catch (err) {
+        sendError(res, err, 'AUDIT GET ERROR');
     }
 });
 
-// Audit logs are immutable and tamper-evident for compliance and cannot be cleared.
-router.delete('/clear', requireAuth, async (req: AuthRequest, res: Response) => {
-    return res.status(403).json({
+// Audit logs are immutable and tamper-evident for compliance and cannot be cleared by anyone.
+router.delete('/clear', requirePermission(Permission.AUDIT_VIEW), (_req: AuthRequest, res: Response) => {
+    res.status(403).json({
         success: false,
         error: {
             code: 'IMMUTABLE_AUDIT_LOG',
