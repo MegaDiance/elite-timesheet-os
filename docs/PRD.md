@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Status | Draft for review — authoritative once approved |
-| Last audited against code | 2026-09-21 (commit `a2795f1` **plus uncommitted working-tree changes**, see §0.2) |
+| Last audited against code | 2026-09-21, re-baselined on `main` @ `7fa3094` (see §0.2) |
 | Companion documents | [TRD](./TRD.md) · [UI/UX](./UI-UX-DESIGN.md) · [App Flow](./APP-FLOW.md) · [Backend Schema](./BACKEND-SCHEMA.md) · [Implementation Plan](./IMPLEMENTATION-PLAN.md) |
 
 ---
@@ -25,15 +25,14 @@ A statement labelled [REQUIRED] without [CURRENT] means it does **not** exist ye
 
 ### 0.2 What "current" means
 
-The audit covered the working tree, not just `HEAD`. Significant hierarchy work is **uncommitted** at the time of writing:
+"Current" means `main` at commit `7fa3094` (2026-09-21). Two commits landed while these documents were being written, from a parallel working session:
 
-- `backend/migrations/1789367660483_multi_location_and_roles.js` (locations, location memberships, location invitations, portal slug, entry mode, owner)
-- `backend/migrations/1789367660500_permissions_and_hierarchy_revamp.js`
-- `backend/src/services/permissionService.ts`, `backend/src/routes/locations.ts`, `backend/src/routes/memberships.ts`
-- `frontend/src/hooks/usePermissions.tsx`, `frontend/src/pages/Locations.tsx`, `frontend/src/pages/auth/AcceptLocationInvite.tsx`
-- Two new test suites covering hierarchy and locations.
+- `d79af08` — committed the previously uncommitted multi-location and permissions work: migrations `1789367660483_multi_location_and_roles.js` and `1789367660500_permissions_and_hierarchy_revamp.js`, `permissionService.ts`, `routes/locations.ts`, `routes/memberships.ts`, `usePermissions.tsx`, `Locations.tsx`, `AcceptLocationInvite.tsx`, two hierarchy test suites, and `docs/security/hierarchy-audit-and-design.md`.
+- `7fa3094` — fixed critical authentication/email defects (verify-login challenge binding, Platform-Admin creation via employees, branch-invite acceptance, email re-routing) and added a real-PostgreSQL test harness built from the migrations.
 
-Committed `HEAD` has **no branch/location concept at all**. Where this PRD says [CURRENT] for branch functionality it means "present in the working tree".
+Whether these commits are deployed to Railway was **not** verified.
+
+**Relationship to `docs/security/hierarchy-audit-and-design.md`:** that document (findings C1–C21 and a design proposal) is an input to these six documents. Its findings are mapped into §12. Where its design differs, these six documents are authoritative; the reconciliation is recorded in [IMPLEMENTATION-PLAN §R](./IMPLEMENTATION-PLAN.md#r-reconciliation-with-docssecurityhierarchy-audit-and-designmd).
 
 ### 0.3 Terminology
 
@@ -98,7 +97,7 @@ Small multi-site businesses run rosters in spreadsheets, collect hours by messag
 **Platform Admin** — SimpleHours staff who provision organisations and monitor delivery. [CURRENT] exists (`users.role = 'Platform Admin'`, `/platform-gate`, `/api/platform/*`).
 
 - [REQUIRED] Platform Admins have **no implicit access** to any organisation's employee, roster, timesheet, leave or payroll data.
-- [CURRENT — defect] Today a Platform Admin token receives *every* permission in *any* organisation (`permissionService.resolveUserSecurityContext`), can sign in through a tenant's normal login, and is added as an organisation member by the bootstrap script. This must be removed (IMPLEMENTATION-PLAN Phase 3).
+- [CURRENT — defect] Today a Platform Admin token receives *every* permission in *any* organisation (`permissionService.resolveUserSecurityContext`), can sign in through a tenant's normal login, and is added as an organisation member by the bootstrap script. This must be removed (IMPLEMENTATION-PLAN Phases 2–4, defect D-9).
 - [DEFERRED] Customer-consented, time-boxed, audited "support access".
 
 ### 2.2 Customer user types
@@ -107,9 +106,9 @@ Small multi-site businesses run rosters in spreadsheets, collect hours by messag
 |---|---|---|
 | Organisation Owner | Accountable administrator of the organisation. | Organisation |
 | Organisation Admin | Delegated organisation administrator. | Organisation |
-| Branch Manager | Runs day-to-day operations of specific branches, including approvals. | Branch (each assignment names one branch) |
-| Branch Admin | Handles branch administration and data entry, without approval authority by default. | Branch |
-| Payroll / Finance | Prepares payroll from approved data. | Organisation **or** specific branches |
+| Branch Manager | Runs day-to-day operations of specific branches, including approvals. | Named branch per assignment, or explicitly "all branches" |
+| Branch Admin | Handles branch administration and data entry, without approval authority by default. | Named branch, or all branches |
+| Payroll / Finance | Prepares payroll from approved data. | Named branch, or all branches |
 | Employee | Works shifts; sees own schedule, hours, leave, profile. | Self (own employee record) |
 
 A single user may be several of these at once (§5.4).
@@ -119,7 +118,7 @@ A single user may be several of these at once (§5.4).
 | Role | Current representation | Status |
 |---|---|---|
 | Organisation Owner | `organisations.owner_user_id`; legacy `'Company Admin'`; new `OWNER` | [CURRENT] partially; legacy `'Company Admin'` is normalised to OWNER |
-| Organisation Admin | new `ORG_ADMIN` (only in uncommitted code) | [CURRENT] in permission map; **cannot be stored on production Postgres** (CHECK constraint, see BACKEND-SCHEMA §2.3) |
+| Organisation Admin | new `ORG_ADMIN` (added in `d79af08`) | [CURRENT] in permission map; **cannot be stored on production Postgres** (CHECK constraint, see BACKEND-SCHEMA §2.3) |
 | "Org Manager" | legacy `'Manager'` / new `ORG_MANAGER` | [CURRENT] — **to be retired** (§5.6) |
 | Branch Manager | `location_memberships.role = 'manager'` / `BRANCH_MANAGER` | [CURRENT] |
 | Branch Admin | `location_memberships.role = 'admin'` / `BRANCH_ADMIN` | [CURRENT] but with a different permission set than required (§6) |
@@ -138,7 +137,7 @@ A single user may be several of these at once (§5.4).
 
 ### 3.2 Branch
 
-[CURRENT, uncommitted] A branch (`locations`) belongs to one organisation: name (unique per org), address, timezone (default `Australia/Melbourne`; provisioning defaults to `Australia/Sydney`), active flag.
+[CURRENT] A branch (`locations`) belongs to one organisation: name (unique per org), address, timezone (default `Australia/Melbourne`; provisioning defaults to `Australia/Sydney`), active flag.
 
 [REQUIRED]
 - Organisation **1 → many** Branches. A branch never moves between organisations.
@@ -147,7 +146,7 @@ A single user may be several of these at once (§5.4).
 
 ### 3.3 Employees (records)
 
-[CURRENT] `employees` holds the person who is rostered and paid: full name, department, email, phone, contracted hours per fortnight (default 76), active/deleted flags, optional linked `user_id`, and a single `location_id` (uncommitted).
+[CURRENT] `employees` holds the person who is rostered and paid: full name, department, email, phone, contracted hours per fortnight (default 76), active/deleted flags, optional linked `user_id`, and a single `location_id`.
 
 [REQUIRED]
 - An employee record belongs to one organisation. A user has **at most one** employee record per organisation.
@@ -196,7 +195,7 @@ Read as: **Organisation → Branch → User → Assignment → Role → Scope �
 
 ### 4.3 Current state vs. required
 
-[CURRENT] The working tree approximates this with:
+[CURRENT] The current code approximates this with:
 - `organisation_members.role` (one org-level role per user per org),
 - `location_memberships.role` (one branch-level role per user per branch; `UNIQUE(location_id, user_id)`),
 - `organisations.owner_user_id`,
@@ -215,10 +214,12 @@ That means today: roles and scopes are **partly** separated (branch roles are sc
 |---|---|---|
 | `ORG_OWNER` | organisation | Accountable administrator: settings, branches, users, security, audit, billing (deferred), integrations (deferred), organisation-level summary reporting. |
 | `ORG_ADMIN` | organisation | Delegated administrator: users, branches, employee records, configuration. Cannot manage owners, billing or ownership transfer. |
-| `BRANCH_MANAGER` | branch | Operational authority for one branch: employees, rosters, publishing, timesheet review/approve/reject/lock, leave approval, branch reports, branch dashboard. |
-| `BRANCH_ADMIN` | branch | Branch administration and data entry: employees, rosters, timesheet entry/editing, leave viewing, branch information, branch reports. **No approval by default.** |
-| `PAYROLL` | organisation or branch | Approved timesheets, approved leave, payroll reports and exports, lock/unlock of pay periods in scope. No roster or branch administration. |
+| `BRANCH_MANAGER` | branch, or all branches | Operational authority for a branch: employee records, rosters, publishing, timesheet review/approve/reject/lock, leave approval, branch reports, branch dashboard. |
+| `BRANCH_ADMIN` | branch, or all branches | Branch administration and data entry: employee records, rosters, timesheet entry/editing, leave viewing, branch information, branch reports, inviting employees to the branch. **No approval by default.** |
+| `PAYROLL` | branch, or all branches | Approved timesheets, approved leave, payroll reports and exports, lock/unlock of pay periods in scope. No roster or branch administration. |
 | `EMPLOYEE` | self | Own schedule (today/week/fortnight/month/history), own hours, own timesheet submission, own leave, own profile and account security. |
+
+"All branches" is an explicit, audited scope choice stored on the assignment (`scope_type = 'organisation'` for these roles). It covers branches created later. It is how an area manager or an owner who runs every branch gets operational access, without making operational access a property of organisation roles.
 
 `PLATFORM_ADMIN` exists outside tenants (§2.1).
 
@@ -232,7 +233,7 @@ That means today: roles and scopes are **partly** separated (branch roles are sc
 
 ### 5.3 Organisation Admin
 
-[REQUIRED] Same administrative reach as Owner except: cannot grant/modify/remove `ORG_OWNER`, cannot transfer ownership, cannot manage billing, cannot delete/deactivate the organisation, cannot self-assign. No branch operational data without a branch assignment. May manage **employee records** (profile data: name, contact, contracted hours, branch placement) across the organisation, but not their timesheets, shifts or leave.
+[REQUIRED] Same administrative reach as Owner except: cannot grant/modify/remove `ORG_OWNER` or `ORG_ADMIN` (only Owners manage organisation-level roles), cannot manage security settings or the private login link, cannot transfer ownership, cannot manage billing, cannot delete/deactivate the organisation, cannot self-assign. No branch operational data without a branch assignment. May manage **employee records** (profile data: name, contact, contracted hours, branch placement) across the organisation, but not their timesheets, shifts or leave.
 
 ### 5.4 Multiple assignments, one account [REQUIRED]
 
@@ -254,7 +255,7 @@ Also required:
 ### 5.5 Employee restrictions [REQUIRED]
 
 Employees must not access management dashboards, other employees' private data (hours, pay, contact details, leave reasons), payroll data, organisation administration or branch administration. Permitted shared information:
-- [CURRENT] The **published** team roster for their organisation (names and shift times) via `GET /api/portal/team-roster`. [PROPOSED] Limit it to the employee's own branches and exclude leave types/reasons.
+- [CURRENT — defect D-24] The **published** team roster for their whole organisation (names and shift times) via `GET /api/portal/team-roster`. [PROPOSED] Limit it to the employee's own branches and exclude leave types/reasons.
 - [CURRENT] Team chat/announcements (`/api/announcements`), controllable by `allow_employee_chat`. [PROPOSED] Keep as organisation-wide by default; branch-level channels are [DEFERRED].
 - [CURRENT] "Teammates working today" on the employee dashboard. [PROPOSED] Limit it to the employee's branches, names and shift times only.
 
@@ -272,7 +273,7 @@ Today the legacy `'Manager'` organisation role (and `ORG_MANAGER`) grants organi
 2. A permission applies only within its assignment's scope.
 3. Operational permissions (roster, timesheet, leave, branch reports, employee operational data) are **branch-scoped**. They are never inherited from an organisation role.
 4. For any resource, the scope used for authorisation is the **resource's own** organisation/branch/employee as stored in the database — never a branch ID supplied by the client.
-5. Deny by default. Missing data, database errors or ambiguous scope result in denial, not access. [CURRENT — defect] Many checks currently fail open (`catch { next() }`, "organisation has no branches" fallback).
+5. Deny by default. Missing data, database errors or ambiguous scope result in denial, not access. [CURRENT — defect] Many checks currently fail open (`catch { next() }`, "organisation has no branches" fallback) — defect D-10.
 6. No one may grant a permission they do not hold, and no one may grant themselves anything (except the Owner exception in §5.2).
 7. Nobody approves their own timesheet or leave.
 
@@ -285,9 +286,10 @@ Legend: ● granted in scope · ○ own data only · — not granted. Scope: O =
 | View/update organisation settings (`ORGANISATION_VIEW`, `ORGANISATION_UPDATE`) | ● | ● | — | — | — | — |
 | Security settings, lock passwords, portal URL (`ORGANISATION_SECURITY`) | ● | — | — | — | — | — |
 | Create/deactivate branches (`ORGANISATION_MANAGE_BRANCHES`) | ● | ● | — | — | — | — |
+| View branch details — name, address, timezone; no operational data (`BRANCH_VIEW`) | ● | ● | ● | ● | ● | — |
 | Edit branch details (`BRANCH_UPDATE`) | ● | ● | — | ● | — | — |
-| Manage organisation memberships and org roles (`ORGANISATION_MANAGE_USERS`) | ● (incl. owners) | ● (not owners) | — | — | — | — |
-| Assign branch roles (`BRANCH_MANAGE_USERS`) | ● | ● | — | ● (Employee role only in own branch) | — | — |
+| Manage organisation memberships; grant org roles (`ORGANISATION_MANAGE_USERS`) | ● (incl. `ORG_OWNER`, `ORG_ADMIN`) | ● (memberships and branch/payroll roles; not org roles) | — | — | — | — |
+| Assign branch roles (`BRANCH_MANAGE_USERS`) | ● | ● | — | ● (`EMPLOYEE` only, own branch) | — | — |
 | View/edit employee profile records (`EMPLOYEE_VIEW`, `EMPLOYEE_MANAGE`) | ● | ● | ● | ● | view pay-relevant fields | ○ view own |
 | View roster (`ROSTER_VIEW`) | — | — | ● | ● | — | ○ own + published team roster |
 | Create/edit/delete roster (`ROSTER_CREATE/UPDATE/DELETE`) | — | — | ● | ● | — | — |
@@ -304,14 +306,17 @@ Legend: ● granted in scope · ○ own data only · — not granted. Scope: O =
 | Branch operational reports (`REPORT_BRANCH_VIEW`) | — | — | ● | ● | — | — |
 | Organisation summary reports, aggregate only (`REPORT_ORG_SUMMARY`) | ● | ● | — | — | ● | — |
 | Payroll report and exports (`PAYROLL_VIEW`, `PAYROLL_EXPORT`) | — | — | — | — | ● | — |
-| Public holidays (`HOLIDAY_MANAGE`) | ● | ● | — | — | ● | — |
+| Public holidays (`HOLIDAY_MANAGE`) | ● | ● | — | — | ● (organisation-scoped Payroll only) | — |
 | Audit log: security & administration events (`AUDIT_VIEW_ADMIN`) | ● | ● | — | — | — | — |
 | Audit log: operational events (`AUDIT_VIEW_OPERATIONAL`) | — | — | ● | ● | ● | — |
-| Announcements: post, moderate, chat toggle (`ANNOUNCEMENT_MANAGE`) | ● | ● | ● | ● | — | post only if chat enabled |
+| Post announcements / replies (`ANNOUNCEMENT_POST`) | ● | ● | ● | ● | ● | ● only while employee chat is enabled |
+| Moderate others' posts, chat toggle (`ANNOUNCEMENT_MANAGE`) | ● | ● | ● | ● | — | — |
 | Billing (`BILLING_MANAGE`) [DEFERRED] | ● | — | — | — | — | — |
 | Integrations, e.g. Xero (`INTEGRATION_MANAGE`) [DEFERRED] | ● | — | — | — | — | — |
 
 Notes:
+- Branch Managers do not assign roles; staff access is granted by Branch Admins (employees only), Org Admins or Owners.
+- Roster lock/unlock is covered by `ROSTER_PUBLISH`. Timesheet unlock is Payroll-only. An organisation without a Payroll user has its Owner self-grant `PAYROLL` (§5.2) to unlock.
 - Branch Admins wanting approval authority receive a second `BRANCH_MANAGER` assignment at that branch. Per-user custom permission overrides are [DEFERRED].
 - In the current code (`permissionService.ts`) `BRANCH_ADMIN` is a **superset** of `BRANCH_MANAGER` (including approve and lock), and org roles hold `REPORT_VIEW`. The matrix above deliberately changes both; the migration preserves existing people's access by granting existing branch `admin` holders both roles (BACKEND-SCHEMA §9.3).
 
@@ -321,7 +326,7 @@ Notes:
 
 ### 6.4 Separation of duties [REQUIRED]
 
-- A user cannot approve, reject or unlock a timesheet or leave request that belongs to their own employee record, even if they hold the permission in that branch. [CURRENT] Not enforced.
+- A user cannot approve, reject or unlock a timesheet or leave request that belongs to their own employee record, even if they hold the permission in that branch. [CURRENT] Not enforced (D-22).
 - Payroll unlock of an approved period requires a reason and is audited.
 
 ---
@@ -337,7 +342,7 @@ Each feature lists what exists now and what is required.
 - [CURRENT] Overlap prevention, midnight-crossing shift splitting, contracted hours shown next to name.
 - [CURRENT] Rostering never overwrites actuals (`actual_in`, `actual_out`, `actual_hours`) — a standing rule (see `agent.md`).
 - [CURRENT] Roster lock and publish per pay period (`POST /api/locks`, `POST /api/locks/publish`). Publishing requires the roster to be locked and auto-posts an announcement.
-- [CURRENT — defect] Locks and publish state are **organisation-wide** (`fortnight_locks` keyed by `org_id, start_date`); a manager of one branch locks/publishes every branch.
+- [CURRENT — defect D-11] Locks and publish state are **organisation-wide** (`fortnight_locks` keyed by `org_id, start_date`); a manager of one branch locks/publishes every branch.
 - [REQUIRED] Roster locking and publishing are **per branch per pay period**. [PROPOSED] `fortnight_locks.location_id` (BACKEND-SCHEMA §4.9).
 - [REQUIRED] Only employees assigned to a branch appear on that branch's roster.
 - [DEFERRED] Shift swaps, open shifts, availability capture, award-based cost forecasting, roster templates shared across employees.
@@ -356,7 +361,7 @@ Each feature lists what exists now and what is required.
 - [CURRENT] Status machine on `timesheet_submissions`: `Draft → Submitted → Under Review → Approved`, with `Rejected` (reason required) returning to editable and resubmittable. Illegal transitions are blocked (tested).
 - [CURRENT] Bulk approve.
 - [CURRENT] Per-employee branch authorisation on review/approve/reject/bulk-approve (`submissions.ts checkEmployeeTimesheetPermission`) — the strongest branch boundary in the codebase.
-- [REQUIRED] Approver must hold `TIMESHEET_APPROVE` in the employee's branch and must not be the employee (§6.4).
+- [REQUIRED] Approver must hold `TIMESHEET_APPROVE` in the employee's primary branch and must not be the employee (§6.4). [CURRENT — defect D-22] self-approval is not blocked.
 - [CURRENT] `Locked` is shown in reports but never written to `timesheet_submissions.status`. [PROPOSED] Locking is represented by the pay-period lock, and submission status stays `Approved`; the report's derived `Locked` label is retained.
 
 ### 7.4 Timesheet locking
@@ -369,7 +374,7 @@ Each feature lists what exists now and what is required.
 ### 7.5 Leave
 
 - [CURRENT] Backend: employee submits leave (`POST /api/portal/leave-requests`) with types Sick, Annual, TIL, Unpaid, Other; validates dates, hours (≤ 336), duplicates and locked periods. Managers list (`GET /api/organisation/leave-requests`) and approve/reject (`POST .../:id/review`, reason required on rejection). Approval writes leave segments into daily records.
-- [CURRENT — defect] **Employees cannot request leave in the UI.** The only form is in the orphaned `frontend/src/pages/Portal.tsx`, which no route renders. The employee dashboard "Request Leave" button links to `/leave-requests`, which employees are redirected away from.
+- [CURRENT — defect D-15] **Employees cannot request leave in the UI.** The only form is in the orphaned `frontend/src/pages/Portal.tsx`, which no route renders. The employee dashboard "Request Leave" button links to `/leave-requests`, which employees are redirected away from.
 - [CURRENT — defect D-4] Leave listing and approval are not branch-scoped: any holder of the permission in any branch sees and approves leave organisation-wide.
 - [REQUIRED] Employees request, view and cancel (while pending) their own leave. Branch Managers approve leave for employees in their branches only. Payroll sees approved leave in scope.
 - [DEFERRED] Leave balances and accruals, leave policies per award, attachments (medical certificates).
@@ -377,13 +382,13 @@ Each feature lists what exists now and what is required.
 ### 7.6 Employee management
 
 - [CURRENT] Staff registry (`Employees.tsx`, `/api/employees`): create, edit, deactivate, reactivate, delete (blocked if approved payroll exists), search, department filter, client-side CSV export, per-employee templates, invite/resend invite.
-- [CURRENT — defect D-5] `POST/PUT /api/employees` accepts any `role` string from a Company Admin, including `'Platform Admin'` (privilege escalation). The UI offers "Company Admin" as a role even to Managers.
+- [CURRENT — defect D-5, partly fixed in `7fa3094`] `POST/PUT /api/employees` now allow-lists `Employee`/`Manager`/`Company Admin` (no longer `Platform Admin`), but still lets an org admin grant organisation-level roles through employee creation. The UI offers "Company Admin" as a role even to Managers (the server downgrades non-admin callers to `Employee`).
 - [REQUIRED] Creating an employee record never grants management roles. Roles are granted only through the assignment screens (§7.9), with anti-escalation checks.
 - [CURRENT] Public holidays: backend CRUD exists (`/api/organisation/holidays`); the UI modal exists but cannot be opened. [REQUIRED] Expose it to holders of `HOLIDAY_MANAGE`.
 
 ### 7.7 Branch management
 
-- [CURRENT, uncommitted] Locations page: create, edit, deactivate, reactivate, invite manager/admin by email (7-day invite), list managers.
+- [CURRENT] Locations page: create, edit, deactivate, reactivate, invite manager/admin by email (7-day invite), list managers.
 - [REQUIRED] Owners/Org Admins manage branches. Branch Admins edit their own branch's details.
 
 ### 7.8 Dashboards
@@ -398,9 +403,9 @@ Each feature lists what exists now and what is required.
 | Mechanism | Table | Token storage | Expiry | Status |
 |---|---|---|---|---|
 | Organisation (platform → new owner) | `org_invitation_tokens` | **plaintext** | **none** | [CURRENT — defect D-6] |
-| Employee account | `invitation_tokens` | SHA-256 hash | 7 days | [CURRENT] |
-| Branch (manager/admin/employee) | `location_invitations` | hash **and plaintext** | 7 days | [CURRENT, uncommitted] |
-| Org member invite (`POST /api/organisation/members/invite`) | none | — | — | [CURRENT] creates/assigns user with no email or token; the user cannot set a password through it |
+| Employee account | `invitation_tokens` | SHA-256 hash; lookup still also accepts the raw value (D-7) | 7 days | [CURRENT]; invite link returned to the caller (D-6) |
+| Branch (manager/admin/employee) | `location_invitations` | hash-only lookup since `7fa3094`; plaintext `token` column still written | 7 days | [CURRENT]; existing accounts must be signed in as the invited email (fixed in `7fa3094`) |
+| Org member invite (`POST /api/organisation/members/invite`) | none | — | — | [CURRENT] creates/assigns user with no email or token; the user cannot set a password through it; overwrites an existing member's role without hierarchy check (D-21) |
 
 [REQUIRED] One invitation model: an invitation names the organisation, the intended assignments (role + scope), the invitee email, the inviter, an expiry, and single use; tokens are stored hashed only; acceptance requires the invitee to authenticate as (or create) the account for that exact email; accepting grants exactly the named assignments and nothing else. [PROPOSED] `invitations` table (BACKEND-SCHEMA §4.12).
 
@@ -408,7 +413,7 @@ Each feature lists what exists now and what is required.
 
 - [CURRENT] Payroll report per pay period (`GET /api/reports/payroll`): per employee contract, rostered, actual, variance, unplanned; classification into ordinary, Saturday, Sunday, public holiday, annual, sick, TIL; exceptions. CSV (RFC 4180, formula-injection neutralised) and printable HTML "PDF" exports. Staff CSV and audit CSV are client-side exports.
 - [CURRENT — defect D-3] Payroll reports and exports are organisation-wide and gated only by `REPORT_VIEW`, which every org role and every branch manager/admin holds.
-- [CURRENT — defect] Roster-only segments typed `Normal` are dropped from the category columns (`reportService.ts`).
+- [CURRENT — defect D-13] Roster-only segments typed `Normal` are dropped from the category columns (`reportService.ts`).
 - [REQUIRED] Payroll report/exports require `PAYROLL_VIEW`/`PAYROLL_EXPORT` and include only employees in the Payroll user's scope and only approved (or locked) data. Branch reports require `REPORT_BRANCH_VIEW` and include only the user's branches. Organisation summary reports are aggregate-only.
 - [DEFERRED] Scheduled report emails, custom report builder.
 
@@ -436,7 +441,7 @@ Each feature lists what exists now and what is required.
 An employee logs in at their organisation's private URL and lands on **My Schedule / Today**. They can:
 - See today's shift, this week, this fortnight, this month and past schedules (published rosters only). [CURRENT] today + fortnight; week/month views [PROPOSED].
 - Enter hours for a day in a few taps, see totals update, and submit the fortnight for approval. [CURRENT]
-- See whether each fortnight is Draft, Submitted, Needs changes (with the manager's reason), Approved. [CURRENT — defect] Timesheet History shows **hardcoded fake data** for past cycles (`EmployeeHistory.tsx`). [REQUIRED] Real history.
+- See whether each fortnight is Draft, Submitted, Needs changes (with the manager's reason), Approved. [CURRENT — defect D-15] Timesheet History shows **hardcoded fake data** for past cycles (`EmployeeHistory.tsx`). [REQUIRED] Real history.
 - Request leave and see its status. [REQUIRED] (UI missing today)
 - Manage their own profile, password, 2FA and sessions. [CURRENT] security; profile editing [PROPOSED].
 
@@ -448,7 +453,7 @@ Lands on a branch dashboard for their branch(es): who is working today, timeshee
 
 ### 8.3 Organisation administration [REQUIRED]
 
-Owner/Org Admin manage organisation details, branches, people and their assignments, employee records, break rules, entry mode, public holidays, security (2FA policy [DEFERRED], lock settings), the private login URL, audit log (security/administration events). They see aggregate figures, not line-level operational data, unless separately assigned.
+Owner/Org Admin manage organisation details, branches, people and their assignments (Org Admin: not organisation-level roles), employee records, break rules, entry mode, public holidays, and the audit log (security/administration events). Owners additionally manage security (lock settings, 2FA policy [DEFERRED]) and the private login link. They see aggregate figures, not line-level operational data, unless separately assigned.
 
 ### 8.4 Payroll preparation [REQUIRED]
 
@@ -462,7 +467,9 @@ A Payroll user selects a pay period and sees, for employees in scope, which time
 2. Lists (employees, rosters, timesheets, leave, reports, audit) are filtered server-side to that set.
 3. Every single-resource request is checked against the resource's own branch.
 4. A branch selector in the UI is a **view filter**, not a security context. [CURRENT] The active branch lives in the JWT/session (`POST /api/auth/select-location`) and the server trusts a client-provided `location_id`/`x-location-id` to choose which branch's permissions to evaluate. [PROPOSED] Evaluate per resource instead (TRD §5.5).
-5. Employees working at several branches appear on each of those branches' rosters, and their timesheet for a period is reviewed by a manager of the branch where each shift occurred. [PROPOSED] Phase 1 simplification: timesheet review authority follows the employee's **primary branch**; per-shift branch attribution is [DEFERRED] (see IMPLEMENTATION-PLAN "Open decisions").
+5. Employees working at several branches appear on each of those branches' rosters.
+   - Each rostered/worked day is stamped with the branch where it is worked. [PROPOSED] `daily_records.location_id`. Each branch's managers see only their branch's shifts for that person.
+   - Timesheet **approval** for the fortnight follows the employee's **primary branch**, whose managers see that employee's hours at all branches for the fortnight being approved. [PROPOSED] Splitting submissions per branch is [DEFERRED] (IMPLEMENTATION-PLAN open decision 3).
 6. Deactivating a branch revokes all its branch-scoped assignments' effect immediately and hides it from rosters, while retaining its history.
 
 ---
@@ -474,7 +481,7 @@ Intended model:
 ```
 Public website (marketing only, no workspace search)
       ↓  customer bookmarks / receives their private login link
-Organisation private login URL  /login/<portal_slug>
+Organisation private login URL  /o/<entry_code>
       ↓
 Authentication (email + password, 2FA / verification if required)
       ↓
@@ -486,10 +493,17 @@ Correct landing page (employee schedule, branch dashboard, admin overview, payro
 ```
 
 - The URL is an **entry point, not a security boundary**. Knowing it grants nothing; every request is authorised by session + membership + assignment.
-- [PROPOSED] Remove the public workspace-finder (`/portal-access` slug entry) and the authenticated organisation search (`GET /api/organisation/discover`). Replace the generic `/login` organisation picker with an "Email me my sign-in link" form that emails the user the private URLs of organisations they belong to, with an identical response whether or not the email exists.
-- [PROPOSED] Login URLs use the unguessable `portal_slug`. Human-readable `slug` URLs keep working during a transition, then redirect to a neutral page.
-- [REQUIRED] Wrong password, unknown email, and "no membership in this organisation" produce the **same** error to the client. [CURRENT — defect] The current response distinguishes `NO_ORGANISATION_ACCESS`, revealing that the password was correct.
-- [REQUIRED] Platform Admins cannot sign in through tenant login URLs. [CURRENT — defect] They can.
+- [PROPOSED] Remove:
+  - the public workspace-finder (`/portal-access` slug entry, `/find-organisation`, `/signin`);
+  - the authenticated organisation search (`GET /api/organisation/discover`);
+  - the public organisation lookup (`GET /api/organisation/lookup/:slug`). It currently returns the org id, the current `portal_slug` (which defeats regeneration), branch count and entry mode (D-23).
+- [PROPOSED] Replace the generic `/login` organisation picker with an "Email me my sign-in link" form. It emails the user the private URLs of organisations they belong to, with an identical response whether or not the email exists.
+- [PROPOSED] Each organisation has an `entry_code`: random, ≥ 128 bits, rotatable by the Owner. Rotation invalidates the old code immediately.
+  - `/o/<entry_code>` renders a **generic** SimpleHours sign-in page. No organisation name, logo or other data is shown before authentication.
+  - The organisation is resolved server-side from the code **and** the user's membership after the password is verified.
+  - [CURRENT] `/login/:slug` accepts the human-readable `slug`, the 8-character `portal_slug` or the UUID. These keep working only during a communicated transition window, then show the generic page.
+- [REQUIRED] Wrong password, unknown email, unknown/rotated entry code, and "no membership in this organisation" produce the **same** error and timing to the client. [CURRENT — defect] The current response distinguishes `NO_ORGANISATION_ACCESS`, revealing that the password was correct.
+- [REQUIRED] Platform Admins cannot sign in through tenant login URLs. [CURRENT — defect D-9] They can.
 
 ---
 
@@ -508,30 +522,41 @@ Correct landing page (employee schedule, branch dashboard, admin overview, payro
 
 ---
 
-## 12. Known defects affecting requirements (from the 2026-09-21 audit)
+## 12. Known defects affecting requirements
 
-| ID | Severity | Defect | Where |
-|---|---|---|---|
-| D-1 | Critical | Changing roster lock clears timesheet lock | `backend/src/routes/locks.ts` (upsert writes both flags) |
-| D-2 | Critical | `POST /api/auth/verify-login` accepts a bare 6-digit code matched against any user's challenge | `backend/src/routes/auth.ts` verify-login |
-| D-3 | Critical | Payroll report/exports organisation-wide for any `REPORT_VIEW` holder; branch managers and legacy "Manager" see all branches | `routes/reports.ts`, `services/reportService.ts`, `permissionService.ts` |
-| D-4 | High | Leave list/approval not branch-scoped | `routes/organisation.ts` leave routes |
-| D-5 | Critical | Company Admin can create a `Platform Admin` via `role` field | `routes/employees.ts` POST/PUT |
-| D-6 | High | Org invite tokens plaintext, no expiry, returned by `GET /api/platform/invitations`; location invite tokens also stored plaintext | `routes/platform.ts`, `routes/locations.ts` |
-| D-7 | High | Token lookups accept `hash OR raw` | `routes/auth.ts`, `routes/locations.ts` |
-| D-8 | Critical | New role values (`OWNER`, `ORG_ADMIN`, `BRANCH_ADMIN`, …) violate production CHECK constraints; hierarchy writes only work on the in-memory dev DB | `migrations/…478`, `…483` vs `routes/memberships.ts` |
-| D-9 | Critical | Platform Admin receives every permission in every organisation and can use tenant login | `permissionService.ts`, `routes/auth.ts` |
-| D-10 | High | Fail-open authorisation paths (`catch { next() }`, "no branches" fallback, sessions-table-missing = valid) | `middleware/auth.ts`, `permissionService.ts`, `sessionService.ts` |
-| D-11 | High | Roster/timesheet locks and publish are organisation-wide, not per branch | `fortnight_locks`, `routes/locks.ts` |
-| D-12 | Medium | `calculateRosterStats` treats Friday as weekend and Sunday as weekday | `services/rosterService.ts` |
-| D-13 | Medium | Roster-only `Normal` segments dropped from payroll category columns | `services/reportService.ts` |
-| D-14 | Medium | Sidebar sign-out does not revoke the server session | `frontend/src/components/Layout.tsx` |
-| D-15 | Medium | Employee leave request UI missing; timesheet history fake | `frontend/src/pages/*` |
-| D-16 | Medium | `locks.ts` returns raw `err.message` on 500 | `routes/locks.ts` |
-| D-17 | Low | Owner treated inconsistently in frontend role checks (Settings, Announcements, chatbot) | `frontend/src/pages/Settings.tsx` etc. |
-| D-18 | Critical | Location-invite acceptance issues a JWT with no server session (rejected in production, long-lived bearer in dev) | `routes/locations.ts` accept |
+Audited 2026-09-21 and re-checked against `7fa3094`. The "Sec. audit" column maps each item to the C-IDs in `docs/security/hierarchy-audit-and-design.md`. Status: **Open**, **Partly fixed**, **Fixed** (with commit).
 
----
+| ID | Severity | Defect | Where | Sec. audit | Status |
+|---|---|---|---|---|---|
+| D-1 | Critical | Changing the roster lock clears the timesheet lock. The caller's own login password is also accepted as a lock password. | `routes/locks.ts` | C11 | Open |
+| D-2 | Critical | `POST /api/auth/verify-login` accepted a bare 6-digit code matched against any user's challenge. | `routes/auth.ts` | C3 | **Fixed** `7fa3094` (challenge id or token required, hash comparison) |
+| D-3 | Critical | Payroll report and exports are organisation-wide for any `REPORT_VIEW` holder. A branch invite writes an org-level `'Manager'` role, which grants this. Xero preview has the same scope. | `routes/reports.ts`, `services/reportService.ts`, `routes/locations.ts`, `routes/xero.ts` | C9, C12 | Open |
+| D-4 | High | Leave list and approval are not branch-scoped. | `routes/organisation.ts` | C10 | Open |
+| D-5 | Critical | The employees endpoint accepted any role, including `'Platform Admin'`. | `routes/employees.ts` | C1 | **Partly fixed** `7fa3094`: allow-list `Employee`/`Manager`/`Company Admin`. Org-level roles can still be granted through the employee endpoint; the target is assignments only (§7.6). |
+| D-6 | High | Invite tokens exposed. Org invites are plaintext with no expiry and listed by `GET /api/platform/invitations`. Employee invite/resend returns `inviteLink` to the caller. `location_invitations.token` is still written in plaintext. | `routes/platform.ts`, `routes/employees.ts`, `routes/locations.ts` | C14, C17 | Partly fixed (branch-invite link no longer returned) |
+| D-7 | High | Token lookups accept `hash OR raw`. | `routes/auth.ts` (reset, employee invitation) | C17 | Partly fixed (branch invites hash-only in `7fa3094`) |
+| D-8 | Critical | New role values (`OWNER`, `ORG_ADMIN`, `BRANCH_ADMIN`, …) violate production CHECK constraints, so hierarchy writes fail on PostgreSQL. | `migrations/…478`, `…483` vs `routes/memberships.ts` | §1.1 | Open |
+| D-9 | Critical | A Platform Admin gets every permission in every org, can use the tenant login, and is added to orgs as a member by bootstrap. | `permissionService.ts`, `routes/auth.ts`, `scripts/bootstrap.ts` | C1 (tail) | Open |
+| D-10 | High | Authorisation fails open in several places: `catch { next() }`, the "no branches" fallback, a missing sessions table treated as valid, and session-less JWTs accepted outside production. | `middleware/auth.ts`, `permissionService.ts`, `sessionService.ts` | C18 | Open |
+| D-11 | High | Roster/timesheet locks, publish and holidays are organisation-wide, not per branch. | `fortnight_locks`, `routes/locks.ts`, `routes/holidays.ts` | C11 | Open |
+| D-12 | Medium | `calculateRosterStats` treats Friday as a weekend day and Sunday as a weekday. | `services/rosterService.ts` | Part 3 | Open |
+| D-13 | Medium | Roster-only `Normal` segments are dropped from the payroll category columns. | `services/reportService.ts` | Part 3 | Open |
+| D-14 | Medium | Sidebar sign-out does not revoke the server session. | `frontend/src/components/Layout.tsx` | §1.4 | Open |
+| D-15 | Medium | There is no employee leave-request UI, and timesheet history shows fake data. | `frontend/src/pages/*` | §1.4 | Open |
+| D-16 | Medium | `locks.ts` returns raw `err.message` on a 500. | `routes/locks.ts` | — | Open |
+| D-17 | Low | The frontend treats Owner inconsistently across its role checks. | `frontend/src/pages/Settings.tsx` etc. | §1.4 | Open |
+| D-18 | Critical | Location-invite acceptance for an existing account needed no password and returned a JWT with no session. | `routes/locations.ts` | C2 | **Fixed** `7fa3094` (must be signed in as the invited account; no token issued) |
+| D-19 | Critical | `PUT`/`DELETE /api/locations/:id/members/:userId` don't check that the branch belongs to the caller's org. | `routes/memberships.ts` | C5 | Open |
+| D-20 | High | Login with only an employee row copies the global `users.role` into the JWT. The security context then falls back to it, so a Company Admin of org A becomes OWNER in org B. | `routes/auth.ts`, `permissionService.ts` | C6 | Open |
+| D-21 | High | The membership invite overwrites an existing member's role with no hierarchy check. ORG_ADMIN can remove OWNER members. `'Company Admin'` normalises to OWNER. | `routes/memberships.ts` | C13 | Open |
+| D-22 | High | Managers can approve or bulk-approve their own timesheet. Bulk-approve silently drops unauthorised rows. | `routes/submissions.ts` | C15 | Open |
+| D-23 | High | The public lookup leaks org id, current `portal_slug`, branch count and entry mode. `discover` enumerates orgs. | `routes/organisation.ts` | C16 | Open |
+| D-24 | Medium | Employee team roster and dashboard "team today" cover all branches. | `routes/portal.ts`, `routes/dashboard.ts` | C19 | Open |
+| D-25 | Medium | `GET /records/stats` has no permission guard. `POST /employees` trusts a body `location_id`. `PUT /employees/:id` can relink `user_id` to any member. | `routes/records.ts`, `routes/employees.ts` | C20 | Open |
+| D-26 | Medium | Announcement moderation and the chat toggle are decided by the JWT role string. | `routes/announcements.ts` | C21 | Open |
+| D-27 | Medium | Claim-invite's "first manager invite" inserts `location_invitations` without the required `token_hash`, so it fails silently on PostgreSQL. The invite can't be accepted even where the insert succeeds. | `routes/platform.ts`, `routes/locations.ts` | — | Open |
+| D-28 | High | Email links (reset, invites) are built from the request `Origin` header rather than `PUBLIC_URL`, which allows link poisoning. | `routes/auth.ts`, `routes/platform.ts`, `routes/employees.ts`, `routes/locations.ts` | — | Open |
+| — | Critical | Email service re-routed mail for test domains and on Resend 403 to a hard-coded personal address. | `services/emailService.ts` | C4 | **Fixed** `7fa3094` |
 
 ## 13. Non-functional requirements
 
@@ -567,7 +592,7 @@ Correct landing page (employee schedule, branch dashboard, admin overview, payro
 | Organisation-enforced 2FA policy, SSO | [DEFERRED] |
 | Branch-level chat channels | [DEFERRED] |
 | Per-branch timesheet entry mode | [DEFERRED] |
-| Per-shift branch attribution for multi-branch employees | [DEFERRED] |
+| Per-branch split of timesheet submissions for multi-branch employees | [DEFERRED] (shifts are branch-stamped; approval follows the primary branch) |
 
 ---
 
@@ -584,6 +609,6 @@ The architecture phase is successful when:
    - an Employee cannot reach any management endpoint;
    - John (Employee at A + Manager at B) works with one account and cannot approve his own timesheet;
    - no one can grant themselves or others more than they hold (Owner self-assignment only through the audited path).
-3. Critical defects D-1, D-2, D-3, D-5, D-8, D-9 and D-18 are fixed before any real customer data is loaded.
+3. All Critical and High defects in §12 are fixed (with regression tests) before any real customer data is loaded.
 4. An employee with no training can log in via the private URL, enter a fortnight's hours and submit in under 5 minutes (usability test with ≥ 3 first-time users).
 5. A payroll user can produce an approved-only export for a pay period in under 2 minutes.
