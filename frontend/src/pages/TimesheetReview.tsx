@@ -1,249 +1,236 @@
-import { useState, useEffect, useCallback } from 'react';
-import { 
-  FileCheck2, 
-  CheckCircle2, 
-  AlertCircle, 
-  ChevronLeft, 
-  ChevronRight, 
-  Search, 
-  ChevronDown, 
-  ChevronUp, 
-  Send, 
-  Sparkles,
-  ShieldAlert
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileCheck2, Lock, RotateCcw, Search, ShieldAlert } from 'lucide-react';
 import api from '../services/apiClient';
-import { getFortnightStart, fmtISO } from '../utils/fortnight';
-import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
-import { Badge } from '../components/ui/Badge';
-import { Skeleton } from '../components/ui/Skeleton';
-import { EmptyState } from '../components/ui/EmptyState';
+import { useAccess } from '../hooks/useAccess';
 import { useToast } from '../components/ui/Toast';
+import { Badge } from '../components/ui/Badge';
+import { Card } from '../components/ui/Card';
+import { EmptyState } from '../components/ui/EmptyState';
+import { Skeleton } from '../components/ui/Skeleton';
+import BulkResultDialog, { type BulkResult } from '../components/roster/BulkResultDialog';
+import { DayChips } from '../components/roster/DayChips';
+import { Dialog, buttonClass } from '../components/roster/Dialog';
+import { apiErrorMessage, signedHours, type BulkApproveResult, type TimesheetRow, type TimesheetStatus } from '../components/roster/api';
+import { currentFortnightIso, dayLabel, fortnightDays, isWeekendIso, periodLabel, shiftIso } from '../components/roster/dates';
+import { apiHasRoster, apiHasWorked, formatHours, type DayRecord } from '../components/roster/segments';
 
-interface SubmissionItem {
-  employee_id: string;
-  full_name: string;
-  department: string;
-  contracted_hours: number;
-  rostered_hours: number;
-  actual_hours: number;
-  variance_hours: number;
-  status: 'Draft' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected';
-  submission_id?: string;
-  submitted_at?: string;
-  reviewed_at?: string;
-  rejection_reason?: string;
-}
+type Tab = 'waiting' | 'approved' | 'locked' | 'all';
 
+const TAB_STATUS: Record<Exclude<Tab, 'all'>, TimesheetStatus> = { waiting: 'Draft', approved: 'Approved', locked: 'Locked' };
+const TAB_LABEL: Record<Tab, string> = { waiting: 'Waiting', approved: 'Approved', locked: 'Locked', all: 'All' };
+const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'> = { Draft: 'outline', Approved: 'success', Locked: 'warning' };
+
+const sumHours = (record: DayRecord | undefined, key: 'roster_hours' | 'actual_hours') =>
+  (record?.segments ?? []).reduce((acc, s) => acc + (Number(s[key]) || 0), 0);
+
+/**
+ * Timesheet approval for a pay period. Hours are entered by the Organisation Owner or a Branch
+ * Admin, so a timesheet is simply Draft (waiting), Approved, or Locked (approved and the branch's
+ * timesheets are locked).
+ */
 export default function TimesheetReview() {
+  const { access } = useAccess();
   const toast = useToast();
-  const [activeDate, setActiveDate] = useState<Date>(new Date());
+  const branches = useMemo(() => access?.branches ?? [], [access]);
+
+  const [branchId, setBranchId] = useState<string>(() => (access?.branches.length === 1 ? access.branches[0].id : ''));
+  const [startIso, setStartIso] = useState<string>(currentFortnightIso);
+  const [rows, setRows] = useState<TimesheetRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [submissions, setSubmissions] = useState<SubmissionItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [accessDenied, setAccessDenied] = useState(false);
-  const [filterTab, setFilterTab] = useState<'ready' | 'needs_changes' | 'approved' | 'draft' | 'all'>('ready');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [tab, setTab] = useState<Tab>('waiting');
+  const [search, setSearch] = useState('');
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set());
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [result, setResult] = useState<BulkResult | null>(null);
 
-  // Expand row for 14-day detail
-  const [expandedEmpId, setExpandedEmpId] = useState<string | null>(null);
-  const [dailyDetails, setDailyDetails] = useState<Record<string, any[]>>({});
-  const [loadingDaily, setLoadingDaily] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, DayRecord[] | 'error'>>({});
+  const loadSeq = useRef(0);
 
-  // Request changes modal
-  const [rejectingEmp, setRejectingEmp] = useState<SubmissionItem | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [isRejecting, setIsRejecting] = useState(false);
+  const days = useMemo(() => fortnightDays(startIso), [startIso]);
+  const endIso = days[13];
+  const showBranch = !branchId && new Set(rows.map(r => r.location_id)).size > 1;
 
-  // Bulk approval state
-  const [isBulkApproving, setIsBulkApproving] = useState(false);
-
-  const fnStart = getFortnightStart(activeDate);
-  const fnIso = fmtISO(fnStart);
-
-  const fetchSubmissions = useCallback(async () => {
+  const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
-      const res = await api.get(`/submissions?start_date=${fnIso}`);
-      if (res.data?.success) {
-        setSubmissions(res.data.data || []);
-        setAccessDenied(false);
-      }
-    } catch (err: any) {
-      // A 403 means the active branch context carries no timesheet permission.
-      // That is an expected state (e.g. an org admin with no branch membership),
-      // so it renders as an empty state rather than an error.
-      if (err?.response?.status === 403) {
-        setSubmissions([]);
-        setAccessDenied(true);
-      } else {
-        console.error('Failed to load submissions:', err);
-        toast.error('Unable to fetch timesheets for this fortnight.');
-      }
+      const res = await api.get('/submissions', { params: { start_date: startIso, location_id: branchId || undefined } });
+      if (seq !== loadSeq.current) return;
+      setRows(res.data?.data ?? []);
+      setLoadError(null);
+      setAccessDenied(false);
+    } catch (err) {
+      if (seq !== loadSeq.current) return;
+      setRows([]);
+      if ((err as { response?: { status?: number } })?.response?.status === 403) setAccessDenied(true);
+      else setLoadError(apiErrorMessage(err, 'Timesheets for this pay period could not be loaded.'));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, [fnIso, toast]);
+  }, [startIso, branchId]);
 
   useEffect(() => {
-    fetchSubmissions();
-  }, [fetchSubmissions]);
+    load();
+  }, [load]);
 
-  // Navigate fortnights
-  const handlePrev = () => {
-    const d = new Date(activeDate);
-    d.setDate(d.getDate() - 14);
-    setActiveDate(d);
+  const changePeriod = (iso: string) => {
+    setStartIso(iso);
+    setChosen(new Set());
+    setExpanded(null);
   };
 
-  const handleNext = () => {
-    const d = new Date(activeDate);
-    d.setDate(d.getDate() + 14);
-    setActiveDate(d);
+  const changeBranch = (id: string) => {
+    setBranchId(id);
+    setChosen(new Set());
   };
 
-  const handleCurrent = () => {
-    setActiveDate(new Date());
-  };
-
-  // One-click approval
-  const handleApprove = async (emp: SubmissionItem) => {
+  // Cached per pay period, so a slow answer for an earlier period never shows under a later one.
+  const detailKey = (employeeId: string) => `${startIso}|${employeeId}`;
+  const loadDetails = async (employeeId: string) => {
+    const key = detailKey(employeeId);
     try {
-      await api.post('/submissions/approve', {
-        start_date: fnIso,
-        employee_id: emp.employee_id
-      });
-      toast.success(`Timesheet approved for ${emp.full_name}`);
-      fetchSubmissions();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error?.message || 'Failed to approve timesheet.');
+      const res = await api.get('/records', { params: { employee_id: employeeId, start_date: startIso, end_date: endIso } });
+      setDetails(d => ({ ...d, [key]: res.data?.data ?? [] }));
+    } catch {
+      setDetails(d => ({ ...d, [key]: 'error' }));
     }
   };
 
-  // Open Request Changes Modal
-  const openRejectModal = (emp: SubmissionItem) => {
-    setRejectingEmp(emp);
-    setRejectionReason('');
-  };
-
-  // Submit Request Changes
-  const handleConfirmReject = async () => {
-    if (!rejectingEmp) return;
-    setIsRejecting(true);
-    try {
-      await api.post('/submissions/reject', {
-        start_date: fnIso,
-        employee_id: rejectingEmp.employee_id,
-        reason: rejectionReason || 'Please review and adjust your recorded shift hours.'
-      });
-      toast.success(`Requested changes sent to ${rejectingEmp.full_name}`);
-      setRejectingEmp(null);
-      fetchSubmissions();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error?.message || 'Failed to return timesheet.');
-    } finally {
-      setIsRejecting(false);
-    }
-  };
-
-  // Bulk Approve all Ready
-  const handleBulkApprove = async () => {
-    const readyEmps = submissions.filter(s => s.status === 'Submitted' || s.status === 'Under Review');
-    if (readyEmps.length === 0) return;
-
-    setIsBulkApproving(true);
-    try {
-      await api.post('/submissions/bulk-approve', {
-        start_date: fnIso,
-        employee_ids: readyEmps.map(s => s.employee_id)
-      });
-      toast.success(`Successfully approved ${readyEmps.length} timesheets`);
-      fetchSubmissions();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error?.message || 'Failed to bulk approve timesheets.');
-    } finally {
-      setIsBulkApproving(false);
-    }
-  };
-
-  // Expand employee daily breakdown
-  const toggleExpand = async (empId: string) => {
-    if (expandedEmpId === empId) {
-      setExpandedEmpId(null);
+  const toggleExpand = (employeeId: string) => {
+    if (expanded === employeeId) {
+      setExpanded(null);
       return;
     }
+    setExpanded(employeeId);
+    const cached = details[detailKey(employeeId)];
+    if (!cached || cached === 'error') loadDetails(employeeId);
+  };
 
-    setExpandedEmpId(empId);
-    if (!dailyDetails[empId]) {
-      setLoadingDaily(empId);
-      try {
-        const res = await api.get(`/records?start_date=${fnIso}`);
-        if (res.data?.success) {
-          const empRecords = (res.data.data || []).filter((r: any) => r.employee_id === empId);
-          setDailyDetails(prev => ({ ...prev, [empId]: empRecords }));
-        }
-      } catch (err) {
-        console.warn('Failed to load daily records', err);
-      } finally {
-        setLoadingDaily(null);
-      }
+  const changeOne = async (row: TimesheetRow, action: 'approve' | 'reopen') => {
+    setRowBusy(row.employee_id);
+    try {
+      await api.post(`/submissions/${action}`, { employee_id: row.employee_id, start_date: startIso });
+      toast.success(action === 'approve' ? `Timesheet approved for ${row.full_name}.` : `Timesheet reopened for ${row.full_name}.`);
+      setChosen(set => {
+        const next = new Set(set);
+        next.delete(row.employee_id);
+        return next;
+      });
+      await load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, action === 'approve' ? 'The timesheet could not be approved.' : 'The timesheet could not be reopened.'));
+    } finally {
+      setRowBusy(null);
     }
   };
 
-  // Counts
-  const readyCount = submissions.filter(s => s.status === 'Submitted' || s.status === 'Under Review').length;
-  const needsChangesCount = submissions.filter(s => s.status === 'Rejected').length;
-  const approvedCount = submissions.filter(s => s.status === 'Approved').length;
-  const draftCount = submissions.filter(s => s.status === 'Draft').length;
+  const approveMany = async (ids: string[]) => {
+    setBulkBusy(true);
+    try {
+      const res = await api.post('/submissions/bulk-approve', { start_date: startIso, employee_ids: ids });
+      const data = res.data?.data as BulkApproveResult;
+      const nameOf = (id: string) => rows.find(r => r.employee_id === id)?.full_name ?? 'Worker';
+      setResult({
+        title: 'Approve timesheets',
+        summary: `Approved ${data.approved.length} timesheet${data.approved.length === 1 ? '' : 's'}.`,
+        problemHeading: 'Not approved',
+        anyDone: data.approved.length > 0,
+        problems: data.failed.map(f => ({ label: nameOf(f.employee_id), detail: f.message })),
+      });
+      setChosen(new Set());
+      setConfirmIds(null);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'The timesheets could not be approved.'));
+    } finally {
+      setBulkBusy(false);
+      await load();
+    }
+  };
 
-  // Filtered list
-  const filteredSubmissions = submissions.filter(s => {
-    const matchesSearch = s.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (s.department && s.department.toLowerCase().includes(searchQuery.toLowerCase()));
-    if (!matchesSearch) return false;
+  const approvable = rows.filter(r => r.status === 'Draft' && !r.timesheet_locked);
+  const counts: Record<Tab, number> = {
+    waiting: rows.filter(r => r.status === 'Draft').length,
+    approved: rows.filter(r => r.status === 'Approved').length,
+    locked: rows.filter(r => r.status === 'Locked').length,
+    all: rows.length,
+  };
 
-    if (filterTab === 'ready') return s.status === 'Submitted' || s.status === 'Under Review';
-    if (filterTab === 'needs_changes') return s.status === 'Rejected';
-    if (filterTab === 'approved') return s.status === 'Approved';
-    if (filterTab === 'draft') return s.status === 'Draft';
-    return true;
-  });
+  const query = search.trim().toLowerCase();
+  const visible = rows.filter(r =>
+    (tab === 'all' || r.status === TAB_STATUS[tab])
+    && (!query || r.full_name.toLowerCase().includes(query) || (r.department ?? '').toLowerCase().includes(query) || (r.location_name ?? '').toLowerCase().includes(query)));
+  const visibleApprovable = visible.filter(r => r.status === 'Draft' && !r.timesheet_locked);
+  const allVisibleChosen = visibleApprovable.length > 0 && visibleApprovable.every(r => chosen.has(r.employee_id));
+  const chosenIds = approvable.filter(r => chosen.has(r.employee_id)).map(r => r.employee_id);
 
-  const [fy, fm, fd] = fnIso.split('-').map(Number);
-  const fnStartDate = new Date(Date.UTC(fy, fm - 1, fd));
-  const fnEndDate = new Date(fnStartDate);
-  fnEndDate.setDate(fnEndDate.getDate() + 13);
-  const fnDateRangeStr = `${fnStartDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${fnEndDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const toggleChosen = (id: string) =>
+    setChosen(set => {
+      const next = new Set(set);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  const toggleAllVisible = () =>
+    setChosen(set => {
+      const next = new Set(set);
+      if (allVisibleChosen) visibleApprovable.forEach(r => next.delete(r.employee_id));
+      else visibleApprovable.forEach(r => next.add(r.employee_id));
+      return next;
+    });
+
+  const header = (
+    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-[var(--border)]">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Timesheets</h1>
+        <p className="text-xs text-[var(--muted)] mt-1">
+          Pay period <strong className="text-[var(--text)]">{periodLabel(startIso)}</strong> · {rows.length} worker{rows.length === 1 ? '' : 's'}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="timesheets-branch" className="sr-only">Branch</label>
+        <select
+          id="timesheets-branch"
+          value={branchId}
+          onChange={e => changeBranch(e.target.value)}
+          className="bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
+        >
+          <option value="">All my branches</option>
+          {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
+        </select>
+        <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--panel)] p-0.5">
+          <button type="button" onClick={() => changePeriod(shiftIso(startIso, -14))} className={buttonClass.quiet} aria-label="Previous pay period">
+            <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => changePeriod(currentFortnightIso())} className={buttonClass.quiet}>Current</button>
+          <button type="button" onClick={() => changePeriod(shiftIso(startIso, 14))} className={buttonClass.quiet} aria-label="Next pay period">
+            <ChevronRight className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (accessDenied) {
     return (
       <div className="space-y-6 pb-16">
-        <div className="pb-4 border-b border-[var(--border)]">
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-            Timesheet Approvals
-          </h1>
-          <p className="text-xs text-[var(--muted)] mt-1.5">
-            Branch-scoped review queue
-          </p>
-        </div>
-
+        {header}
         <div className="flex items-center justify-center py-10">
           <div className="w-full max-w-md text-center bg-[var(--panel)] border border-[var(--border)] rounded-lg p-8 shadow-sm flex flex-col items-center gap-4">
             <div className="w-12 h-12 rounded-full bg-[var(--panel-subtle)] border border-[var(--border)] text-[var(--muted)] flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5" />
+              <ShieldAlert className="w-5 h-5" aria-hidden="true" />
             </div>
             <div className="space-y-1.5">
-              <h2 className="text-sm font-semibold tracking-tight text-[var(--text)]">
-                Branch timesheet access required
-              </h2>
+              <h2 className="text-sm font-semibold text-[var(--text)]">You don’t have access to these timesheets</h2>
               <p className="text-xs leading-relaxed text-[var(--muted)]">
-                You do not have branch timesheet access for this location. Please switch to an
-                authorized branch or contact your administrator.
+                Choose one of your branches, or ask the Organisation Owner to give you access to this branch.
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => fetchSubmissions()}>
-              Try again
-            </Button>
+            <button type="button" onClick={() => load()} className={buttonClass.secondary}>Try again</button>
           </div>
         </div>
       </div>
@@ -251,373 +238,232 @@ export default function TimesheetReview() {
   }
 
   return (
-    <div className="space-y-6 pb-16">
-      {/* 1. Header & Fortnight Switcher */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-              Timesheet Approvals
-            </h1>
-            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/20">
-              Manager Queue
-            </span>
-          </div>
-          <p className="text-xs text-[var(--muted)] mt-1.5 flex items-center gap-2">
-            <span>Pay Fortnight: <strong>{fnDateRangeStr}</strong></span>
-            <span>•</span>
-            <span>{submissions.length} Total Staff</span>
-          </p>
-        </div>
+    <div className="space-y-5 pb-16">
+      {header}
 
-        {/* Fortnight Navigation Controls */}
-        <div className="flex items-center gap-2">
-          <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--panel)] p-0.5">
-            <button
-              onClick={handlePrev}
-              className="p-1.5 rounded-md text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] transition-colors"
-              title="Previous Fortnight"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleCurrent}
-              className="px-2.5 py-1 text-xs font-semibold text-[var(--text)] hover:bg-[var(--panel-subtle)] rounded transition-colors"
-            >
-              Current Cycle
-            </button>
-            <button
-              onClick={handleNext}
-              className="p-1.5 rounded-md text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] transition-colors"
-              title="Next Fortnight"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Needs Attention Hero Card */}
-      <Card className="p-5 bg-[var(--panel-subtle)] border-[var(--border)] space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-[var(--primary)]" />
-              <h2 className="font-bold text-lg text-[var(--text)]">
-                {readyCount > 0 
-                  ? `${readyCount} timesheet${readyCount === 1 ? '' : 's'} ready for review` 
-                  : 'All submitted timesheets are up to date'}
-              </h2>
-            </div>
-            <p className="text-xs text-[var(--muted)]">
-              {readyCount} ready to approve • {needsChangesCount} returned for changes • {approvedCount} approved
+      {/* Summary */}
+      <Card className="p-4 bg-[var(--panel-subtle)]">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h2 className="font-bold text-base text-[var(--text)]">
+              {counts.waiting > 0
+                ? `${counts.waiting} timesheet${counts.waiting === 1 ? '' : 's'} waiting for approval`
+                : 'Every timesheet in this view is approved'}
+            </h2>
+            <p className="text-xs text-[var(--muted)] mt-0.5">
+              {counts.waiting} waiting · {counts.approved} approved · {counts.locked} locked
             </p>
           </div>
-
-          {/* Bulk Approve Action */}
-          {readyCount > 0 && (
-            <Button
-              variant="primary"
-              size="md"
-              onClick={handleBulkApprove}
-              loading={isBulkApproving}
-              rightIcon={<CheckCircle2 className="w-4 h-4" />}
+          <div className="flex flex-wrap gap-2">
+            {chosenIds.length > 0 && (
+              <button type="button" onClick={() => setConfirmIds(chosenIds)} disabled={bulkBusy} className={buttonClass.secondary}>
+                <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve selected ({chosenIds.length})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setConfirmIds(approvable.map(r => r.employee_id))}
+              disabled={bulkBusy || approvable.length === 0}
+              className={buttonClass.primary}
             >
-              Approve All Ready ({readyCount})
-            </Button>
-          )}
+              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all waiting ({approvable.length})
+            </button>
+          </div>
         </div>
       </Card>
 
-      {/* 3. Filter Tabs & Search Bar */}
+      {/* Tabs and search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* Filter Tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setFilterTab('ready')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-              filterTab === 'ready'
-                ? 'bg-[var(--panel)] text-[var(--primary)] shadow-xs'
-                : 'text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            <span>Ready to Approve</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-[var(--primary-light)] text-[var(--primary)]">
-              {readyCount}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFilterTab('needs_changes')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-              filterTab === 'needs_changes'
-                ? 'bg-[var(--panel)] text-[var(--warn)] shadow-xs'
-                : 'text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            <span>Needs Changes</span>
-            {needsChangesCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-[var(--warn-light)] text-[var(--warn)]">
-                {needsChangesCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFilterTab('approved')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-              filterTab === 'approved'
-                ? 'bg-[var(--panel)] text-[var(--success)] shadow-xs'
-                : 'text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            <span>Approved ({approvedCount})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFilterTab('draft')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-              filterTab === 'draft'
-                ? 'bg-[var(--panel)] text-[var(--text)] shadow-xs'
-                : 'text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            Draft / Unsubmitted ({draftCount})
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFilterTab('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
-              filterTab === 'all'
-                ? 'bg-[var(--panel)] text-[var(--text)] shadow-xs'
-                : 'text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            All ({submissions.length})
-          </button>
+        <div role="group" aria-label="Filter by status" className="flex items-center gap-1 p-1 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] overflow-x-auto">
+          {(Object.keys(TAB_LABEL) as Tab[]).map(t => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={tab === t}
+              onClick={() => setTab(t)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                tab === t ? 'bg-[var(--panel)] text-[var(--text)] shadow-xs' : 'text-[var(--muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              {TAB_LABEL[t]}
+              <span className="px-1.5 rounded-full text-[10px] bg-[var(--glass-8)]">{counts[t]}</span>
+            </button>
+          ))}
         </div>
-
-        {/* Search */}
         <div className="relative w-full sm:w-64">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
           <input
-            type="text"
-            placeholder="Search employee..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-xs text-[var(--text)]"
+            type="search"
+            aria-label="Search workers"
+            placeholder="Search workers, departments or branches…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
           />
         </div>
       </div>
 
-      {/* 4. Submissions List */}
-      {loading ? (
-        <div className="space-y-3">
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-xl" />
-          ))}
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[var(--danger-light)] border border-[var(--danger)]/30 text-xs text-[var(--danger)]">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className={buttonClass.secondary}>Try again</button>
         </div>
-      ) : filteredSubmissions.length === 0 ? (
+      )}
+
+      {/* List */}
+      {loading && rows.length === 0 ? (
+        <div className="space-y-3">
+          {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+        </div>
+      ) : visible.length === 0 ? (
         <EmptyState
-          icon={<FileCheck2 className="w-10 h-10 text-[var(--muted)]" />}
-          title="No Timesheets in this View"
-          description={
-            filterTab === 'ready'
-              ? 'There are no submitted timesheets waiting for your review.'
-              : 'No timesheets match the selected filter.'
-          }
-          action={
-            filterTab !== 'all' ? (
-              <Button variant="outline" size="sm" onClick={() => setFilterTab('all')}>
-                View All Timesheets
-              </Button>
-            ) : undefined
-          }
+          icon={<FileCheck2 className="w-5 h-5" aria-hidden="true" />}
+          title="No timesheets in this view"
+          description={tab === 'waiting' ? 'Nothing is waiting for approval in this pay period.' : 'No timesheets match this filter.'}
+          action={tab !== 'all' ? <button type="button" onClick={() => setTab('all')} className={buttonClass.secondary}>Show all</button> : undefined}
         />
       ) : (
-        <div className="space-y-3">
-          {filteredSubmissions.map((emp) => {
-            const isReady = emp.status === 'Submitted' || emp.status === 'Under Review';
-            const isApproved = emp.status === 'Approved';
-            const isRejected = emp.status === 'Rejected';
-            const isExpanded = expandedEmpId === emp.employee_id;
-
+        <div className="space-y-2">
+          {visibleApprovable.length > 1 && (
+            <label className="flex items-center gap-2 px-1 text-xs font-semibold text-[var(--muted)] cursor-pointer w-fit">
+              <input type="checkbox" className="accent-[var(--primary)]" checked={allVisibleChosen} onChange={toggleAllVisible} />
+              Select all waiting in this view ({visibleApprovable.length})
+            </label>
+          )}
+          {visible.map(row => {
+            const isExpanded = expanded === row.employee_id;
+            const canApprove = row.status === 'Draft' && !row.timesheet_locked;
+            const canReopen = row.status === 'Approved';
+            const detail = details[detailKey(row.employee_id)];
+            const detailId = `timesheet-days-${row.employee_id}`;
             return (
-              <Card
-                key={emp.employee_id}
-                className={`p-4 sm:p-5 transition-all ${
-                  isReady 
-                    ? 'border-[var(--primary)]/60 bg-[var(--panel)] ring-1 ring-[var(--primary)]/20' 
-                    : isRejected
-                    ? 'border-[var(--warn)]/40 bg-[var(--warn-light)]/10'
-                    : 'border-[var(--border)] bg-[var(--panel)]'
-                }`}
-              >
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  {/* Left Column: Staff info */}
-                  <div className="space-y-1 sm:min-w-[220px]">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-[var(--primary-light)] text-[var(--primary)] font-bold text-xs flex items-center justify-center shrink-0">
-                        {emp.full_name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="font-bold text-sm text-[var(--text)]">
-                          {emp.full_name}
-                        </div>
-                        <div className="text-xs text-[var(--muted)]">
-                          {emp.department || 'Staff'} • Contract: {emp.contracted_hours} hrs
-                        </div>
+              <Card key={row.employee_id} className={`p-3 sm:p-4 ${row.status === 'Draft' ? 'border-[var(--primary)]/40' : ''}`}>
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0 lg:w-[30%]">
+                    {canApprove ? (
+                      <input
+                        type="checkbox"
+                        className="mt-1 accent-[var(--primary)]"
+                        checked={chosen.has(row.employee_id)}
+                        onChange={() => toggleChosen(row.employee_id)}
+                        aria-label={`Select ${row.full_name} for approval`}
+                      />
+                    ) : (
+                      <span className="w-[13px] shrink-0" aria-hidden="true" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-[var(--text)] truncate">{row.full_name}</div>
+                      <div className="text-xs text-[var(--muted)] truncate">
+                        {[showBranch ? row.location_name : null, row.department, `${row.contracted_hours}h contract`].filter(Boolean).join(' · ')}
                       </div>
                     </div>
                   </div>
 
-                  {/* Middle Column: Hours summary */}
-                  <div className="flex items-center gap-6 sm:pl-9 lg:pl-0">
+                  <dl className="grid grid-cols-4 gap-4 text-xs sm:pl-7 lg:pl-0">
                     <div>
-                      <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Rostered</div>
-                      <div className="text-sm font-bold font-mono text-[var(--text)]">
-                        {emp.rostered_hours} hrs
-                      </div>
+                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Rostered</dt>
+                      <dd className="font-bold font-mono text-[var(--text)]">{row.rostered_hours.toFixed(2)}h</dd>
                     </div>
-
                     <div>
-                      <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Actual Recorded</div>
-                      <div className="text-sm font-bold font-mono text-[var(--text)]">
-                        {emp.actual_hours} hrs
-                      </div>
+                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Worked</dt>
+                      <dd className="font-bold font-mono text-[var(--text)]">{row.actual_hours.toFixed(2)}h</dd>
                     </div>
-
                     <div>
-                      <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Variance</div>
-                      <div className={`text-xs font-mono font-bold ${
-                        emp.variance_hours > 0 ? 'text-[var(--warn)]' : emp.variance_hours < 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'
-                      }`}>
-                        {emp.variance_hours > 0 ? `+${emp.variance_hours}` : emp.variance_hours} hrs
-                      </div>
+                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]" title="Worked hours minus contracted hours">vs contract</dt>
+                      <dd className={`font-bold font-mono ${row.variance_hours > 0 ? 'text-[var(--warn)]' : row.variance_hours < 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                        {signedHours(row.variance_hours)}
+                      </dd>
                     </div>
-
                     <div>
-                      <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Status</div>
-                      <div>
-                        {isApproved ? (
-                          <Badge variant="success" size="sm">✓ Approved</Badge>
-                        ) : isReady ? (
-                          <Badge variant="purple" size="sm">⏳ Ready to Approve</Badge>
-                        ) : isRejected ? (
-                          <Badge variant="danger" size="sm">⚠️ Needs Changes</Badge>
-                        ) : (
-                          <Badge variant="default" size="sm">Draft / Not Submitted</Badge>
-                        )}
-                      </div>
+                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Status</dt>
+                      <dd>
+                        <Badge variant={STATUS_VARIANT[row.status]} size="sm">
+                          {row.status === 'Approved' && <CheckCircle2 className="w-3 h-3" aria-hidden="true" />}
+                          {row.status === 'Locked' && <Lock className="w-3 h-3" aria-hidden="true" />}
+                          {row.status}
+                        </Badge>
+                      </dd>
                     </div>
-                  </div>
+                  </dl>
 
-                  {/* Right Column: Actions */}
-                  <div className="flex items-center gap-2 self-start lg:self-center">
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                     <button
                       type="button"
-                      onClick={() => toggleExpand(emp.employee_id)}
-                      className="px-2.5 py-1.5 rounded-md text-xs font-medium text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] flex items-center gap-1 border border-[var(--border)] transition-colors"
-                      title="Inspect 14-day shift details"
+                      onClick={() => toggleExpand(row.employee_id)}
+                      aria-expanded={isExpanded}
+                      aria-controls={detailId}
+                      className={buttonClass.quiet}
                     >
-                      <span>Details</span>
-                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      Days {isExpanded ? <ChevronUp className="w-3.5 h-3.5" aria-hidden="true" /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                     </button>
-
-                    {isReady && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openRejectModal(emp)}
-                          className="text-[var(--danger)] border-[var(--danger)]/30 hover:bg-[var(--danger-light)]"
-                        >
-                          Request Changes
-                        </Button>
-
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => handleApprove(emp)}
-                          leftIcon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                        >
-                          Approve
-                        </Button>
-                      </>
+                    {canApprove && (
+                      <button type="button" onClick={() => changeOne(row, 'approve')} disabled={rowBusy === row.employee_id} className={buttonClass.primary}>
+                        <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve
+                      </button>
                     )}
-
-                    {isRejected && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleApprove(emp)}
-                        leftIcon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                      >
-                        Override & Approve
-                      </Button>
+                    {canReopen && (
+                      <button type="button" onClick={() => changeOne(row, 'reopen')} disabled={rowBusy === row.employee_id} className={buttonClass.secondary}>
+                        <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Reopen
+                      </button>
+                    )}
+                    {row.timesheet_locked && (
+                      <span className="text-[11px] text-[var(--muted)] flex items-center gap-1">
+                        <Lock className="w-3 h-3" aria-hidden="true" /> Timesheets locked for this branch
+                      </span>
                     )}
                   </div>
                 </div>
 
-                {/* Rejection Reason Notice */}
-                {isRejected && emp.rejection_reason && (
-                  <div className="mt-3 p-2.5 rounded-lg bg-[var(--danger-light)] border border-[var(--danger)]/25 text-xs text-[var(--danger)]">
-                    <strong>Note sent to employee:</strong> "{emp.rejection_reason}"
-                  </div>
-                )}
-
-                {/* Expandable Daily Breakdown */}
                 {isExpanded && (
-                  <div className="mt-4 pt-4 border-t border-[var(--border)] space-y-2 text-xs">
-                    <div className="font-semibold text-[var(--text)] flex items-center justify-between">
-                      <span>14-Day Breakdown (Rostered vs Actual)</span>
-                      {loadingDaily === emp.employee_id && <span className="text-[var(--muted)]">Loading daily hours...</span>}
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] text-[var(--muted)] uppercase font-semibold text-[10px]">
-                            <th className="pb-2">Date</th>
-                            <th className="pb-2">Scheduled Shift</th>
-                            <th className="pb-2">Actual Clocked</th>
-                            <th className="pb-2">Daily Hours</th>
-                            <th className="pb-2">Notes</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--border)]/40">
-                          {dailyDetails[emp.employee_id] && dailyDetails[emp.employee_id].length > 0 ? (
-                            dailyDetails[emp.employee_id].map((r: any) => {
-                              const s = r.segments?.[0] || {};
+                  <div id={detailId} className="mt-3 pt-3 border-t border-[var(--border)]">
+                    {detail === undefined ? (
+                      <p className="text-xs text-[var(--muted)]">Loading days…</p>
+                    ) : detail === 'error' ? (
+                      <p role="alert" className="text-xs text-[var(--danger)]">
+                        The days could not be loaded.{' '}
+                        <button type="button" onClick={() => loadDetails(row.employee_id)} className="underline font-semibold cursor-pointer">Try again</button>
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <caption className="sr-only">Rostered and worked segments for {row.full_name}, day by day</caption>
+                          <thead>
+                            <tr className="border-b border-[var(--border)] text-[var(--muted)] uppercase font-semibold text-[10px]">
+                              <th scope="col" className="py-1.5 pr-3">Day</th>
+                              <th scope="col" className="py-1.5 pr-3">Rostered</th>
+                              <th scope="col" className="py-1.5 pr-3">Worked</th>
+                              <th scope="col" className="py-1.5 pr-3 text-right">Rostered h</th>
+                              <th scope="col" className="py-1.5 pr-3 text-right">Worked h</th>
+                              <th scope="col" className="py-1.5">Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)]">
+                            {days.map(iso => {
+                              const record = detail.find(r => r.record_date === iso);
+                              const segments = record?.segments ?? [];
+                              const notes = segments.map(s => s.notes).filter(Boolean).join(' · ');
+                              const empty = !segments.some(apiHasRoster) && !segments.some(apiHasWorked);
                               return (
-                                <tr key={r.record_date} className="hover:bg-[var(--panel)]/50">
-                                  <td className="py-2 font-medium text-[var(--text)]">{r.record_date}</td>
-                                  <td className="py-2 font-mono text-[var(--muted)]">
-                                    {s.roster_in && s.roster_out ? `${s.roster_in.substring(0, 5)} – ${s.roster_out.substring(0, 5)}` : '--'}
-                                  </td>
-                                  <td className="py-2 font-mono font-semibold text-[var(--text)]">
-                                    {s.actual_in && s.actual_out ? `${s.actual_in.substring(0, 5)} – ${s.actual_out.substring(0, 5)}` : '--'}
-                                  </td>
-                                  <td className="py-2 font-mono">{s.actual_hours ?? s.roster_hours ?? 0} hrs</td>
-                                  <td className="py-2 text-[var(--muted)] truncate max-w-xs">{s.notes || '--'}</td>
+                                <tr key={iso} className={isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : ''}>
+                                  <th scope="row" className="py-1.5 pr-3 font-semibold text-[var(--text)] whitespace-nowrap">{dayLabel(iso)}</th>
+                                  {empty ? (
+                                    <td colSpan={4} className="py-1.5 pr-3 text-[var(--muted)] italic">Nothing rostered or worked</td>
+                                  ) : (
+                                    <>
+                                      <td className="py-1.5 pr-3"><span className="flex flex-wrap gap-1"><DayChips segments={segments} side="roster" size="regular" /></span></td>
+                                      <td className="py-1.5 pr-3"><span className="flex flex-wrap gap-1"><DayChips segments={segments} side="actual" size="regular" /></span></td>
+                                      <td className="py-1.5 pr-3 text-right font-mono">{formatHours(sumHours(record, 'roster_hours'))}</td>
+                                      <td className="py-1.5 pr-3 text-right font-mono font-semibold text-[var(--text)]">{formatHours(sumHours(record, 'actual_hours'))}</td>
+                                    </>
+                                  )}
+                                  <td className="py-1.5 text-[var(--muted)] max-w-xs truncate" title={notes}>{notes || '—'}</td>
                                 </tr>
                               );
-                            })
-                          ) : (
-                            <tr>
-                              <td colSpan={5} className="py-4 text-center text-[var(--muted)]">
-                                Daily record details loaded with standard fortnight cycle hours.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 )}
               </Card>
@@ -626,77 +472,35 @@ export default function TimesheetReview() {
         </div>
       )}
 
-      {/* 5. Request Changes Modal */}
-      {rejectingEmp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="w-full max-w-md bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-[var(--warn-light)] text-[var(--warn)]">
-                <AlertCircle className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="font-bold text-base text-[var(--text)]">Request Changes</h3>
-                <p className="text-xs text-[var(--muted)]">Return timesheet to {rejectingEmp.full_name}</p>
-              </div>
+      {confirmIds && (
+        <Dialog
+          title={`Approve ${confirmIds.length} timesheet${confirmIds.length === 1 ? '' : 's'}?`}
+          description={`Pay period ${periodLabel(startIso)}`}
+          onClose={() => setConfirmIds(null)}
+          closeDisabled={bulkBusy}
+          size="sm"
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmIds(null)} disabled={bulkBusy} className={buttonClass.secondary}>Cancel</button>
+              <button type="button" onClick={() => approveMany(confirmIds)} disabled={bulkBusy} className={buttonClass.primary}>
+                {bulkBusy ? 'Approving…' : 'Approve'}
+              </button>
             </div>
-
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-[var(--text)]">
-                What needs to be corrected?
-              </label>
-              <textarea
-                rows={3}
-                value={rejectionReason}
-                onChange={(e) => setRejectionReason(e.target.value)}
-                placeholder="e.g. Missing finish time on Friday 3 April; please verify your meal break."
-                className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)] text-xs text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-              />
-            </div>
-
-            {/* Presets */}
-            <div className="space-y-1.5">
-              <span className="text-[10px] uppercase font-bold text-[var(--muted)]">Quick presets:</span>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  'Missing finish time',
-                  'Verify meal break deduction',
-                  'Overtime requires pre-approval',
-                  'Shift hours exceed roster'
-                ].map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setRejectionReason(preset)}
-                    className="px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)] transition-colors"
-                  >
-                    {preset}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--border)]">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRejectingEmp(null)}
-                disabled={isRejecting}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleConfirmReject}
-                loading={isRejecting}
-                rightIcon={<Send className="w-3.5 h-3.5" />}
-              >
-                Send Request
-              </Button>
-            </div>
-          </div>
-        </div>
+          }
+        >
+          <p className="text-xs text-[var(--muted)] mb-2">
+            Approved timesheets can’t be edited until they are reopened. Each timesheet is checked on its own; any that can’t be approved are listed afterwards.
+          </p>
+          <ul className="text-xs text-[var(--text)] max-h-48 overflow-y-auto space-y-0.5">
+            {confirmIds.map(id => {
+              const row = rows.find(r => r.employee_id === id);
+              return <li key={id}>{row?.full_name ?? 'Worker'} <span className="text-[var(--muted)]">· {row ? `${row.actual_hours.toFixed(2)}h worked` : ''}</span></li>;
+            })}
+          </ul>
+        </Dialog>
       )}
+
+      {result && <BulkResultDialog result={result} onClose={() => setResult(null)} />}
     </div>
   );
 }

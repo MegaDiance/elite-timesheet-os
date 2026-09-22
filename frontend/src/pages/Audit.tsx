@@ -1,20 +1,86 @@
-import { useState, useEffect } from 'react';
-import { ShieldCheck, Search, FileSpreadsheet, RefreshCw, Filter } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { FileSpreadsheet, Filter, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import api from '../services/apiClient';
+import { useAccess } from '../hooks/useAccess';
+import { Button } from '../components/ui/Button';
+import { EmptyState } from '../components/ui/EmptyState';
+
+interface AuditEntry {
+  id: string;
+  location_id: string | null;
+  actor_id: string | null;
+  target_user_id: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  details: string | null;
+  previous_value: string | null;
+  new_value: string | null;
+  ip_address: string | null;
+  timestamp: string | null;
+  created_at: string | null;
+  actor_email: string | null;
+  actor_full_name: string | null;
+}
+
+const PAGE_SIZE = 100;
+
+const entryTime = (e: AuditEntry) => e.created_at || e.timestamp || '';
+const actorLabel = (e: AuditEntry) => e.actor_full_name || e.actor_email || 'System';
+const humanise = (code: string | null) => {
+  if (!code) return '';
+  const text = code.replace(/_/g, ' ').toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
+
+/** Details are free text or a small JSON object; objects are shown as "key: value" pairs. */
+function formatDetails(details: string | null): string {
+  if (!details) return '';
+  try {
+    const parsed = JSON.parse(details);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return Object.entries(parsed).map(([k, v]) => `${humanise(k)}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(' • ');
+    }
+  } catch {
+    // Plain text.
+  }
+  return details;
+}
+
+function actionTone(action: string): string {
+  if (/DELETE|REMOVE|REVOKE|DEACTIVATE|FAILED|REJECT/.test(action)) return 'bg-[var(--danger-light)] text-[var(--danger)]';
+  if (/CREATE|ADD|APPROVE|INVITE|ACCEPT|REACTIVATE|CONFIGURED/.test(action)) return 'bg-[var(--success-light)] text-[var(--success)]';
+  if (/UPDATE|CHANGE|LOCK|MOVE|TRANSFER|REGENERATE|REOPEN/.test(action)) return 'bg-[var(--primary-light)] text-[var(--primary)]';
+  return 'bg-[var(--glass-8)] text-[var(--muted)]';
+}
+
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
 
 export default function Audit() {
-  const [logs, setLogs] = useState<any[]>([]);
+  const { access } = useAccess();
+  const branchName = new Map((access?.branches ?? []).map(b => [b.id, b.name]));
+
+  const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [actionFilter, setActionFilter] = useState('ALL');
+  const [actionFilter, setActionFilter] = useState('');
+  const [entityFilter, setEntityFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [visible, setVisible] = useState(PAGE_SIZE);
 
   const fetchLogs = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
       const res = await api.get('/audit');
       setLogs(res.data.data || []);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || 'The audit log could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -24,39 +90,59 @@ export default function Audit() {
     fetchLogs();
   }, []);
 
+  const actions = Array.from(new Set(logs.map(l => l.action).filter(Boolean))).sort();
+  const entities = Array.from(new Set(logs.map(l => l.entity_type).filter(Boolean) as string[])).sort();
+
+  const q = searchQuery.trim().toLowerCase();
+  const filteredLogs = logs.filter(log => {
+    if (actionFilter && log.action !== actionFilter) return false;
+    if (entityFilter && log.entity_type !== entityFilter) return false;
+    const day = entryTime(log).slice(0, 10);
+    if (fromDate && day < fromDate) return false;
+    if (toDate && day > toDate) return false;
+    if (!q) return true;
+    return [
+      log.action, log.entity_type, log.details, log.previous_value, log.new_value,
+      log.actor_email, log.actor_full_name, log.location_id ? branchName.get(log.location_id) : '',
+    ].some(v => (v || '').toLowerCase().includes(q));
+  });
+
+  const hasFilters = Boolean(q || actionFilter || entityFilter || fromDate || toDate);
+
   const handleExportCsv = () => {
-    const headers = ['Timestamp', 'Actor Email', 'Actor Role', 'Action Type', 'Entity', 'Details'];
+    const headers = ['Time', 'Actor', 'Actor email', 'Action', 'Entity', 'Entity ID', 'Branch', 'Details', 'Previous value', 'New value', 'IP address'];
     const rows = filteredLogs.map(l => [
-      `"${new Date(l.created_at || l.timestamp).toISOString()}"`,
-      `"${(l.actor_email || '').replace(/"/g, '""')}"`,
-      `"${(l.actor_role || '').replace(/"/g, '""')}"`,
-      `"${(l.action_type || l.action || '').replace(/"/g, '""')}"`,
-      `"${(l.target_entity || l.entity_type || '').replace(/"/g, '""')}"`,
-      `"${JSON.stringify(l.details || {}).replace(/"/g, '""')}"`
+      entryTime(l) ? new Date(entryTime(l)).toISOString() : '',
+      actorLabel(l),
+      l.actor_email || '',
+      l.action,
+      l.entity_type || '',
+      l.entity_id || '',
+      l.location_id ? branchName.get(l.location_id) || l.location_id : '',
+      formatDetails(l.details),
+      l.previous_value || '',
+      l.new_value || '',
+      l.ip_address || '',
     ]);
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `audit-trail-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const actionTypes = Array.from(new Set(logs.map(l => l.action_type || l.action).filter(Boolean))) as string[];
+  const resetFilters = () => {
+    setSearchQuery('');
+    setActionFilter('');
+    setEntityFilter('');
+    setFromDate('');
+    setToDate('');
+    setVisible(PAGE_SIZE);
+  };
 
-  const filteredLogs = logs.filter(log => {
-    const q = searchQuery.toLowerCase();
-    const action = (log.action_type || log.action || '').toLowerCase();
-    const actor = (log.actor_email || '').toLowerCase();
-    const entity = (log.target_entity || log.entity_type || '').toLowerCase();
-
-    const matchesSearch = !q || action.includes(q) || actor.includes(q) || entity.includes(q);
-    const matchesAction = actionFilter === 'ALL' || (log.action_type || log.action) === actionFilter;
-
-    return matchesSearch && matchesAction;
-  });
+  const controlClass = 'px-3 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] outline-none focus:border-[var(--primary)]';
 
   return (
     <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden space-y-4">
@@ -64,125 +150,160 @@ export default function Audit() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-bold text-[var(--text)] mb-1">System Audit Trail</h2>
-            <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <ShieldCheck className="w-3.5 h-3.5" /> Immutable Ledger
+            <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Audit log</h1>
+            <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/20">
+              <ShieldCheck className="w-3.5 h-3.5" /> Cannot be edited
             </span>
           </div>
           <p className="text-sm text-[var(--muted)]">
-            Permanent, tamper-evident record of all operational modifications, approvals, roster locks, and security events.
+            Every change made in your organisation: who did it, when, and what changed.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <button 
-            onClick={fetchLogs} 
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={fetchLogs}
             disabled={loading}
-            className="px-3 py-2 rounded-xl text-xs font-semibold bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
+            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-
-          <button 
-            onClick={handleExportCsv} 
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--hover-row)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Download Audit Log Export (CSV)"
+            Refresh
+          </Button>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={handleExportCsv}
+            disabled={filteredLogs.length === 0}
+            leftIcon={<FileSpreadsheet className="w-4 h-4 text-[var(--success)]" />}
           >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-            <span>Export CSV</span>
-          </button>
+            Export CSV
+          </Button>
         </div>
       </div>
 
-      {/* Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-center gap-3 bg-[var(--panel)] p-3 rounded-xl border border-[var(--border)]">
+      {/* Filters */}
+      <div className="flex flex-col xl:flex-row xl:items-center gap-3 bg-[var(--panel)] p-3 rounded-xl border border-[var(--border)]">
         <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Search by actor email, action type, or target..."
+            placeholder="Search actor, action, details or values…"
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] placeholder-[var(--muted)] outline-none focus:border-indigo-500"
+            onChange={e => { setSearchQuery(e.target.value); setVisible(PAGE_SIZE); }}
+            className={`w-full pl-9 pr-4 ${controlClass}`}
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2">
           <Filter className="w-3.5 h-3.5 text-[var(--muted)]" />
-          <select
-            value={actionFilter}
-            onChange={e => setActionFilter(e.target.value)}
-            className="px-3 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] outline-none cursor-pointer"
-          >
-            <option value="ALL">All Actions ({actionTypes.length})</option>
-            {actionTypes.map(act => (
-              <option key={act} value={act}>{act}</option>
-            ))}
+          <select aria-label="Action" value={actionFilter} onChange={e => { setActionFilter(e.target.value); setVisible(PAGE_SIZE); }} className={`${controlClass} cursor-pointer`}>
+            <option value="">All actions</option>
+            {actions.map(a => <option key={a} value={a}>{humanise(a)}</option>)}
           </select>
+          <select aria-label="Entity" value={entityFilter} onChange={e => { setEntityFilter(e.target.value); setVisible(PAGE_SIZE); }} className={`${controlClass} cursor-pointer`}>
+            <option value="">All record types</option>
+            {entities.map(en => <option key={en} value={en}>{humanise(en)}</option>)}
+          </select>
+          <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+            From
+            <input type="date" value={fromDate} onChange={e => { setFromDate(e.target.value); setVisible(PAGE_SIZE); }} className={controlClass} />
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+            To
+            <input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setVisible(PAGE_SIZE); }} className={controlClass} />
+          </label>
+          {hasFilters && (
+            <button onClick={resetFilters} className="text-xs font-semibold text-[var(--primary)] hover:underline cursor-pointer px-1">
+              Clear
+            </button>
+          )}
         </div>
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-xl border border-[var(--border)] relative">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-[var(--table-header)] sticky top-0 z-20">
-            <tr>
-              <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Timestamp</th>
-              <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Actor</th>
-              <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Action Type</th>
-              <th className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Target / Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredLogs.map((log: any) => {
-              const act = log.action_type || log.action || '';
-              return (
-                <tr key={log.id} className="hover:bg-[var(--hover-row)] border-b border-[var(--border)]">
-                  <td className="py-3 px-4 whitespace-nowrap">
-                    <div className="text-sm text-[var(--text)] font-mono">
-                      {new Date(log.created_at || log.timestamp).toLocaleString()}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="text-sm font-semibold text-[var(--text)]">{log.actor_email || 'System'}</div>
-                    <div className="text-xs text-[var(--muted)]">{log.actor_role || 'Background Task'}</div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
-                      act.includes('DELETE') || act.includes('DEACTIVATE') || act.includes('REJECT') ? 'bg-[var(--danger-light)] text-[var(--danger)]' :
-                      act.includes('CREATE') || act.includes('AUTO') || act.includes('APPROVE') ? 'bg-[var(--success-light)] text-[var(--success)]' :
-                      act.includes('UPDATE') || act.includes('LOCK') ? 'bg-[var(--primary-light)] text-[var(--primary)]' :
-                      'bg-[var(--glass-8)] text-[var(--muted)]'
-                    }`}>
-                      {act}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="text-sm text-[var(--muted)]">{log.target_entity || log.entity_type} {log.target_id || log.entity_id}</div>
-                    {log.details && (
-                      <div className="text-xs text-[var(--muted)] mt-1 font-mono bg-[var(--input-bg)] border border-[var(--border)] p-2 rounded max-w-lg overflow-x-auto">
-                        {typeof log.details === 'string' ? log.details : JSON.stringify(log.details)}
+        {error ? (
+          <EmptyState
+            className="m-4"
+            icon={<ShieldCheck className="w-5 h-5" />}
+            title="The audit log could not be loaded"
+            description={error}
+            actionLabel="Try again"
+            onAction={fetchLogs}
+          />
+        ) : (
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[var(--table-header)] sticky top-0 z-20">
+              <tr>
+                {['Time', 'Actor', 'Action', 'Record', 'Details', 'Change'].map(h => (
+                  <th key={h} className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredLogs.slice(0, visible).map(log => {
+                const time = entryTime(log);
+                const details = formatDetails(log.details);
+                const branch = log.location_id ? branchName.get(log.location_id) : null;
+                return (
+                  <tr key={log.id} className="hover:bg-[var(--hover-row)] border-b border-[var(--border)] align-top">
+                    <td className="py-3 px-4 whitespace-nowrap">
+                      <div className="text-xs text-[var(--text)] font-mono">
+                        {time ? new Date(time).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
                       </div>
-                    )}
+                      {log.ip_address && <div className="text-[10px] text-[var(--muted)] font-mono">{log.ip_address}</div>}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="text-sm font-semibold text-[var(--text)]">{actorLabel(log)}</div>
+                      {log.actor_full_name && log.actor_email && <div className="text-xs text-[var(--muted)]">{log.actor_email}</div>}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span title={log.action} className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap ${actionTone(log.action)}`}>
+                        {humanise(log.action)}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="text-xs text-[var(--text)]">{humanise(log.entity_type) || '—'}</div>
+                      {branch && <div className="text-[11px] text-[var(--muted)]">Branch: {branch}</div>}
+                    </td>
+                    <td className="py-3 px-4 max-w-md">
+                      {details ? <div className="text-xs text-[var(--muted)] break-words">{details}</div> : <span className="text-xs text-[var(--muted)]">—</span>}
+                    </td>
+                    <td className="py-3 px-4 max-w-xs">
+                      {log.previous_value || log.new_value ? (
+                        <div className="text-xs space-y-0.5 break-words">
+                          {log.previous_value && <div className="text-[var(--danger)] line-through opacity-80">{log.previous_value}</div>}
+                          {log.new_value && <div className="text-[var(--success)]">{log.new_value}</div>}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-[var(--muted)]">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredLogs.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[var(--muted)] text-sm">
+                    {hasFilters ? 'No entries match your filters.' : 'Nothing has been recorded yet.'}
                   </td>
                 </tr>
-              );
-            })}
-            {filteredLogs.length === 0 && !loading && (
-              <tr>
-                <td colSpan={4} className="py-8 text-center text-[var(--muted)] text-sm">
-                  {searchQuery ? 'No audit entries match your query.' : 'No audit logs found.'}
-                </td>
-              </tr>
-            )}
-            {loading && (
-              <tr>
-                <td colSpan={4} className="py-8 text-center text-[var(--muted)] text-sm">Loading audit trail...</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+              {loading && logs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[var(--muted)] text-sm">Loading the audit log…</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+        {!error && filteredLogs.length > visible && (
+          <div className="p-3 flex items-center justify-center gap-3 border-t border-[var(--border)] text-xs text-[var(--muted)]">
+            <span>Showing {visible} of {filteredLogs.length}</span>
+            <Button variant="outline" size="sm" onClick={() => setVisible(v => v + PAGE_SIZE)}>Show more</Button>
+          </div>
+        )}
       </div>
     </div>
   );

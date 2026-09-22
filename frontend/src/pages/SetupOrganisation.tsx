@@ -1,610 +1,491 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { 
-  MapPin, 
-  Clock, 
-  Mail, 
-  ShieldCheck, 
-  Check, 
-  ArrowRight, 
-  ArrowLeft, 
-  CheckCircle2, 
-  Sliders, 
-  Users, 
-  AlertCircle 
-} from 'lucide-react';
+import { useSearchParams, Link } from 'react-router-dom';
+import { MapPin, Clock, ArrowRight, ArrowLeft, CheckCircle2, Sliders, AlertCircle, Building2, UserRound, Lock, ShieldCheck } from 'lucide-react';
 import api from '../services/apiClient';
 import { Button } from '../components/ui/Button';
-import { Badge } from '../components/ui/Badge';
 
 const TIMEZONES = [
-  { value: 'Australia/Sydney', label: 'Australia/Sydney (AEDT/AEST)' },
-  { value: 'Australia/Melbourne', label: 'Australia/Melbourne (AEDT/AEST)' },
-  { value: 'Australia/Brisbane', label: 'Australia/Brisbane (AEST - No DST)' },
-  { value: 'Australia/Perth', label: 'Australia/Perth (AWST)' },
-  { value: 'Australia/Adelaide', label: 'Australia/Adelaide (ACDT/ACST)' },
-  { value: 'Australia/Hobart', label: 'Australia/Hobart (AEDT/AEST)' },
-  { value: 'Australia/Darwin', label: 'Australia/Darwin (ACST)' },
-  { value: 'UTC', label: 'UTC' }
+  { value: 'Australia/Melbourne', label: 'Melbourne (AEST/AEDT)' },
+  { value: 'Australia/Sydney', label: 'Sydney (AEST/AEDT)' },
+  { value: 'Australia/Hobart', label: 'Hobart (AEST/AEDT)' },
+  { value: 'Australia/Brisbane', label: 'Brisbane (AEST, no daylight saving)' },
+  { value: 'Australia/Adelaide', label: 'Adelaide (ACST/ACDT)' },
+  { value: 'Australia/Darwin', label: 'Darwin (ACST)' },
+  { value: 'Australia/Perth', label: 'Perth (AWST)' },
+  { value: 'Pacific/Auckland', label: 'Auckland (NZST/NZDT)' },
+  { value: 'UTC', label: 'UTC' },
 ];
 
+const STEPS = [
+  { title: 'Your organisation', icon: Building2 },
+  { title: 'Your account', icon: UserRound },
+  { title: 'Your first branch', icon: MapPin },
+  { title: 'Breaks and security', icon: Sliders },
+] as const;
+
+const inputClass =
+  'w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-sm outline-none focus:border-[var(--primary)] disabled:opacity-70 disabled:cursor-not-allowed';
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1">
+      <span className="block text-xs font-bold text-[var(--muted)] uppercase tracking-wide">{label}</span>
+      {children}
+      {hint && <span className="block text-[11px] text-[var(--muted)]">{hint}</span>}
+    </label>
+  );
+}
+
+function isStrongPassword(value: string) {
+  return value.length >= 8 && /[A-Za-z]/.test(value) && /[0-9]/.test(value);
+}
+
+/**
+ * Completes sign-up from the emailed setup link: creates the organisation and its first branch,
+ * and makes this account the Organisation Owner. No session is created; the owner then signs in
+ * through the organisation's private sign-in link.
+ */
 export default function SetupOrganisation() {
   const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
-  const navigate = useNavigate();
+  const token = (searchParams.get('token') || '').trim();
 
-  // 5-Step State: 1 | 2 | 3 | 4 | 5
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [validating, setValidating] = useState(Boolean(token));
+  const [invalidLink, setInvalidLink] = useState(!token);
+  const [email, setEmail] = useState('');
+  const [accountExists, setAccountExists] = useState(false);
 
-  // Step 1: Organisation Details
-  const [orgName, setOrgName] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-
-  // Step 2: Primary Location
-  const [locationName, setLocationName] = useState('Main Branch');
-  const [locationAddress, setLocationAddress] = useState('');
-  const [locationTimezone, setLocationTimezone] = useState('Australia/Sydney');
-
-  // Step 3: Timesheet Workflow Mode
-  const [timesheetMode, setTimesheetMode] = useState<'employee' | 'manager'>('employee');
-
-  // Step 4: Manager Invitations (Optional)
-  const [inviteManagerEmail, setInviteManagerEmail] = useState('');
-
-  // Step 5: Advanced Options (Break Defaults)
-  const [breakMinsWeekday, setBreakMinsWeekday] = useState(30);
-  const [breakMinsWeekend, setBreakMinsWeekend] = useState(0);
-  const [breakThresholdHours, setBreakThresholdHours] = useState(6);
-
-  // Status State
-  const [loading, setLoading] = useState(false);
-  const [validating, setValidating] = useState(true);
+  const [step, setStep] = useState(0);
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [loginPath, setLoginPath] = useState<string | null>(null);
+
+  // Organisation
+  const [organisationName, setOrganisationName] = useState('');
+  // Account
+  const [ownerName, setOwnerName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  // First branch
+  const [branchName, setBranchName] = useState('Main Branch');
+  const [branchAddress, setBranchAddress] = useState('');
+  const [branchTimezone, setBranchTimezone] = useState('Australia/Melbourne');
+  // Breaks and security
+  const [breakWeekday, setBreakWeekday] = useState('30');
+  const [breakWeekend, setBreakWeekend] = useState('0');
+  const [breakThreshold, setBreakThreshold] = useState('6');
+  const [rosterLockPassword, setRosterLockPassword] = useState('');
+  const [timesheetLockPassword, setTimesheetLockPassword] = useState('');
+  const [enable2fa, setEnable2fa] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      setError('Missing organization invitation token in URL.');
-      setValidating(false);
-      return;
-    }
-
-    api.get(`/platform/verify-invite?token=${encodeURIComponent(token.trim())}`)
+    if (!token) return;
+    let cancelled = false;
+    api.get('/signup/verify', { params: { token } })
       .then(res => {
-        if (res.data?.data?.email) {
-          setAdminEmail(res.data.data.email);
-        }
-        setValidating(false);
+        if (cancelled) return;
+        setEmail(res.data.data.email);
+        setAccountExists(Boolean(res.data.data.account_exists));
       })
-      .catch(err => {
-        setError(err.response?.data?.error?.message || 'Invalid or expired invitation token.');
-        setValidating(false);
+      .catch(() => {
+        if (!cancelled) setInvalidLink(true);
+      })
+      .finally(() => {
+        if (!cancelled) setValidating(false);
       });
+    return () => { cancelled = true; };
   }, [token]);
 
-  const handleNextStep1 = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!orgName.trim()) {
-      setError('Please provide an organisation name.');
-      return;
+  const validateStep = (index: number): string => {
+    if (index === 0) {
+      if (!organisationName.trim()) return 'Enter your organisation’s name.';
+      if (organisationName.trim().length > 120) return 'Keep the organisation name to 120 characters or fewer.';
     }
-    if (adminPassword.length < 8) {
-      setError('Master password must be at least 8 characters long.');
-      return;
+    if (index === 1) {
+      if (accountExists) {
+        if (!password) return 'Enter your current SimpleHours password.';
+      } else {
+        if (!ownerName.trim()) return 'Enter your name.';
+        if (!isStrongPassword(password)) return 'Your password needs at least 8 characters, with both letters and numbers.';
+        if (password !== confirmPassword) return 'The passwords don’t match.';
+      }
     }
-    if (adminPassword !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
+    if (index === 2) {
+      if (!branchName.trim()) return 'Enter a name for your first branch.';
     }
-    setStep(2);
+    if (index === 3) {
+      const weekday = Number(breakWeekday);
+      const weekend = Number(breakWeekend);
+      const threshold = Number(breakThreshold);
+      if (!Number.isFinite(weekday) || weekday < 0 || weekday > 240) return 'Weekday break must be between 0 and 240 minutes.';
+      if (!Number.isFinite(weekend) || weekend < 0 || weekend > 240) return 'Weekend break must be between 0 and 240 minutes.';
+      if (!Number.isFinite(threshold) || threshold < 0 || threshold > 24) return 'The break threshold must be between 0 and 24 hours.';
+      if (rosterLockPassword && rosterLockPassword.length < 4) return 'Lock passwords need at least 4 characters.';
+      if (timesheetLockPassword && timesheetLockPassword.length < 4) return 'Lock passwords need at least 4 characters.';
+    }
+    return '';
   };
 
-  const handleNextStep2 = (e: React.FormEvent) => {
+  const next = (e: React.FormEvent) => {
     e.preventDefault();
+    const problem = validateStep(step);
+    setError(problem);
+    if (!problem) setStep(s => s + 1);
+  };
+
+  const back = () => {
     setError('');
-    if (!locationName.trim()) {
-      setError('Please provide a name for your primary location.');
-      return;
+    setStep(s => Math.max(0, s - 1));
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    for (let i = 0; i < STEPS.length; i++) {
+      const problem = validateStep(i);
+      if (problem) {
+        setStep(i);
+        setError(problem);
+        return;
+      }
     }
-    setStep(3);
-  };
 
-  const handleNextStep3 = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setStep(4);
-  };
-
-  const handleNextStep4 = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (inviteManagerEmail.trim() && !inviteManagerEmail.includes('@')) {
-      setError('Please provide a valid email address or leave blank.');
-      return;
-    }
-    setStep(5);
-  };
-
-  const handleFinalSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+    setSubmitting(true);
     setError('');
     try {
-      await api.post('/platform/claim-invite', {
-        token: token?.trim(),
-        name: orgName.trim(),
-        display_name: displayName.trim() || orgName.trim(),
-        admin_email: adminEmail.trim(),
-        admin_password: adminPassword,
-        primary_location_name: locationName.trim(),
-        primary_location_address: locationAddress.trim() || null,
-        primary_location_timezone: locationTimezone,
-        timesheet_entry_mode: timesheetMode,
-        invite_manager_email: inviteManagerEmail.trim() || null,
-        roster_lock_password: null,
-        timesheet_lock_password: null,
-        break_mins_weekday: Number(breakMinsWeekday),
-        break_mins_weekend: Number(breakMinsWeekend),
-        break_threshold_hours: Number(breakThresholdHours),
-        enable_2fa: false
+      const res = await api.post('/signup/complete', {
+        token,
+        organisation_name: organisationName.trim(),
+        password,
+        owner_name: accountExists ? undefined : ownerName.trim(),
+        branch_name: branchName.trim(),
+        branch_address: branchAddress.trim() || undefined,
+        branch_timezone: branchTimezone,
+        break_mins_weekday: Number(breakWeekday),
+        break_mins_weekend: Number(breakWeekend),
+        break_threshold_hours: Number(breakThreshold),
+        roster_lock_password: rosterLockPassword || undefined,
+        timesheet_lock_password: timesheetLockPassword || undefined,
+        enable_2fa: accountExists ? undefined : enable2fa,
       });
-
-      navigate('/login?setup=success');
+      setLoginPath(res.data?.data?.login_path || '/login');
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to complete organisation setup.');
+      const code = err.response?.data?.error?.code;
+      const message = err.response?.data?.error?.message;
+      if (code === 'INVALID_SETUP_LINK') {
+        setInvalidLink(true);
+      } else if (code === 'INVALID_CREDENTIALS' || code === 'WEAK_PASSWORD') {
+        setStep(1);
+        setError(message || 'Check your password and try again.');
+      } else {
+        setError(message || 'We couldn’t set up your organisation. Please try again.');
+      }
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
-  const stepTitles = [
-    'Organisation Details',
-    'Primary Location',
-    'Timesheet Workflow',
-    'Manager Invitation',
-    'Review & Finish'
-  ];
-
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-[var(--bg)] text-[var(--text)] p-4 font-['Inter',sans-serif]">
-      <div className="w-full max-w-xl p-8 bg-[var(--panel)] rounded-3xl border border-[var(--border)] shadow-2xl space-y-6">
-        {/* Header */}
-        <div className="border-b border-[var(--border)] pb-5">
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-6 h-6 rounded-md bg-[var(--primary)] text-white flex items-center justify-center">
-              <Clock className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--primary)]">
-              SimpleHours Onboarding Wizard
-            </span>
+  const card = (children: React.ReactNode) => (
+    <div className="flex items-center justify-center min-h-screen bg-[var(--bg)] text-[var(--text)] p-4">
+      <div className="w-full max-w-xl p-6 sm:p-8 bg-[var(--panel)] rounded-3xl border border-[var(--border)] shadow-2xl space-y-6">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-md bg-[var(--primary)] text-white flex items-center justify-center">
+            <Clock className="w-3.5 h-3.5" />
           </div>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--primary)]">SimpleHours set-up</span>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 
-          <div className="flex items-center justify-between">
+  if (validating) {
+    return card(
+      <div className="text-center py-12 text-[var(--muted)] text-xs flex items-center justify-center gap-2">
+        <div className="w-4 h-4 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
+        <span>Checking your setup link…</span>
+      </div>
+    );
+  }
+
+  if (invalidLink) {
+    return card(
+      <div className="text-center space-y-4 py-4">
+        <div className="w-12 h-12 rounded-full bg-[var(--danger-light)] text-[var(--danger)] flex items-center justify-center mx-auto">
+          <AlertCircle className="w-6 h-6" />
+        </div>
+        <h1 className="text-xl font-bold text-[var(--text)]">This setup link can't be used</h1>
+        <p className="text-xs text-[var(--muted)] leading-relaxed max-w-sm mx-auto">
+          It may have expired, already been used or been copied incorrectly. Setup links work once and expire after 24 hours.
+        </p>
+        <Link to="/signup" className="inline-block">
+          <Button variant="primary" size="md">Request a new link</Button>
+        </Link>
+      </div>
+    );
+  }
+
+  if (loginPath) {
+    const fullLink = `${window.location.origin}${loginPath}`;
+    return card(
+      <div className="text-center space-y-4 py-4">
+        <div className="w-12 h-12 rounded-full bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center mx-auto">
+          <CheckCircle2 className="w-6 h-6" />
+        </div>
+        <h1 className="text-2xl font-bold text-[var(--text)]">Your organisation is ready</h1>
+        <p className="text-sm text-[var(--muted)] leading-relaxed max-w-md mx-auto">
+          {organisationName.trim()} has been set up with its first branch, {branchName.trim()}. Sign in to add workers,
+          build your first roster and invite Branch Admins.
+        </p>
+        <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-left space-y-1">
+          <div className="font-semibold text-[var(--text)]">Your organisation's private sign-in link</div>
+          <div className="font-mono text-[var(--primary)] break-all">{fullLink}</div>
+          <div className="text-[var(--muted)]">Bookmark it. You and your Branch Admins sign in here.</div>
+        </div>
+        <Link to={loginPath} className="inline-block">
+          <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>Sign in</Button>
+        </Link>
+      </div>
+    );
+  }
+
+  const StepIcon = STEPS[step].icon;
+  const isLast = step === STEPS.length - 1;
+
+  return card(
+    <>
+      <div className="border-b border-[var(--border)] pb-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center shrink-0">
+              <StepIcon className="w-5 h-5" />
+            </div>
             <div>
-              <h2 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-                {stepTitles[step - 1]}
-              </h2>
-              <p className="text-xs text-[var(--muted)] mt-0.5">
-                Step {step} of 5: Set up your workforce structure with strict location isolation
-              </p>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text)]">{STEPS[step].title}</h1>
+              <p className="text-xs text-[var(--muted)] mt-0.5">Step {step + 1} of {STEPS.length} · Setting up as {email}</p>
             </div>
-            <span className="text-xs font-bold px-3 py-1 bg-[var(--primary-light)] text-[var(--primary)] rounded-full uppercase tracking-wider">
-              {step}/5
-            </span>
-          </div>
-
-          {/* 5-Step Progress Indicator */}
-          <div className="grid grid-cols-5 gap-1.5 mt-5">
-            {[1, 2, 3, 4, 5].map((s) => (
-              <div
-                key={s}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  step >= s ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'
-                }`}
-              />
-            ))}
           </div>
         </div>
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${STEPS.length}, minmax(0, 1fr))` }}>
+          {STEPS.map((s, i) => (
+            <div key={s.title} className={`h-1.5 rounded-full transition-all duration-300 ${step >= i ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'}`} />
+          ))}
+        </div>
+      </div>
 
-        {validating ? (
-          <div className="text-center py-12 text-[var(--muted)] text-xs flex items-center justify-center gap-2">
-            <div className="w-4 h-4 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
-            <span>Validating workspace invitation...</span>
-          </div>
-        ) : error && !adminEmail ? (
-          <div className="text-center text-xs font-bold text-rose-500 py-6 bg-rose-500/10 rounded-2xl border border-rose-500/20 space-y-3">
-            <AlertCircle className="w-6 h-6 mx-auto text-rose-500" />
-            <div>{error}</div>
-            <Link to="/portal-access">
-              <Button variant="ghost" size="sm">Back to Portal Access</Button>
-            </Link>
-          </div>
-        ) : (
+      {error && (
+        <div role="alert" className="text-xs font-semibold text-[var(--danger)] p-3 bg-[var(--danger-light)] rounded-xl border border-[var(--danger)]/25 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <form onSubmit={isLast ? submit : next} className="space-y-4" noValidate>
+        {step === 0 && (
           <>
-            {error && (
-              <div className="text-xs font-semibold text-rose-500 p-3 bg-rose-500/10 rounded-xl border border-rose-500/20 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{error}</span>
-              </div>
-            )}
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              You'll be the Organisation Owner: you can see every branch, invite Branch Admins and change organisation settings.
+            </p>
+            <Field label="Organisation name">
+              <input
+                type="text"
+                placeholder="e.g. Harbourside Community Care"
+                value={organisationName}
+                onChange={e => setOrganisationName(e.target.value)}
+                autoFocus
+                maxLength={120}
+                className={inputClass}
+              />
+            </Field>
+          </>
+        )}
 
-            {/* STEP 1: ORGANISATION DETAILS */}
-            {step === 1 && (
-              <form onSubmit={handleNextStep1} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Organisation Legal Name *
-                  </label>
+        {step === 1 && (
+          <>
+            <Field label="Email">
+              <input type="email" value={email} disabled className={inputClass} />
+            </Field>
+            {accountExists ? (
+              <>
+                <p className="text-xs text-[var(--muted)] leading-relaxed">
+                  You already have a SimpleHours account with this email. Enter its current password to add this organisation to it.
+                </p>
+                <Field label="Current password">
                   <input
-                    required
-                    type="text"
-                    placeholder="e.g. Apex Logistics Solutions"
-                    value={orgName}
-                    onChange={e => setOrgName(e.target.value)}
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
                     autoFocus
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
+                    className={inputClass}
                   />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Display Name / Brand Label (Optional)
-                  </label>
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Your name">
                   <input
                     type="text"
-                    placeholder="e.g. Apex Logistics"
-                    value={displayName}
-                    onChange={e => setDisplayName(e.target.value)}
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
+                    autoComplete="name"
+                    placeholder="e.g. Alex Chen"
+                    value={ownerName}
+                    onChange={e => setOwnerName(e.target.value)}
+                    autoFocus
+                    maxLength={120}
+                    className={inputClass}
                   />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Owner Admin Email
-                  </label>
-                  <input
-                    type="email"
-                    disabled
-                    value={adminEmail}
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--muted)] text-xs cursor-not-allowed opacity-75"
-                  />
-                </div>
-
+                </Field>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                      Master Password *
-                    </label>
+                  <Field label="Password" hint="At least 8 characters, with letters and numbers.">
                     <input
-                      required
                       type="password"
-                      placeholder="At least 8 characters"
-                      value={adminPassword}
-                      onChange={e => setAdminPassword(e.target.value)}
-                      className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      className={inputClass}
                     />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                      Confirm Password *
-                    </label>
+                  </Field>
+                  <Field label="Confirm password">
                     <input
-                      required
                       type="password"
-                      placeholder="Repeat password"
+                      autoComplete="new-password"
                       value={confirmPassword}
                       onChange={e => setConfirmPassword(e.target.value)}
-                      className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
+                      className={inputClass}
                     />
-                  </div>
+                  </Field>
                 </div>
-
-                <div className="pt-4 flex justify-end">
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="md"
-                    rightIcon={<ArrowRight className="w-4 h-4" />}
-                  >
-                    Continue to Primary Location
-                  </Button>
-                </div>
-              </form>
-            )}
-
-            {/* STEP 2: PRIMARY LOCATION */}
-            {step === 2 && (
-              <form onSubmit={handleNextStep2} className="space-y-4">
-                <div className="p-3.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-1">
-                  <div className="text-xs font-bold text-[var(--primary)] flex items-center gap-1.5">
-                    <MapPin className="w-4 h-4" />
-                    <span>Multi-Location Architecture</span>
-                  </div>
-                  <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                    SimpleHours isolates data across locations. Create your first operational site (e.g. Headquarters or Primary Warehouse).
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Primary Location Name *
-                  </label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="e.g. Sydney Central Office or HQ"
-                    value={locationName}
-                    onChange={e => setLocationName(e.target.value)}
-                    autoFocus
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Physical Address (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 100 Main Street, Sydney NSW 2000"
-                    value={locationAddress}
-                    onChange={e => setLocationAddress(e.target.value)}
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Operating Timezone *
-                  </label>
-                  <select
-                    value={locationTimezone}
-                    onChange={e => setLocationTimezone(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
-                  >
-                    {TIMEZONES.map(tz => (
-                      <option key={tz.value} value={tz.value}>{tz.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="pt-4 flex justify-between">
-                  <Button type="button" variant="ghost" size="md" onClick={() => setStep(1)} leftIcon={<ArrowLeft className="w-4 h-4" />}>
-                    Back
-                  </Button>
-                  <Button type="submit" variant="primary" size="md" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                    Continue to Workflow Mode
-                  </Button>
-                </div>
-              </form>
-            )}
-
-            {/* STEP 3: TIMESHEET WORKFLOW MODE */}
-            {step === 3 && (
-              <form onSubmit={handleNextStep3} className="space-y-4">
-                <div className="space-y-1">
-                  <h3 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">
-                    Select Timesheet Entry Mode
-                  </h3>
-                  <p className="text-xs text-[var(--muted)]">
-                    Choose how timesheet actual hours are submitted and reviewed across your workforce.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3">
-                  {/* Mode 1: Employee Submission */}
-                  <div
-                    onClick={() => setTimesheetMode('employee')}
-                    className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${
-                      timesheetMode === 'employee'
-                        ? 'border-[var(--primary)] bg-[var(--primary-light)]/20'
-                        : 'border-[var(--border)] hover:border-[var(--border-h)] bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-[var(--primary)] text-white flex items-center justify-center font-bold text-xs">
-                          <Users className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-bold text-[var(--text)]">Employee Submission Mode (Standard)</h4>
-                          <span className="text-[10px] text-emerald-500 font-semibold">Recommended for distributed teams</span>
-                        </div>
-                      </div>
-                      {timesheetMode === 'employee' && (
-                        <div className="w-5 h-5 rounded-full bg-[var(--primary)] text-white flex items-center justify-center">
-                          <Check className="w-3 h-3" />
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-[var(--muted)] mt-2.5 leading-relaxed">
-                      Staff submit their actual shifts each fortnight for manager review and approval. Managers receive alerts and can approve or decline with feedback.
-                    </p>
-                  </div>
-
-                  {/* Mode 2: Manager Entry */}
-                  <div
-                    onClick={() => setTimesheetMode('manager')}
-                    className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${
-                      timesheetMode === 'manager'
-                        ? 'border-[var(--primary)] bg-[var(--primary-light)]/20'
-                        : 'border-[var(--border)] hover:border-[var(--border-h)] bg-[var(--panel-subtle)]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-500 text-white flex items-center justify-center font-bold text-xs">
-                          <ShieldCheck className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-bold text-[var(--text)]">Manager Entry Mode</h4>
-                          <span className="text-[10px] text-indigo-400 font-semibold">For supervisor-clocked operations</span>
-                        </div>
-                      </div>
-                      {timesheetMode === 'manager' && (
-                        <div className="w-5 h-5 rounded-full bg-[var(--primary)] text-white flex items-center justify-center">
-                          <Check className="w-3 h-3" />
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-[var(--muted)] mt-2.5 leading-relaxed">
-                      Location managers directly record actual hours or convert roster templates. The employee portal remains strictly view-only with direct submission disabled.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="pt-4 flex justify-between">
-                  <Button type="button" variant="ghost" size="md" onClick={() => setStep(2)} leftIcon={<ArrowLeft className="w-4 h-4" />}>
-                    Back
-                  </Button>
-                  <Button type="submit" variant="primary" size="md" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                    Continue to Manager Invite
-                  </Button>
-                </div>
-              </form>
-            )}
-
-            {/* STEP 4: MANAGER INVITATION (OPTIONAL) */}
-            {step === 4 && (
-              <form onSubmit={handleNextStep4} className="space-y-4">
-                <div className="p-3.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-1">
-                  <div className="text-xs font-bold text-[var(--primary)] flex items-center gap-1.5">
-                    <Mail className="w-4 h-4" />
-                    <span>Assign Primary Location Manager (Optional)</span>
-                  </div>
-                  <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                    You can immediately invite the site manager who will handle daily rosters and timesheets for <strong>{locationName}</strong>, or skip and invite them later.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">
-                    Manager Email Address
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="manager@yourcompany.com (leave blank to skip)"
-                    value={inviteManagerEmail}
-                    onChange={e => setInviteManagerEmail(e.target.value)}
-                    autoFocus
-                    className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] text-xs outline-none focus:border-[var(--primary)]"
-                  />
-                  <span className="text-[11px] text-[var(--muted)] mt-1 block">
-                    An onboarding link will be sent to set up their manager profile.
-                  </span>
-                </div>
-
-                <div className="pt-4 flex justify-between">
-                  <Button type="button" variant="ghost" size="md" onClick={() => setStep(3)} leftIcon={<ArrowLeft className="w-4 h-4" />}>
-                    Back
-                  </Button>
-                  <Button type="submit" variant="primary" size="md" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                    Continue to Review & Finish
-                  </Button>
-                </div>
-              </form>
-            )}
-
-            {/* STEP 5: REVIEW & FINISH */}
-            {step === 5 && (
-              <form onSubmit={handleFinalSubmit} className="space-y-5">
-                {/* Summary Box */}
-                <div className="p-4 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-3 text-xs">
-                  <h4 className="font-bold text-[var(--text)] uppercase text-[11px] tracking-wider">
-                    Configuration Summary
-                  </h4>
-
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <span className="text-[var(--muted)] block text-[10px] uppercase">Organisation</span>
-                      <strong className="text-[var(--text)]">{orgName}</strong>
-                    </div>
-                    <div>
-                      <span className="text-[var(--muted)] block text-[10px] uppercase">Primary Location</span>
-                      <strong className="text-[var(--text)]">{locationName}</strong>
-                    </div>
-                    <div>
-                      <span className="text-[var(--muted)] block text-[10px] uppercase">Workflow Mode</span>
-                      <Badge variant="purple" size="sm">
-                        {timesheetMode === 'employee' ? 'Employee Submission' : 'Manager Entry'}
-                      </Badge>
-                    </div>
-                    <div>
-                      <span className="text-[var(--muted)] block text-[10px] uppercase">Location Manager</span>
-                      <strong className="text-[var(--text)] truncate block">
-                        {inviteManagerEmail.trim() || 'Unassigned (Owner oversees)'}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Optional Policies Toggle */}
-                <div className="p-4 bg-[var(--panel-subtle)]/50 border border-[var(--border)] rounded-2xl space-y-3">
-                  <div className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5 text-[var(--primary)]" />
-                    <span>Unpaid Break Policy Defaults</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-[var(--muted)] font-semibold mb-0.5">Weekday (mins)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="180"
-                        value={breakMinsWeekday}
-                        onChange={e => setBreakMinsWeekday(Number(e.target.value))}
-                        className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text)] font-semibold outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-[var(--muted)] font-semibold mb-0.5">Weekend (mins)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="180"
-                        value={breakMinsWeekend}
-                        onChange={e => setBreakMinsWeekend(Number(e.target.value))}
-                        className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text)] font-semibold outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-[var(--muted)] font-semibold mb-0.5">Threshold (hrs)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="24"
-                        step="0.5"
-                        value={breakThresholdHours}
-                        onChange={e => setBreakThresholdHours(Number(e.target.value))}
-                        className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text)] font-semibold outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-4 flex justify-between">
-                  <Button type="button" variant="ghost" size="md" onClick={() => setStep(4)} leftIcon={<ArrowLeft className="w-4 h-4" />}>
-                    Back
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="md"
-                    loading={loading}
-                    leftIcon={<CheckCircle2 className="w-4 h-4" />}
-                  >
-                    Complete Setup & Create Organisation
-                  </Button>
-                </div>
-              </form>
+              </>
             )}
           </>
         )}
-      </div>
-    </div>
+
+        {step === 2 && (
+          <>
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              Branches are the places your workers are rostered. You can add more branches later from the Branches page.
+            </p>
+            <Field label="Branch name">
+              <input
+                type="text"
+                placeholder="e.g. Richmond"
+                value={branchName}
+                onChange={e => setBranchName(e.target.value)}
+                autoFocus
+                maxLength={120}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Address (optional)">
+              <input
+                type="text"
+                placeholder="e.g. 12 Swan Street, Richmond VIC 3121"
+                value={branchAddress}
+                onChange={e => setBranchAddress(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Timezone">
+              <select value={branchTimezone} onChange={e => setBranchTimezone(e.target.value)} className={inputClass}>
+                {TIMEZONES.map(tz => (
+                  <option key={tz.value} value={tz.value}>{tz.label}</option>
+                ))}
+              </select>
+            </Field>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="p-4 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-3">
+              <div className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-[var(--primary)]" />
+                <span>Unpaid break</span>
+              </div>
+              <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+                Taken once per day when a day's hours reach the threshold. Weekends can use a different length. You can change this later in Settings.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <Field label="Weekday (mins)">
+                  <input type="number" min={0} max={240} value={breakWeekday} onChange={e => setBreakWeekday(e.target.value)} className={inputClass} />
+                </Field>
+                <Field label="Weekend (mins)">
+                  <input type="number" min={0} max={240} value={breakWeekend} onChange={e => setBreakWeekend(e.target.value)} className={inputClass} />
+                </Field>
+                <Field label="Threshold (hours)">
+                  <input type="number" min={0} max={24} step={0.5} value={breakThreshold} onChange={e => setBreakThreshold(e.target.value)} className={inputClass} />
+                </Field>
+              </div>
+            </div>
+
+            <div className="p-4 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-3">
+              <div className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-[var(--primary)]" />
+                <span>Lock passwords (optional)</span>
+              </div>
+              <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+                Each branch can lock its roster and its timesheets for a fortnight. Shared lock passwords let Branch Admins lock and
+                unlock; anyone can also use their own sign-in password. Leave blank to skip.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Roster lock password">
+                  <input type="password" autoComplete="new-password" value={rosterLockPassword} onChange={e => setRosterLockPassword(e.target.value)} className={inputClass} />
+                </Field>
+                <Field label="Timesheet lock password">
+                  <input type="password" autoComplete="new-password" value={timesheetLockPassword} onChange={e => setTimesheetLockPassword(e.target.value)} className={inputClass} />
+                </Field>
+              </div>
+            </div>
+
+            {!accountExists && (
+              <label className="p-4 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enable2fa}
+                  onChange={e => setEnable2fa(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-[var(--primary)]"
+                />
+                <span className="space-y-0.5">
+                  <span className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--primary)]" /> Turn on two-step verification
+                  </span>
+                  <span className="block text-[11px] text-[var(--muted)] leading-relaxed">
+                    We'll email you a 6-digit code each time you sign in. You can change this later in Settings.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            <div className="p-4 bg-[var(--panel-subtle)]/60 border border-[var(--border)] rounded-2xl grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <span className="text-[var(--muted)] block text-[10px] uppercase">Organisation</span>
+                <strong className="text-[var(--text)] break-words">{organisationName.trim()}</strong>
+              </div>
+              <div>
+                <span className="text-[var(--muted)] block text-[10px] uppercase">First branch</span>
+                <strong className="text-[var(--text)] break-words">{branchName.trim()}</strong>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="pt-4 flex justify-between gap-3">
+          {step > 0 ? (
+            <Button type="button" variant="ghost" size="md" onClick={back} leftIcon={<ArrowLeft className="w-4 h-4" />}>
+              Back
+            </Button>
+          ) : (
+            <span />
+          )}
+          {isLast ? (
+            <Button type="submit" variant="primary" size="md" loading={submitting} leftIcon={<CheckCircle2 className="w-4 h-4" />}>
+              Create organisation
+            </Button>
+          ) : (
+            <Button type="submit" variant="primary" size="md" rightIcon={<ArrowRight className="w-4 h-4" />}>
+              Continue
+            </Button>
+          )}
+        </div>
+      </form>
+    </>
   );
 }

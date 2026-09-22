@@ -1,2107 +1,866 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { FileCheck2, CheckCircle2, X, ThumbsDown, Search, Eye, CheckSquare, Square } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Lock, LockOpen,
+  MousePointerClick, Printer, RotateCcw, Wand2,
+} from 'lucide-react';
 import api from '../services/apiClient';
-import SmartTimeInput from '../components/SmartTimeInput';
+import { useAccess } from '../hooks/useAccess';
+import { useToast } from '../components/ui/Toast';
 import { Badge } from '../components/ui/Badge';
-import { getFortnightStart, fmtISO, addDays, formatFortnightLabel } from '../utils/fortnight';
+import { getFortnightStartIso } from '../utils/fortnight';
+import SegmentEditor from '../components/roster/SegmentEditor';
+import LockDialog, { type LockFlag } from '../components/roster/LockDialog';
+import DayPickerDialog, { type BulkFillMode } from '../components/roster/DayPickerDialog';
+import ApplyFromDialog from '../components/roster/ApplyFromDialog';
+import BulkResultDialog, { type BulkResult, type ResultProblem } from '../components/roster/BulkResultDialog';
+import { Dialog, buttonClass } from '../components/roster/Dialog';
+import { DayChips, SegmentLegend } from '../components/roster/DayChips';
+import {
+  SKIP_REASON_LABEL, apiErrorCode, apiErrorMessage, downloadPayrollCsv, openPayrollPrint, signedHours,
+  type BulkApproveResult, type CopyDayRequest, type CopyDayResult, type LockRow, type TimesheetRow, type TimesheetStatus, type Worker,
+} from '../components/roster/api';
+import {
+  currentFortnightIso, dayLabel, dayOfMonth, fortnightDays, isWeekendIso, periodLabel, shiftIso, weekdayShort,
+} from '../components/roster/dates';
+import {
+  DEFAULT_BREAK_SETTINGS, apiHasWorked, apiWorkedType, asSegmentType, describeSide, textStyle,
+  type ApiSegment, type BreakSettings, type DayRecord, type SegmentType,
+} from '../components/roster/segments';
 
-interface Segment {
-  id?: string;
-  segment_type: string;
-  actual_segment_type?: string;
-  is_unplanned: boolean;
-  roster_in: string;
-  roster_out: string;
-  roster_hours: number;
-  actual_in: string;
-  actual_out: string;
-  actual_hours: number;
-  notes?: string;
+const cellKey = (workerId: string, dateIso: string) => `${workerId}|${dateIso}`;
+const DAY_COLUMN_WIDTH = 84;
+
+type Bucket = 'Weekdays' | 'Weekends' | Exclude<SegmentType, 'WORK'> | 'Unplanned';
+const BUCKETS: Bucket[] = ['Weekdays', 'Weekends', 'Sick', 'Annual', 'TIL', 'LWIP', 'Other', 'Unplanned'];
+const BUCKET_STYLE_TYPE: Record<Bucket, SegmentType> = {
+  Weekdays: 'WORK', Weekends: 'WORK', Sick: 'Sick', Annual: 'Annual', TIL: 'TIL', LWIP: 'LWIP', Other: 'Other', Unplanned: 'WORK',
+};
+const emptyBuckets = (): Record<Bucket, number> => ({ Weekdays: 0, Weekends: 0, Sick: 0, Annual: 0, TIL: 0, LWIP: 0, Other: 0, Unplanned: 0 });
+const bucketOf = (type: SegmentType, weekend: boolean): Bucket => (type === 'WORK' ? (weekend ? 'Weekends' : 'Weekdays') : type);
+
+interface WorkerTotals {
+  roster: number;
+  worked: number;
+  rosterBy: Record<Bucket, number>;
+  workedBy: Record<Bucket, number>;
 }
 
-interface Record {
-  id: string;
-  employee_id: string;
-  record_date: string;
-  has_actuals: boolean;
-  segments: Segment[];
+function summarise(days: string[], segmentsOf: (dateIso: string) => ApiSegment[]): WorkerTotals {
+  const totals: WorkerTotals = { roster: 0, worked: 0, rosterBy: emptyBuckets(), workedBy: emptyBuckets() };
+  for (const iso of days) {
+    const weekend = isWeekendIso(iso);
+    for (const s of segmentsOf(iso)) {
+      const rostered = Number(s.roster_hours) || 0;
+      if (rostered > 0) {
+        totals.roster += rostered;
+        if (!s.is_unplanned) totals.rosterBy[bucketOf(asSegmentType(s.segment_type), weekend)] += rostered;
+      }
+      const worked = Number(s.actual_hours) || 0;
+      if (worked > 0) {
+        totals.worked += worked;
+        totals.workedBy[s.is_unplanned ? 'Unplanned' : bucketOf(apiWorkedType(s), weekend)] += worked;
+      }
+    }
+  }
+  return totals;
 }
 
-interface Employee {
-  id: string;
-  full_name: string;
-  department: string;
-  template: any[];
-  contracted_hours?: number;
-}
+const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'> = { Draft: 'outline', Approved: 'success', Locked: 'warning' };
 
 export default function Roster() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [records, setRecords] = useState<Record[]>([]);
-  const [submissions, setSubmissions] = useState<any[]>([]);
-  const [showSubmissionsModal, setShowSubmissionsModal] = useState(false);
-  const [submissionSearch, setSubmissionSearch] = useState('');
-  const [submissionDeptFilter, setSubmissionDeptFilter] = useState('ALL');
-  const [submissionStatusFilter, setSubmissionStatusFilter] = useState<string>('ALL');
-  const [selectedSubIds, setSelectedSubIds] = useState<string[]>([]);
-  const [inspectingEmpId, setInspectingEmpId] = useState<string | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<any>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [submittingAction, setSubmittingAction] = useState(false);
-  const [rosterLocked, setRosterLocked] = useState(false);
-  const [timesheetLocked, setTimesheetLocked] = useState(false);
-  const [isPublished, setIsPublished] = useState(false);
-  const [publishing, setPublishing] = useState(false);
-  const [activeDate, setActiveDate] = useState<Date>(new Date());
+  const { access, can } = useAccess();
+  const toast = useToast();
+  const branches = useMemo(() => access?.branches ?? [], [access]);
+  const canTimesheets = can('timesheets.manage');
+  const canLock = can('periods.lock');
+  const canReports = can('reports.view');
+
+  const [branchId, setBranchId] = useState<string>(() => (access?.branches.length === 1 ? access.branches[0].id : ''));
+  const [startIso, setStartIso] = useState<string>(currentFortnightIso);
+  const days = useMemo(() => fortnightDays(startIso), [startIso]);
+  const endIso = days[13];
+
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [records, setRecords] = useState<DayRecord[]>([]);
+  const [locks, setLocks] = useState<LockRow[]>([]);
+  const [timesheets, setTimesheets] = useState<TimesheetRow[]>([]);
+  const [breakSettings, setBreakSettings] = useState<BreakSettings>(DEFAULT_BREAK_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [partialError, setPartialError] = useState<string | null>(null);
+
+  const [editing, setEditing] = useState<{ workerId: string; dateIso: string } | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [fillMode, setFillMode] = useState<BulkFillMode | null>(null);
+  const [lockFlag, setLockFlag] = useState<LockFlag | null>(null);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [approveAllOpen, setApproveAllOpen] = useState(false);
+  const [result, setResult] = useState<BulkResult | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
-  
-  // Confirmation Modals State for Auto-Roster / Auto-Log with day selection
-  const [showAutoRosterModal, setShowAutoRosterModal] = useState(false);
-  const [showAutoLogModal, setShowAutoLogModal] = useState(false);
-  const [singleEmpTarget, setSingleEmpTarget] = useState<Employee | { id: string, full_name: string } | null>(null);
-  const [selectedDays, setSelectedDays] = useState<number[]>(Array.from({ length: 14 }, (_, i) => i));
+  const loadSeq = useRef(0);
 
-  // Lock Password Modal State
-  const [lockModalType, setLockModalType] = useState<'roster' | 'timesheet' | null>(null);
-  const [lockPasswordInput, setLockPasswordInput] = useState('');
-  const [lockError, setLockError] = useState('');
-
-  // Push & Finalise Roster Modal State
-  const [showPushLockModal, setShowPushLockModal] = useState(false);
-  const [pushLockPassword, setPushLockPassword] = useState('');
-  const [pushLockError, setPushLockError] = useState('');
-
-  // Notification toast
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Modals state
-  const [activeCell, setActiveCell] = useState<{empId: string, empName: string, dateIso: string, records: Record[]} | null>(null);
-  const [loadingAction, setLoadingAction] = useState(false);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
-
-  const activeFortnightStart = getFortnightStart(activeDate);
-  const fnIso = fmtISO(activeFortnightStart);
-
-  const fetchData = async () => {
-    try {
-      const [empRes, recordsRes, locksRes, subsRes] = await Promise.all([
-        api.get('/employees'),
-        api.get('/records'),
-        api.get('/locks'),
-        api.get(`/submissions?start_date=${fnIso}`).catch(() => ({ data: { data: [] } }))
-      ]);
-
-      if (empRes.data?.data) setEmployees(empRes.data.data);
-      if (recordsRes.data?.data) setRecords(recordsRes.data.data);
-      if (subsRes?.data?.data) setSubmissions(subsRes.data.data);
-      if (locksRes.data?.data) {
-        const lock = locksRes.data.data.find((l: any) => l.start_date === fnIso);
-        if (lock) {
-          setRosterLocked(!!lock.roster_locked);
-          setTimesheetLocked(!!lock.timesheet_locked);
-          setIsPublished(!!lock.is_published);
-        } else {
-          setRosterLocked(false);
-          setTimesheetLocked(false);
-          setIsPublished(false);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch roster data:', err);
-    }
-  };
-
-  const handleApproveSubmission = async (empId: string, subId?: string) => {
-    try {
-      setSubmittingAction(true);
-      await api.post('/submissions/approve', {
-        submission_id: subId,
-        employee_id: empId,
-        start_date: fnIso
-      });
-      showToast('Timesheet approved successfully.');
-      fetchData();
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to approve timesheet');
-    } finally {
-      setSubmittingAction(false);
-    }
-  };
-
-  const handleBulkApprove = async () => {
-    if (selectedSubIds.length === 0) return;
-    try {
-      setSubmittingAction(true);
-      const res = await api.post('/submissions/bulk-approve', {
-        start_date: fnIso,
-        submission_ids: selectedSubIds
-      });
-      if (res.data?.success) {
-        showToast(`Approved ${res.data.data.approved_count} timesheet${res.data.data.approved_count === 1 ? '' : 's'} successfully.`);
-        setSelectedSubIds([]);
-        fetchData();
-      }
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to bulk approve timesheets');
-    } finally {
-      setSubmittingAction(false);
-    }
-  };
-
-  const handleRejectSubmission = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rejectTarget || !rejectionReason.trim()) return;
-    try {
-      setSubmittingAction(true);
-      await api.post('/submissions/reject', {
-        submission_id: rejectTarget.submission_id,
-        employee_id: rejectTarget.employee_id,
-        start_date: fnIso,
-        rejection_reason: rejectionReason.trim()
-      });
-      showToast('Timesheet rejected with feedback note.');
-      setRejectTarget(null);
-      setRejectionReason('');
-      fetchData();
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to reject timesheet');
-    } finally {
-      setSubmittingAction(false);
-    }
-  };
-
-  const handlePublishRoster = async () => {
-    setPublishing(true);
-    try {
-      const nextState = !isPublished;
-      await api.post('/locks/publish', { start_date: fnIso, is_published: nextState });
-      setIsPublished(nextState);
-      showToast(nextState ? 'Roster pushed & published to employees!' : 'Roster unpublished');
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to update roster publication');
-    } finally {
-      setPublishing(false);
-    }
-  };
-
-  const handlePushRosterClick = () => {
-    if (isPublished) {
-      handlePublishRoster();
-    } else if (!rosterLocked) {
-      setPushLockPassword('');
-      setPushLockError('');
-      setShowPushLockModal(true);
-    } else {
-      handlePublishRoster();
-    }
-  };
-
-  const handleConfirmPushAndLock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPublishing(true);
-    setPushLockError('');
-    try {
-      await api.post('/locks', {
-        start_date: fnIso,
-        roster_locked: true,
-        timesheet_locked: timesheetLocked,
-        password: pushLockPassword
-      });
-      setRosterLocked(true);
-
-      await api.post('/locks/publish', {
-        start_date: fnIso,
-        is_published: true
-      });
-      setIsPublished(true);
-      setShowPushLockModal(false);
-      setPushLockPassword('');
-      showToast('Roster finalised, locked & pushed to employees!');
-    } catch (err: any) {
-      setPushLockError(err.response?.data?.error?.message || 'Failed to finalise and push roster');
-    } finally {
-      setPublishing(false);
-    }
-  };
+  // ── Loading ──────────────────────────────────────────────────────────────────────────────────
+  const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    setLoading(true);
+    const location_id = branchId || undefined;
+    const [w, r, l, t] = await Promise.allSettled([
+      api.get('/employees', { params: { location_id } }),
+      api.get('/records', { params: { location_id, start_date: startIso, end_date: endIso } }),
+      api.get('/locks', { params: { location_id, start_date: startIso } }),
+      api.get('/submissions', { params: { location_id, start_date: startIso } }),
+    ]);
+    if (seq !== loadSeq.current) return;
+    const failed = [w, r].find((x): x is PromiseRejectedResult => x.status === 'rejected');
+    setLoadError(failed ? apiErrorMessage(failed.reason, 'The roster could not be loaded.') : null);
+    const partial = [l, t].find((x): x is PromiseRejectedResult => x.status === 'rejected');
+    setPartialError(partial ? `Lock and approval status could not be loaded: ${apiErrorMessage(partial.reason, 'please refresh.')}` : null);
+    setWorkers(w.status === 'fulfilled' ? w.value.data?.data ?? [] : []);
+    setRecords(r.status === 'fulfilled' ? r.value.data?.data ?? [] : []);
+    setLocks(l.status === 'fulfilled' ? l.value.data?.data ?? [] : []);
+    setTimesheets(t.status === 'fulfilled' ? t.value.data?.data ?? [] : []);
+    setLoading(false);
+  }, [branchId, startIso, endIso]);
 
   useEffect(() => {
-    fetchData();
-  }, [fnIso]);
+    load();
+  }, [load]);
 
-  const openLockModal = (type: 'roster' | 'timesheet') => {
-    setLockModalType(type);
-    setLockPasswordInput('');
-    setLockError('');
-  };
-
-  const confirmLockToggle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!lockModalType) return;
-    setLockError('');
-    try {
-      const type = lockModalType;
-      const newRosterLocked = type === 'roster' ? !rosterLocked : rosterLocked;
-      const newTimesheetLocked = type === 'timesheet' ? !timesheetLocked : timesheetLocked;
-
-      await api.post('/locks', {
-        start_date: fnIso,
-        roster_locked: newRosterLocked,
-        timesheet_locked: newTimesheetLocked,
-        password: lockPasswordInput
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/organisation/me')
+      .then(res => {
+        const d = res.data?.data;
+        if (cancelled || !d) return;
+        setBreakSettings({
+          break_mins_weekday: Number(d.break_mins_weekday ?? DEFAULT_BREAK_SETTINGS.break_mins_weekday),
+          break_mins_weekend: Number(d.break_mins_weekend ?? DEFAULT_BREAK_SETTINGS.break_mins_weekend),
+          break_threshold_hours: Number(d.break_threshold_hours ?? DEFAULT_BREAK_SETTINGS.break_threshold_hours),
+        });
+      })
+      .catch(() => {
+        // The preview falls back to the default break rule; saved hours always come from the server.
       });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-      setRosterLocked(newRosterLocked);
-      setTimesheetLocked(newTimesheetLocked);
-      setLockModalType(null);
-      setLockPasswordInput('');
-      showToast(`${type.toUpperCase()} lock status updated`);
-    } catch (err: any) {
-        setLockError(err.response?.data?.error?.message || 'Failed to update locks');
+  // ── Derived data ─────────────────────────────────────────────────────────────────────────────
+  const recordByCell = useMemo(() => new Map(records.map(r => [cellKey(r.employee_id, r.record_date), r])), [records]);
+  const lockByBranch = useMemo(() => new Map(locks.map(l => [l.location_id, l])), [locks]);
+  const timesheetByWorker = useMemo(() => new Map(timesheets.map(t => [t.employee_id, t])), [timesheets]);
+  const workerById = useMemo(() => new Map(workers.map(w => [w.id, w])), [workers]);
+  const segmentsFor = useCallback((workerId: string, dateIso: string) => recordByCell.get(cellKey(workerId, dateIso))?.segments ?? [], [recordByCell]);
+  const nameOf = (id: string) => workerById.get(id)?.full_name ?? 'Worker';
+  const branchNameOf = (id: string) => branches.find(b => b.id === id)?.name ?? workers.find(w => w.location_id === id)?.location_name ?? 'Branch';
+
+  const groups = useMemo(() => {
+    const multiBranch = new Set(workers.map(w => w.location_id)).size > 1;
+    const sorted = [...workers].sort((a, b) =>
+      (multiBranch ? (a.location_name ?? '').localeCompare(b.location_name ?? '') : 0)
+      || (a.department ?? '').localeCompare(b.department ?? '')
+      || a.full_name.localeCompare(b.full_name));
+    const list: { key: string; branchId: string; department: string; workers: Worker[] }[] = [];
+    for (const w of sorted) {
+      const department = w.department?.trim() || 'No department';
+      const key = `${multiBranch ? w.location_id : ''}|${department}`;
+      const last = list[list.length - 1];
+      if (last && last.key === key) last.workers.push(w);
+      else list.push({ key, branchId: w.location_id, department, workers: [w] });
     }
+    return { multiBranch, list };
+  }, [workers]);
+
+  const selectedBranchLock = branchId ? lockByBranch.get(branchId) : undefined;
+  const approvable = timesheets.filter(t => t.status === 'Draft' && !t.timesheet_locked);
+  const scopeText = branchId ? branchNameOf(branchId) : 'all your branches';
+
+  const changePeriod = (iso: string) => {
+    setStartIso(iso);
+    setSelected(new Set());
+  };
+  const changeBranch = (id: string) => {
+    setBranchId(id);
+    setSelected(new Set());
   };
 
-  const openAutoRosterModal = () => {
-    if (rosterLocked) {
-      showToast("Roster is locked for editing.");
+  // ── Selection ────────────────────────────────────────────────────────────────────────────────
+  const toggleCell = (workerId: string, dateIso: string) =>
+    setSelected(set => {
+      const next = new Set(set);
+      const key = cellKey(workerId, dateIso);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+
+  const toggleDayForEveryone = (dateIso: string) =>
+    setSelected(set => {
+      const keys = workers.map(w => cellKey(w.id, dateIso));
+      const next = new Set(set);
+      if (keys.every(k => next.has(k))) keys.forEach(k => next.delete(k));
+      else keys.forEach(k => next.add(k));
+      return next;
+    });
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelected(new Set());
+  }, []);
+
+  useEffect(() => {
+    if (!selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('[role="dialog"]')) exitSelectMode();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectMode, exitSelectMode]);
+
+  const onCellClick = (e: ReactMouseEvent, workerId: string, dateIso: string) => {
+    if (selectMode || e.shiftKey) {
+      if (!selectMode) setSelectMode(true);
+      toggleCell(workerId, dateIso);
       return;
     }
-    setSingleEmpTarget(null);
-    setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
-    setShowAutoRosterModal(true);
+    setEditing({ workerId, dateIso });
   };
 
-  const openAutoLogModal = () => {
-    if (timesheetLocked) {
-      showToast("Timesheets are locked for editing.");
-      return;
-    }
-    setSingleEmpTarget(null);
-    setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
-    setShowAutoLogModal(true);
+  const selectedCells = useMemo(
+    () => [...selected].map(k => {
+      const [workerId, dateIso] = k.split('|');
+      return { workerId, dateIso };
+    }).filter(c => workerById.has(c.workerId)),
+    [selected, workerById],
+  );
+
+  const datesByWorker = () => {
+    const map = new Map<string, string[]>();
+    for (const c of selectedCells) map.set(c.workerId, [...(map.get(c.workerId) ?? []), c.dateIso]);
+    for (const list of map.values()) list.sort();
+    return map;
   };
 
-  const handleConfirmAutoRoster = async () => {
-      if (selectedDays.length === 0) {
-        showToast("Please select at least one day to roster");
-        return;
-      }
-      setShowAutoRosterModal(false);
-      setLoadingAction(true);
+  // ── Copy tools ───────────────────────────────────────────────────────────────────────────────
+  const runCopyJobs = async (title: string, jobs: CopyDayRequest[]) => {
+    if (jobs.length === 0) return;
+    setBusy('Copying…');
+    let copied = 0;
+    const problems: ResultProblem[] = [];
+    for (const job of jobs) {
       try {
-          if (singleEmpTarget) {
-            const emp = singleEmpTarget as Employee;
-            const hasCustomTemplate = emp.template && emp.template.some((t: any) => t.roster_in && t.roster_out);
-
-            for (const i of selectedDays) {
-              const dIso = fmtISO(addDays(activeFortnightStart, i));
-              const customTmpl = emp.template?.find((t: any) => t.day_index === i && t.roster_in && t.roster_out);
-
-              let rIn = '';
-              let rOut = '';
-              let segType = 'WORK';
-
-              if (customTmpl) {
-                rIn = customTmpl.roster_in;
-                rOut = customTmpl.roster_out;
-                segType = customTmpl.segment_type || 'WORK';
-              } else if (!hasCustomTemplate) {
-                rIn = '09:00';
-                rOut = '17:00';
-                segType = 'WORK';
-              }
-
-              if (rIn && rOut) {
-                const existingRec = records.find(r => r.employee_id === emp.id && r.record_date === dIso);
-                const existingSeg = existingRec?.segments?.[0];
-
-                await api.post('/records', {
-                  employee_id: emp.id,
-                  record_date: dIso,
-                  segments: [{
-                    segment_type: segType,
-                    roster_in: rIn,
-                    roster_out: rOut,
-                    roster_hours: 7.5,
-                    actual_in: existingSeg?.actual_in || '',
-                    actual_out: existingSeg?.actual_out || '',
-                    actual_hours: existingSeg?.actual_hours || 0,
-                    actual_segment_type: existingSeg?.actual_segment_type || '',
-                    is_unplanned: false
-                  }]
-                });
-              }
-            }
-            await fetchData();
-            showToast(`Default roster template applied for ${emp.full_name} (${selectedDays.length} days)`);
-          } else {
-            await api.post('/roster/auto-roster', { start_date: fnIso, selected_days: selectedDays });
-            await fetchData();
-            showToast(`Roster templates applied for ${selectedDays.length} selected days`);
-          }
-      } catch (err: any) {
-          showToast(err.response?.data?.error?.message || 'Failed to Auto-Roster');
-      } finally {
-          setLoadingAction(false);
-          setSingleEmpTarget(null);
-      }
-  };
-
-  const handleConfirmAutoLog = async () => {
-      if (selectedDays.length === 0) {
-        showToast("Please select at least one day to log");
-        return;
-      }
-      setShowAutoLogModal(false);
-      setLoadingAction(true);
-      try {
-          if (singleEmpTarget) {
-            for (const i of selectedDays) {
-              const dIso = fmtISO(addDays(activeFortnightStart, i));
-              const rec = records.find(r => r.employee_id === singleEmpTarget.id && r.record_date === dIso);
-              if (rec && rec.segments?.length > 0) {
-                const updatedSegments = rec.segments.map(s => ({
-                  ...s,
-                  actual_in: s.actual_in || s.roster_in,
-                  actual_out: s.actual_out || s.roster_out,
-                  actual_hours: s.actual_hours || s.roster_hours || 7.5,
-                  actual_segment_type: s.actual_segment_type || s.segment_type
-                }));
-                await api.post('/records', {
-                  employee_id: singleEmpTarget.id,
-                  record_date: dIso,
-                  segments: updatedSegments
-                });
-              }
-            }
-            await fetchData();
-            showToast(`Actual timesheet logged for ${singleEmpTarget.full_name} (${selectedDays.length} days)`);
-          } else {
-            await api.post('/roster/auto-log', { start_date: fnIso, selected_days: selectedDays });
-            await fetchData();
-            showToast(`All rostered shifts logged for ${selectedDays.length} selected days`);
-          }
-      } catch (err: any) {
-          showToast(err.response?.data?.error?.message || 'Failed to Auto-Log');
-      } finally {
-          setLoadingAction(false);
-          setSingleEmpTarget(null);
-      }
-  };
-
-  // Single Employee Actions
-  const handleSingleEmployeeRoster = (emp: Employee) => {
-    if (rosterLocked) {
-      showToast("Roster is locked for editing.");
-      return;
-    }
-    setSingleEmpTarget(emp);
-    setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
-    setShowAutoRosterModal(true);
-  };
-
-  const handleSingleEmployeeLogAll = (empId: string, empName: string) => {
-    if (timesheetLocked) {
-      showToast("Timesheets are locked for editing.");
-      return;
-    }
-    setSingleEmpTarget({ id: empId, full_name: empName });
-    setSelectedDays(Array.from({ length: 14 }, (_, i) => i));
-    setShowAutoLogModal(true);
-  };
-
-  const handleSingleEmployeeClear = async (empId: string, empName: string) => {
-    if (rosterLocked || timesheetLocked) {
-      showToast("Period is locked.");
-      return;
-    }
-    if (!confirm(`Clear all shifts for ${empName} for this fortnight?`)) return;
-    setLoadingAction(true);
-    try {
-      const dates = Array.from({ length: 14 }).map((_, i) => addDays(activeFortnightStart, i));
-      for (const d of dates) {
-        const dIso = fmtISO(d);
-        await api.post('/records', {
-          employee_id: empId,
-          record_date: dIso,
-          segments: []
+        const res = await api.post('/records/copy-day', job);
+        const data = res.data.data as CopyDayResult;
+        copied += data.copied.length;
+        problems.push(...data.skipped.map(s => ({
+          label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`,
+          detail: SKIP_REASON_LABEL[s.reason] ?? s.reason,
+        })));
+      } catch (err) {
+        const targets = job.target_employee_ids ?? [job.employee_id];
+        problems.push({
+          label: `${targets.map(nameOf).join(', ')} · ${job.target_dates.map(d => dayLabel(d)).join(', ')}`,
+          detail: apiErrorCode(err) === 'NOTHING_TO_COPY'
+            ? `nothing is rostered on ${dayLabel(job.source_date)} to copy`
+            : apiErrorMessage(err, 'could not be copied'),
         });
       }
-      await fetchData();
-      showToast(`Shifts cleared for ${empName}`);
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to clear shifts');
-    } finally {
-      setLoadingAction(false);
     }
+    setBusy(null);
+    setSelected(new Set());
+    setResult({ title, summary: copied > 0 ? `Copied to ${copied} day${copied === 1 ? '' : 's'}.` : 'Nothing was copied.', problemHeading: 'Skipped', problems, anyDone: copied > 0 });
+    await load();
   };
 
-  // Export Handlers
-  const handleExportCsv = async () => {
-    try {
-      const res = await api.get(`/reports/export/csv?start_date=${fnIso}`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `Payroll_${fnIso}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      showToast('Payroll CSV downloaded');
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to export CSV');
-    }
-  };
-
-  const handlePrintPdf = async () => {
-    try {
-      const res = await api.get(`/reports/export/pdf?start_date=${fnIso}`);
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(res.data);
-        printWindow.document.close();
+  /** Each run of consecutive selected days gets the roster of the day before the run. */
+  const copyPreviousDay = () => {
+    const jobs: CopyDayRequest[] = [];
+    for (const [workerId, dates] of datesByWorker()) {
+      let run: string[] = [];
+      const flush = () => {
+        if (run.length > 0) jobs.push({ employee_id: workerId, source_date: shiftIso(run[0], -1), target_dates: run });
+        run = [];
+      };
+      for (const d of dates) {
+        if (run.length > 0 && shiftIso(run[run.length - 1], 1) !== d) flush();
+        run.push(d);
       }
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to generate printable report');
+      flush();
     }
+    runCopyJobs('Copy previous day', jobs);
   };
 
-  const days = Array.from({ length: 14 }).map((_, i) => addDays(activeFortnightStart, i));
-  const fnEnd = days[13];
+  /** One request per set of workers that share the same selected days. */
+  const applyFrom = (sourceWorkerId: string, sourceDate: string) => {
+    const byDates = new Map<string, { dates: string[]; workers: string[] }>();
+    for (const [workerId, dates] of datesByWorker()) {
+      const signature = dates.join(',');
+      const group = byDates.get(signature) ?? { dates, workers: [] };
+      group.workers.push(workerId);
+      byDates.set(signature, group);
+    }
+    const jobs = [...byDates.values()].map(g => ({
+      employee_id: sourceWorkerId,
+      source_date: sourceDate,
+      target_dates: g.dates,
+      target_employee_ids: g.workers,
+    }));
+    setApplyOpen(false);
+    runCopyJobs(`Apply segments from ${nameOf(sourceWorkerId)}, ${dayLabel(sourceDate)}`, jobs);
+  };
 
-  const handlePrev = () => setActiveDate(addDays(activeDate, -14));
-  const handleNext = () => setActiveDate(addDays(activeDate, 14));
-
-  const departments = [...new Set(employees.map(e => e.department || 'OTHER'))].sort();
-
-  const handleCellClick = (empId: string, empName: string, dateIso: string) => {
-      const rec = records.find(r => r.employee_id === empId && r.record_date === dateIso);
-      setActiveCell({
-          empId, 
-          empName,
-          dateIso, 
-          records: rec ? [rec] : []
+  // ── Bulk fill, approval, exports ─────────────────────────────────────────────────────────────
+  const runFill = async (mode: BulkFillMode, dayIndexes: number[]) => {
+    setBusy(mode === 'roster' ? 'Applying roster templates…' : 'Copying the roster to worked hours…');
+    try {
+      const res = await api.post(mode === 'roster' ? '/roster/auto-roster' : '/roster/auto-log', {
+        start_date: startIso,
+        selected_days: dayIndexes,
+        location_id: branchId || undefined,
       });
-  };
-
-  const toggleDaySelection = (dayIdx: number) => {
-    if (selectedDays.includes(dayIdx)) {
-      setSelectedDays(selectedDays.filter(d => d !== dayIdx));
-    } else {
-      setSelectedDays([...selectedDays, dayIdx].sort((a,b) => a - b));
+      const count = Number(res.data?.data?.workers ?? 0);
+      const dayText = `${dayIndexes.length} day${dayIndexes.length === 1 ? '' : 's'}`;
+      toast.success(mode === 'roster'
+        ? `Roster templates applied for ${count} worker${count === 1 ? '' : 's'} on ${dayText}.`
+        : `Worked hours filled from the roster for ${count} worker${count === 1 ? '' : 's'} on ${dayText}.`);
+      setFillMode(null);
+      await load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, mode === 'roster' ? 'Auto-Roster did not run.' : 'Auto-Log did not run.'));
+    } finally {
+      setBusy(null);
     }
   };
 
-  const getSegmentBadgeColor = (type: string, isActual: boolean, isUnplanned: boolean, isWeekend = false) => {
-    if (isUnplanned) {
-      return 'bg-[#ef4444]/20 text-[#ef4444] border-[#ef4444]/40';
-    }
-    switch (type) {
-      case 'Sick':
-        return 'bg-[#f59e0b]/20 text-[#f59e0b] border-[#f59e0b]/40';
-      case 'Annual':
-        return 'bg-[#a855f7]/20 text-[#a855f7] border-[#a855f7]/40';
-      case 'TIL':
-        return 'bg-[#10b981]/20 text-[#10b981] border-[#10b981]/40';
-      case 'WORK':
-      default:
-        if (isWeekend) {
-          return isActual
-            ? 'bg-[#ec4899]/20 text-[#ec4899] border-[#ec4899]/40'
-            : 'bg-[#06b6d4]/20 text-[#06b6d4] border-[#06b6d4]/40';
-        }
-        return isActual 
-          ? 'bg-[#10b981]/20 text-[#10b981] border-[#10b981]/40'
-          : 'bg-[#6366f1]/20 text-[#6366f1] border-[#6366f1]/40';
+  const changeTimesheet = async (row: TimesheetRow, action: 'approve' | 'reopen') => {
+    setRowBusy(row.employee_id);
+    try {
+      await api.post(`/submissions/${action}`, { employee_id: row.employee_id, start_date: startIso });
+      toast.success(action === 'approve' ? `Timesheet approved for ${row.full_name}.` : `Timesheet reopened for ${row.full_name}.`);
+      await load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, action === 'approve' ? 'The timesheet could not be approved.' : 'The timesheet could not be reopened.'));
+    } finally {
+      setRowBusy(null);
     }
   };
 
-  const formatCompactShift = (start?: string, end?: string) => {
-    if (!start || !end) return '';
-    const cleanS = start.split(':').slice(0, 2).join(':').replace(/^0/, '');
-    const cleanE = end.split(':').slice(0, 2).join(':').replace(/^0/, '');
-    return `${cleanS}-${cleanE}`;
+  const approveAll = async () => {
+    setBusy('Approving timesheets…');
+    try {
+      const res = await api.post('/submissions/bulk-approve', { start_date: startIso, employee_ids: approvable.map(t => t.employee_id) });
+      const data = res.data?.data as BulkApproveResult;
+      setApproveAllOpen(false);
+      setResult({
+        title: 'Approve timesheets',
+        summary: `Approved ${data.approved.length} timesheet${data.approved.length === 1 ? '' : 's'}.`,
+        problemHeading: 'Not approved',
+        anyDone: data.approved.length > 0,
+        problems: data.failed.map(f => ({ label: timesheetByWorker.get(f.employee_id)?.full_name ?? nameOf(f.employee_id), detail: f.message })),
+      });
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'The timesheets could not be approved.'));
+    } finally {
+      setBusy(null);
+      await load();
+    }
   };
 
-  const formatHours = (h: number | string | undefined | null): string => {
-    const num = Number(h || 0);
-    if (!num) return '0h';
-    const rounded = Math.round(num * 100) / 100;
-    return `${rounded}h`;
+  const exportCsv = async () => {
+    try {
+      await downloadPayrollCsv(startIso, branchId);
+      toast.success('Payroll CSV downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'The CSV could not be exported.');
+    }
   };
+
+  const printReport = async () => {
+    try {
+      await openPayrollPrint(startIso, branchId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'The printable report could not be opened.');
+    }
+  };
+
+  const onSaved = (workerId: string, dateIso: string, saved: ApiSegment[]) => {
+    setRecords(rs => {
+      const hasActuals = saved.some(apiHasWorked);
+      const index = rs.findIndex(r => r.employee_id === workerId && r.record_date === dateIso);
+      if (index >= 0) return rs.map((r, i) => (i === index ? { ...r, segments: saved, has_actuals: hasActuals } : r));
+      return [...rs, { id: `local-${cellKey(workerId, dateIso)}`, employee_id: workerId, record_date: dateIso, has_actuals: hasActuals, segments: saved }];
+    });
+    load();
+  };
+
+  const openDatePicker = () => {
+    const input = dateInputRef.current;
+    if (!input) return;
+    try {
+      input.showPicker();
+    } catch {
+      input.focus();
+    }
+  };
+
+  // ── Rendering helpers ────────────────────────────────────────────────────────────────────────
+  const lockButton = (flag: LockFlag) => {
+    const name = flag === 'roster' ? 'Roster' : 'Timesheets';
+    if (!branchId) {
+      return (
+        <button type="button" onClick={() => setLockFlag(flag)} className={buttonClass.secondary} title={`Lock or unlock the ${name.toLowerCase()} of one branch`}>
+          <Lock className="w-3.5 h-3.5" aria-hidden="true" /> {name} lock…
+        </button>
+      );
+    }
+    const locked = Boolean(flag === 'roster' ? selectedBranchLock?.roster_locked : selectedBranchLock?.timesheet_locked);
+    return (
+      <button
+        type="button"
+        onClick={() => setLockFlag(flag)}
+        className={`${buttonClass.secondary} ${locked ? '!text-[var(--warn)] !border-[var(--warn)]/40 !bg-[var(--warn-light)]' : ''}`}
+        title={locked ? `${name} locked. Click to unlock.` : `${name} open. Click to lock.`}
+      >
+        {locked ? <Lock className="w-3.5 h-3.5" aria-hidden="true" /> : <LockOpen className="w-3.5 h-3.5" aria-hidden="true" />}
+        {name}: {locked ? 'locked' : 'open'}
+      </button>
+    );
+  };
+
+  const lockBadges = () => {
+    const shown = branchId ? branches.filter(b => b.id === branchId) : branches.filter(b => b.is_active);
+    return shown.map(b => {
+      const row = lockByBranch.get(b.id);
+      const rosterLocked = Boolean(row?.roster_locked);
+      const timesheetLocked = Boolean(row?.timesheet_locked);
+      return (
+        <Badge key={b.id} variant={rosterLocked || timesheetLocked ? 'warning' : 'outline'} size="sm">
+          {rosterLocked || timesheetLocked ? <Lock className="w-2.5 h-2.5" aria-hidden="true" /> : null}
+          {branchId ? '' : `${b.name}: `}Roster {rosterLocked ? 'locked' : 'open'} · Timesheets {timesheetLocked ? 'locked' : 'open'}
+        </Badge>
+      );
+    });
+  };
+
+  const editingWorker = editing ? workerById.get(editing.workerId) : undefined;
+  const editingLock = editingWorker ? lockByBranch.get(editingWorker.location_id) : undefined;
+  const editingStatus = editingWorker ? timesheetByWorker.get(editingWorker.id)?.status : undefined;
 
   return (
     <div className="flex flex-col h-[calc(100vh-82px)] sm:h-[calc(100vh-86px)] overflow-hidden relative w-full">
-      {/* Toast Notification Popup */}
-      {toastMessage && (
-        <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
-          <span>{toastMessage}</span>
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--panel)] p-3 rounded-t-xl border border-[var(--border)] border-b-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="roster-branch" className="sr-only">Branch</label>
+          <select
+            id="roster-branch"
+            value={branchId}
+            onChange={e => changeBranch(e.target.value)}
+            className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-2.5 py-2 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
+          >
+            <option value="">All my branches</option>
+            {branches.map(b => (
+              <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>
+            ))}
+          </select>
+
+          <div className="flex items-center gap-0.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5">
+            <button type="button" onClick={() => changePeriod(shiftIso(startIso, -14))} className={buttonClass.quiet} aria-label="Previous pay period">
+              <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <div className="relative">
+              <button type="button" onClick={openDatePicker} className={`${buttonClass.quiet} !text-[var(--text)] font-semibold`} aria-label={`Pay period ${periodLabel(startIso)}. Choose a date to jump to its pay period`}>
+                <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" />
+                {periodLabel(startIso)}
+              </button>
+              <input
+                ref={dateInputRef}
+                type="date"
+                tabIndex={-1}
+                aria-hidden="true"
+                value={startIso}
+                onChange={e => { if (e.target.value) changePeriod(getFortnightStartIso(e.target.value)); }}
+                className="absolute inset-0 opacity-0 pointer-events-none"
+              />
+            </div>
+            <button type="button" onClick={() => changePeriod(shiftIso(startIso, 14))} className={buttonClass.quiet} aria-label="Next pay period">
+              <ChevronRight className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => changePeriod(currentFortnightIso())} className={buttonClass.quiet}>Today</button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            aria-pressed={selectMode}
+            className={`${buttonClass.secondary} ${selectMode ? '!bg-[var(--primary-light)] !text-[var(--primary)] !border-[var(--primary)]/40' : ''}`}
+            title="Select days on the grid to copy them (tip: shift-click a cell)"
+          >
+            <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Select days
+          </button>
+          <button
+            type="button"
+            onClick={() => setFillMode('roster')}
+            disabled={Boolean(busy) || Boolean(selectedBranchLock?.roster_locked)}
+            className={buttonClass.secondary}
+            title={selectedBranchLock?.roster_locked ? 'The roster is locked for this branch' : 'Apply default roster templates to chosen days'}
+          >
+            <Wand2 className="w-3.5 h-3.5" aria-hidden="true" /> Auto-Roster
+          </button>
+          <button
+            type="button"
+            onClick={() => setFillMode('log')}
+            disabled={Boolean(busy) || !canTimesheets || Boolean(selectedBranchLock?.timesheet_locked)}
+            className={buttonClass.secondary}
+            title={selectedBranchLock?.timesheet_locked ? 'Timesheets are locked for this branch' : 'Copy rostered times into worked hours on chosen days'}
+          >
+            <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" /> Auto-Log
+          </button>
+          {canTimesheets && (
+            <button
+              type="button"
+              onClick={() => setApproveAllOpen(true)}
+              disabled={Boolean(busy) || approvable.length === 0}
+              className={buttonClass.secondary}
+              title={approvable.length === 0 ? 'No draft timesheets to approve' : 'Approve every draft timesheet shown'}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all ({approvable.length})
+            </button>
+          )}
+          {canReports && (
+            <>
+              <button type="button" onClick={exportCsv} className={buttonClass.secondary} title="Download the payroll CSV for this pay period">
+                <Download className="w-3.5 h-3.5" aria-hidden="true" /> CSV
+              </button>
+              <button type="button" onClick={printReport} className={buttonClass.secondary} title="Open a printable report (save as PDF from the print dialog)">
+                <Printer className="w-3.5 h-3.5" aria-hidden="true" /> Print / PDF
+              </button>
+            </>
+          )}
+          {canLock && lockButton('roster')}
+          {canLock && lockButton('timesheet')}
+        </div>
+      </div>
+
+      {/* Status bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[var(--panel-subtle)] border border-[var(--border)] border-t-0 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[var(--muted)]">Pay period</span>
+          <span className="font-semibold text-[var(--text)]">{periodLabel(startIso)}</span>
+          <span className="text-[var(--muted)] font-mono text-[11px]">({startIso} to {endIso})</span>
+          <span role="status" className="text-[var(--primary)] font-semibold">{busy ?? (loading && workers.length > 0 ? 'Refreshing…' : '')}</span>
+        </div>
+        <div className="hidden md:block"><SegmentLegend /></div>
+        <div className="flex flex-wrap items-center gap-1.5">{lockBadges()}</div>
+      </div>
+
+      {selectMode && (
+        <div role="region" aria-label="Selected days" className="flex flex-wrap items-center gap-2 px-3 py-2 bg-[var(--primary-light)] border border-[var(--primary)]/30 border-t-0 text-xs">
+          <MousePointerClick className="w-4 h-4 text-[var(--primary)]" aria-hidden="true" />
+          <span className="font-semibold text-[var(--text)]" aria-live="polite">{selectedCells.length} day{selectedCells.length === 1 ? '' : 's'} selected</span>
+          <span className="text-[var(--muted)] hidden lg:inline">Click cells to select them, or click a date to select that day for every worker.</span>
+          <span className="flex-1" />
+          <button type="button" onClick={copyPreviousDay} disabled={selectedCells.length === 0 || Boolean(busy)} className={buttonClass.secondary} title="Fill each selected day with the roster of the day before it">
+            <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copy previous day
+          </button>
+          <button type="button" onClick={() => setApplyOpen(true)} disabled={selectedCells.length === 0 || Boolean(busy)} className={buttonClass.secondary}>
+            <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Apply segments from…
+          </button>
+          <button type="button" onClick={() => setSelected(new Set())} disabled={selectedCells.length === 0} className={buttonClass.quiet}>Clear selection</button>
+          <button type="button" onClick={exitSelectMode} className={buttonClass.primary}>Done</button>
         </div>
       )}
 
-      {/* Top Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--panel)] p-3 rounded-t-xl border border-[var(--border)] border-b-0">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <button
-            onClick={openAutoRosterModal}
-            disabled={loadingAction}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-            title="Auto-fill roster from employee schedule templates"
-          >
-            Auto-Roster All
-          </button>
-          <button
-            onClick={openAutoLogModal}
-            disabled={loadingAction}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-[var(--primary)] hover:bg-[var(--primary-h)] active:scale-[0.98] text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-            title="Auto-populate timesheets from rostered shifts"
-          >
-            Auto-Log All
-          </button>
-          
-          {/* Calendar Fortnight Date Picker */}
-          <div className="flex items-center gap-1 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5 ml-1">
-            <button
-              onClick={handlePrev}
-              className="px-2.5 py-1 text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] rounded-md transition-colors"
-              title="Previous fortnight"
-            >
-              ←
-            </button>
-            <button 
-              type="button"
-              onClick={() => {
-                try {
-                  dateInputRef.current?.showPicker();
-                } catch {
-                  dateInputRef.current?.focus();
-                }
-              }}
-              className="relative px-3 py-1 text-xs font-semibold flex items-center justify-center gap-1.5 text-[var(--text)] hover:bg-[var(--glass-4)] rounded-md cursor-pointer transition-colors"
-              title="Click to select specific date"
-            >
-              <span>{activeFortnightStart.getDate()} {activeFortnightStart.toLocaleString('default', { month: 'short' })} — {fnEnd.getDate()} {fnEnd.toLocaleString('default', { month: 'short' })} {fnEnd.getFullYear()}</span>
-              <input 
-                ref={dateInputRef}
-                type="date" 
-                value={fmtISO(activeDate)}
-                onChange={e => {
-                  if (e.target.value) {
-                    const [y, m, d] = e.target.value.split('-');
-                    setActiveDate(new Date(Number(y), Number(m) - 1, Number(d)));
-                  }
-                }}
-                className="absolute inset-0 opacity-0 pointer-events-none w-0 h-0"
-              />
-            </button>
-            <button
-              onClick={handleNext}
-              className="px-2.5 py-1 text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] rounded-md transition-colors"
-              title="Next fortnight"
-            >
-              →
+      {partialError && (
+        <p role="alert" className="px-3 py-1.5 text-xs text-[var(--warn)] bg-[var(--warn-light)] border border-[var(--border)] border-t-0">{partialError}</p>
+      )}
+
+      {/* Grid */}
+      <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-b-xl border border-[var(--border)] relative">
+        {loadError ? (
+          <div className="p-10 text-center space-y-3">
+            <p className="text-sm font-semibold text-[var(--danger)]" role="alert">{loadError}</p>
+            <button type="button" onClick={() => load()} className={buttonClass.secondary}>
+              <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Try again
             </button>
           </div>
-        </div>
-        
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Timesheet Review Action */}
-          <button 
-            onClick={() => setShowSubmissionsModal(true)} 
-            className="px-3 py-2 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Review employee submitted timesheets"
-          >
-            <FileCheck2 className="w-3.5 h-3.5" />
-            <span>Timesheets ({submissions.filter(s => s.status === 'Submitted').length})</span>
-          </button>
-
-          <button 
-            onClick={handleExportCsv} 
-            className="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Download Accountant Payroll CSV"
-          >
-            <span>Export CSV</span>
-          </button>
-
-          <button 
-            onClick={handlePrintPdf} 
-            className="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)] border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Print or Save PDF Report"
-          >
-            <span>Print / PDF</span>
-          </button>
-
-          <button 
-            onClick={handlePushRosterClick}
-            disabled={publishing}
-            className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ${
-              isPublished 
-                ? 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white' 
-                : 'bg-[var(--primary)] hover:bg-[var(--primary-h)] active:scale-[0.98] text-white'
-            }`}
-            title={isPublished ? "Roster is visible to employees. Click to unpublish." : "Push roster shifts to Employee Portal"}
-          >
-            {publishing ? (
-              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-            ) : isPublished ? (
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            )}
-            <span>{publishing ? 'Updating...' : isPublished ? 'Published' : 'Push Roster'}</span>
-          </button>
-
-          <button
-            onClick={() => openLockModal('roster')}
-            className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 cursor-pointer ${
-              rosterLocked 
-                ? 'bg-[var(--warn-light)] text-[var(--warn)] border-[var(--warn)]/40' 
-                : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'
-            }`}
-            title={rosterLocked ? "Roster locked. Click to unlock." : "Roster open. Click to lock."}
-          >
-            <span>Roster</span>
-            {rosterLocked ? (
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
-              </svg>
-            )}
-          </button>
-
-          <button
-            onClick={() => openLockModal('timesheet')}
-            className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 cursor-pointer ${
-              timesheetLocked 
-                ? 'bg-[var(--danger-light)] text-[var(--danger)] border-[var(--danger)]/40' 
-                : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'
-            }`}
-            title={timesheetLocked ? "Timesheets locked. Click to unlock." : "Timesheets open. Click to lock."}
-          >
-            <span>Timesheet</span>
-            {timesheetLocked ? (
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
-              </svg>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Fortnight Status Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-[var(--panel-subtle)] border border-[var(--border)] border-t-0 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="text-[var(--muted)] font-medium">Fortnight Cycle:</span>
-          <span className="font-semibold text-[var(--text)]">
-            {formatFortnightLabel(activeFortnightStart)}
-          </span>
-          <span className="text-[var(--muted)] font-mono text-[11px]">
-            ({fnIso} to {fmtISO(fnEnd)})
-          </span>
-        </div>
-
-        {/* Shift Type Legend */}
-        <div className="hidden lg:flex items-center gap-3 text-[11px] font-medium text-[var(--muted)]">
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--primary)]"></span> Normal</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#10b981]"></span> TIL</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#f59e0b]"></span> Sick</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#a855f7]"></span> Annual</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#ef4444]"></span> Unplanned</span>
-        </div>
-
-        {/* State Badges */}
-        <div className="flex items-center gap-2">
-          {isPublished ? (
-            <Badge variant="success" size="sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Published
-            </Badge>
-          ) : (
-            <Badge variant="warning" size="sm">
-              Draft
-            </Badge>
-          )}
-
-          {rosterLocked ? (
-            <Badge variant="warning" size="sm">Roster: Locked</Badge>
-          ) : (
-            <Badge variant="outline" size="sm">Roster: Open</Badge>
-          )}
-
-          {timesheetLocked ? (
-            <Badge variant="danger" size="sm">Timesheets: Locked</Badge>
-          ) : (
-            <Badge variant="outline" size="sm">Timesheets: Open</Badge>
-          )}
-        </div>
-      </div>
-
-      {/* Roster Grid Table */}
-      <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-b-xl border border-[var(--border)] relative">
-        <table className="ag-table border-none">
-          <thead>
-            <tr>
-              <th className="name-col py-3 text-[var(--muted)] font-bold text-xs uppercase tracking-wider">Staff Member</th>
-              {days.map((d, i) => (
-                <th key={i} className={`py-3 text-center ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}>
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-[var(--muted)] text-[0.65rem] uppercase font-bold">{d.getDate()}</span>
-                    <span className="text-[var(--muted)] text-[0.65rem] uppercase font-bold">{d.toLocaleString('default', { weekday: 'short' })}</span>
-                  </div>
-                </th>
-              ))}
-              <th className="w-[140px] text-center text-xs font-bold py-1.5 px-2">
-                <div className="flex flex-col items-center">
-                  <span className="text-[var(--primary)] text-[0.68rem] uppercase font-black tracking-wider">Roster</span>
-                  <div className="w-full border-t-2 border-[var(--divider-split)] my-1.5 shadow-xs" />
-                  <span className="text-[var(--success)] text-[0.68rem] uppercase font-black tracking-wider">Timesheet</span>
-                </div>
-              </th>
-              <th className="w-[68px] text-center text-[var(--muted)] text-xs font-bold py-2">Variance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {departments.map(dept => (
-              <React.Fragment key={dept}>
-                <tr>
-                  <td colSpan={17} className="bg-[var(--panel-subtle)] text-[var(--primary)] font-bold text-xs px-4 py-2 uppercase tracking-widest sticky left-0 z-10 border-t border-[var(--border)]">
-                    {dept}
-                  </td>
-                </tr>
-                {employees.filter(e => e.department === dept).map(emp => {
-                  let totalRoster = 0;
-                  let totalTimesheet = 0;
-                  const rosterBreakdown: { [key: string]: number } = {
-                    Weekdays: 0,
-                    Weekends: 0,
-                    TIL: 0,
-                    Sick: 0,
-                    Annual: 0
-                  };
-                  const timesheetBreakdown: { [key: string]: number } = {
-                    Weekdays: 0,
-                    Weekends: 0,
-                    TIL: 0,
-                    Sick: 0,
-                    Annual: 0,
-                    Unplanned: 0
-                  };
-
-                  days.forEach(d => {
-                    const iso = fmtISO(d);
-                    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-                    const rec = records.find(r => r.employee_id === emp.id && r.record_date === iso);
-                    if (rec && rec.segments?.length > 0) {
-                      rec.segments.forEach(s => {
-                        // 1. Roster hours & breakdown
-                        const rostHrs = Number(s.roster_hours || 0);
-                        totalRoster += rostHrs;
-                        if (rostHrs > 0 && !s.is_unplanned) {
-                          const rType = s.segment_type || 'WORK';
-                          if (rType === 'WORK' || rType === 'Normal') {
-                            if (isWeekend) {
-                              rosterBreakdown.Weekends += rostHrs;
-                            } else {
-                              rosterBreakdown.Weekdays += rostHrs;
-                            }
-                          } else if (rType === 'TIL') {
-                            rosterBreakdown.TIL += rostHrs;
-                          } else if (rType === 'Sick') {
-                            rosterBreakdown.Sick += rostHrs;
-                          } else if (rType === 'Annual') {
-                            rosterBreakdown.Annual += rostHrs;
-                          }
-                        }
-
-                        // 2. Timesheet actual hours & breakdown
-                        const actHrs = Number(s.actual_hours || 0);
-                        if (rec.has_actuals && (actHrs > 0 || (s.actual_in && s.actual_out) || s.actual_segment_type)) {
-                          totalTimesheet += actHrs;
-                          const aType = s.actual_segment_type || s.segment_type || 'WORK';
-                          if (s.is_unplanned) {
-                            timesheetBreakdown.Unplanned += actHrs;
-                          } else if (aType === 'WORK' || aType === 'Normal') {
-                            if (isWeekend) {
-                              timesheetBreakdown.Weekends += actHrs;
-                            } else {
-                              timesheetBreakdown.Weekdays += actHrs;
-                            }
-                          } else if (aType === 'TIL') {
-                            timesheetBreakdown.TIL += actHrs;
-                          } else if (aType === 'Sick') {
-                            timesheetBreakdown.Sick += actHrs;
-                          } else if (aType === 'Annual') {
-                            timesheetBreakdown.Annual += actHrs;
-                          }
-                        }
-                      });
-                    }
-                  });
-                  
+        ) : loading && workers.length === 0 ? (
+          <p className="p-10 text-center text-sm text-[var(--muted)]">Loading the roster…</p>
+        ) : workers.length === 0 ? (
+          <div className="p-10 text-center space-y-2">
+            <p className="text-sm font-semibold text-[var(--text)]">No workers in {scopeText} yet.</p>
+            <p className="text-xs text-[var(--muted)]">
+              Add workers on the <Link to="/workers" className="text-[var(--primary)] font-semibold hover:underline">Workers</Link> page to start rostering.
+            </p>
+          </div>
+        ) : (
+          <table className="ag-table border-none select-none" style={{ minWidth: 200 + 14 * DAY_COLUMN_WIDTH + 140 + 72 }}>
+            <thead>
+              <tr>
+                <th className="name-col max-sm:!w-[8.5rem] py-3 text-[var(--muted)] font-bold text-xs uppercase tracking-wider">Workers</th>
+                {days.map((iso, i) => {
+                  const heading = (
+                    <span className="flex flex-col items-center gap-0.5">
+                      <span className="text-[0.65rem] uppercase font-bold">{weekdayShort(iso)}</span>
+                      <span className="text-xs font-bold text-[var(--text)]">{dayOfMonth(iso)}</span>
+                    </span>
+                  );
                   return (
-                    <tr key={emp.id} className="hover:bg-[var(--hover-row)] group border-b border-[var(--border)]">
-                      <td className="name-col p-2">
-                        <div className="flex items-baseline gap-2 mb-1 flex-wrap">
-                          <span className="font-bold text-sm text-[var(--text)]">{emp.full_name}</span>
-                          <span className="text-xs font-semibold text-[#ef4444] dark:text-[#f87171] tracking-tight">
-                            {emp.contracted_hours !== undefined && emp.contracted_hours !== null ? `${emp.contracted_hours} hours` : '76 hours'}
+                    <th
+                      key={iso}
+                      scope="col"
+                      style={{ width: DAY_COLUMN_WIDTH }}
+                      className={`py-2 text-center ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''} ${isWeekendIso(iso) ? '!bg-[var(--panel-subtle)]' : ''}`}
+                    >
+                      {selectMode ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleDayForEveryone(iso)}
+                          className="w-full rounded-md py-0.5 hover:bg-[var(--glass-8)] cursor-pointer"
+                          aria-label={`Select ${dayLabel(iso)} for every worker`}
+                        >
+                          {heading}
+                        </button>
+                      ) : (
+                        <span aria-label={dayLabel(iso)}>{heading}</span>
+                      )}
+                    </th>
+                  );
+                })}
+                <th className="w-[140px] text-center py-1.5 px-2">
+                  <span className="flex flex-col items-center text-[0.68rem] uppercase font-black tracking-wider">
+                    <span className="text-[var(--primary)]">Rostered</span>
+                    <span className="w-full border-t-2 border-[var(--divider-split)] my-1" aria-hidden="true" />
+                    <span className="text-[var(--success)]">Worked</span>
+                  </span>
+                </th>
+                <th className="w-[72px] text-center text-[var(--muted)] text-xs font-bold py-2" title="Worked minus rostered hours">Variance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.list.map((group, gi) => {
+                const newBranch = groups.multiBranch && (gi === 0 || groups.list[gi - 1].branchId !== group.branchId);
+                const branchLock = lockByBranch.get(group.branchId);
+                return (
+                  <Fragment key={group.key}>
+                    {newBranch && (
+                      <tr>
+                        <td colSpan={17} className="bg-[var(--panel)] text-[var(--text)] font-bold text-sm !px-3 !py-2 border-t-2 border-[var(--border)]">
+                          <span className="sticky left-3 inline-flex flex-wrap items-center gap-2">
+                            {branchNameOf(group.branchId)}
+                            <Badge variant={branchLock?.roster_locked ? 'warning' : 'outline'} size="sm">Roster {branchLock?.roster_locked ? 'locked' : 'open'}</Badge>
+                            <Badge variant={branchLock?.timesheet_locked ? 'warning' : 'outline'} size="sm">Timesheets {branchLock?.timesheet_locked ? 'locked' : 'open'}</Badge>
                           </span>
-                        </div>
-
-                        {/* Submission status & quick approve */}
-                        {(() => {
-                          const empSub = submissions.find(s => s.employee_id === emp.id);
-                          const subStatus = empSub ? empSub.status : 'Draft';
-                          return (
-                            <div className="flex items-center gap-1.5 mb-1.5">
+                        </td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td colSpan={17} className="bg-[var(--panel-subtle)] text-[var(--primary)] font-bold text-xs !px-4 !py-1.5 uppercase tracking-widest border-t border-[var(--border)]">
+                        <span className="sticky left-4">{group.department}</span>
+                      </td>
+                    </tr>
+                    {group.workers.map(w => {
+                      const totals = summarise(days, iso => segmentsFor(w.id, iso));
+                      const variance = Math.round((totals.worked - totals.roster) * 100) / 100;
+                      const ts = timesheetByWorker.get(w.id);
+                      const status: TimesheetStatus = ts?.status ?? 'Draft';
+                      const contracted = Number(w.contracted_hours ?? 76);
+                      return (
+                        <tr key={w.id} className="hover:bg-[var(--hover-row)] border-b border-[var(--border)]">
+                          <td className="name-col align-top p-2">
+                            <span className="block font-bold text-sm text-[var(--text)] truncate" title={w.full_name}>{w.full_name}</span>
+                            <span className="block text-[11px] font-semibold text-[var(--muted)]">{contracted}h contract</span>
+                            <span className="flex flex-wrap items-center gap-1 mt-1">
                               <Badge
-                                variant={
-                                  subStatus === 'Approved' ? 'success' :
-                                  subStatus === 'Submitted' ? 'warning' :
-                                  subStatus === 'Rejected' ? 'danger' : 'outline'
-                                }
+                                variant={STATUS_VARIANT[status]}
                                 size="sm"
+                                title={status === 'Locked' ? 'Approved, and timesheets are locked for this branch' : ts?.timesheet_locked ? 'Timesheets are locked for this branch' : undefined}
                               >
-                                {subStatus}
+                                {status === 'Approved' && <Check className="w-2.5 h-2.5" aria-hidden="true" />}
+                                {status === 'Locked' && <Lock className="w-2.5 h-2.5" aria-hidden="true" />}
+                                {status}
                               </Badge>
-                              {subStatus === 'Submitted' && (
+                              {canTimesheets && ts && status === 'Draft' && !ts.timesheet_locked && (
                                 <button
-                                  onClick={() => handleApproveSubmission(emp.id, empSub?.submission_id)}
-                                  disabled={submittingAction}
-                                  className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
-                                  title="Approve employee timesheet"
+                                  type="button"
+                                  onClick={() => changeTimesheet(ts, 'approve')}
+                                  disabled={rowBusy === w.id}
+                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/30 hover:opacity-80 disabled:opacity-50 cursor-pointer"
+                                  aria-label={`Approve timesheet for ${w.full_name}`}
                                 >
-                                  <CheckCircle2 className="w-2.5 h-2.5" /> Approve
+                                  Approve
                                 </button>
                               )}
-                            </div>
-                          );
-                        })()}
-
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <button onClick={() => handleSingleEmployeeRoster(emp)} className="text-[0.65rem] font-bold px-2 py-1 rounded bg-[var(--primary-light)] text-[var(--primary)] hover:opacity-80 border border-[var(--primary)]/30 touch-manipulation">
-                            Roster
-                          </button>
-                          <button onClick={() => handleSingleEmployeeLogAll(emp.id, emp.full_name)} className="text-[0.65rem] font-bold px-2 py-1 rounded bg-[var(--success-light)] text-[var(--success)] hover:opacity-80 border border-[var(--success)]/30 touch-manipulation">
-                            Log All
-                          </button>
-                          <button onClick={() => handleSingleEmployeeClear(emp.id, emp.full_name)} className="text-[0.65rem] font-bold px-2 py-1 rounded bg-[var(--danger-light)] text-[var(--danger)] hover:opacity-80 border border-[var(--danger)]/30 touch-manipulation">
-                            Clear
-                          </button>
-                        </div>
-                      </td>
-                      {days.map((d, i) => {
-                        const iso = fmtISO(d);
-                        const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-                        const rec = records.find(r => r.employee_id === emp.id && r.record_date === iso);
-                        
-                        // Extract roster segments (scheduled shifts)
-                        const rosterSegs = (rec?.segments || []).filter(s => 
-                          !s.is_unplanned && (
-                            (s.roster_in && s.roster_out) || 
-                            Number(s.roster_hours) > 0 || 
-                            (s.segment_type && s.segment_type !== 'WORK')
-                          )
-                        ).sort((a, b) => (a.roster_in || '00:00').localeCompare(b.roster_in || '00:00'));
-                        
-                        // Extract timesheet segments (logged actuals)
-                        const actualSegs = rec?.has_actuals 
-                          ? (rec?.segments || []).filter(s => 
-                              (s.actual_in && s.actual_out) || 
-                              Number(s.actual_hours) > 0 || 
-                              s.is_unplanned ||
-                              (s.actual_segment_type && s.actual_segment_type !== 'WORK')
-                            ).sort((a, b) => (a.actual_in || '00:00').localeCompare(b.actual_in || '00:00'))
-                          : [];
-
-                        return (
-                          <td 
-                            onClick={() => handleCellClick(emp.id, emp.full_name, iso)} 
-                            key={i} 
-                            title="Click to view & edit day shift / timesheet"
-                            className={`text-center align-middle cursor-pointer p-0.5 hover:bg-[var(--glass-4)] transition-colors ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''}`}
-                          >
-                            <div className="flex flex-col h-full min-h-[52px] justify-between">
-                              {/* Roster Section (Top) */}
-                              <div className="flex flex-col items-center justify-center min-h-[22px] w-full gap-0.5">
-                                {rosterSegs.length > 0 ? (
-                                  rosterSegs.map((s, idx) => {
-                                    const colorStyle = getSegmentBadgeColor(s.segment_type, false, false, isWeekend);
-                                    const timeDisplay = (s.roster_in && s.roster_out) 
-                                      ? formatCompactShift(s.roster_in, s.roster_out)
-                                      : (s.segment_type !== 'WORK' ? `${s.segment_type}${s.roster_hours ? ` (${formatHours(s.roster_hours)})` : ''}` : formatHours(s.roster_hours));
-                                    return (
-                                      <div 
-                                        key={idx} 
-                                        title={s.notes ? `Roster Note: ${s.notes}` : `Roster: ${s.segment_type} (${s.roster_in || ''}-${s.roster_out || ''})`} 
-                                        className={`text-[0.62rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate text-center tracking-tighter ${colorStyle}`}
-                                      >
-                                        {timeDisplay}
-                                      </div>
-                                    );
-                                  })
-                                ) : (
-                                  <span className="text-[var(--muted)] text-[0.62rem] opacity-35">—</span>
-                                )}
+                              {canTimesheets && ts && status === 'Approved' && (
+                                <button
+                                  type="button"
+                                  onClick={() => changeTimesheet(ts, 'reopen')}
+                                  disabled={rowBusy === w.id}
+                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--panel-subtle)] text-[var(--muted)] border border-[var(--border)] hover:text-[var(--text)] disabled:opacity-50 cursor-pointer"
+                                  aria-label={`Reopen timesheet for ${w.full_name}`}
+                                >
+                                  Reopen
+                                </button>
+                              )}
+                            </span>
+                          </td>
+                          {days.map((iso, i) => {
+                            const segs = segmentsFor(w.id, iso);
+                            const isSelected = selected.has(cellKey(w.id, iso));
+                            return (
+                              <td key={iso} className={`!p-0.5 align-middle ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''} ${isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : ''}`}>
+                                <button
+                                  type="button"
+                                  onClick={e => onCellClick(e, w.id, iso)}
+                                  aria-pressed={selectMode ? isSelected : undefined}
+                                  aria-label={`${w.full_name}, ${dayLabel(iso)}: ${describeSide(segs, 'roster')}; ${describeSide(segs, 'actual')}.${selectMode ? '' : ' Edit day.'}`}
+                                  className={`relative w-full min-h-[58px] flex flex-col justify-between gap-0.5 rounded-md p-0.5 cursor-pointer transition-colors hover:bg-[var(--glass-8)] focus-visible:outline-2 focus-visible:outline-[var(--primary)] ${
+                                    isSelected ? 'ring-2 ring-[var(--primary)] bg-[var(--primary-light)]' : ''
+                                  }`}
+                                >
+                                  <span className="flex flex-col items-center justify-center gap-0.5 w-full min-h-[20px]">
+                                    <DayChips segments={segs} side="roster" />
+                                  </span>
+                                  <span className="w-full border-t border-[var(--divider-split)]" aria-hidden="true" />
+                                  <span className="flex flex-col items-center justify-center gap-0.5 w-full min-h-[20px]">
+                                    <DayChips segments={segs} side="actual" />
+                                  </span>
+                                  {isSelected && (
+                                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-[var(--primary)] text-white flex items-center justify-center" aria-hidden="true">
+                                      <Check className="w-2.5 h-2.5" strokeWidth={3} />
+                                    </span>
+                                  )}
+                                </button>
+                              </td>
+                            );
+                          })}
+                          <td className="text-center bg-[var(--panel)] p-2 align-middle">
+                            <div className="flex flex-col min-h-[52px] justify-between text-[0.6rem] font-bold">
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span className="text-[var(--primary)] text-xs">{totals.roster.toFixed(2)}h</span>
+                                {BUCKETS.filter(b => totals.rosterBy[b] > 0).map(b => (
+                                  <span key={b} style={textStyle(BUCKET_STYLE_TYPE[b], 'roster')}>{b}: {totals.rosterBy[b].toFixed(2)}h</span>
+                                ))}
                               </div>
-
-                              {/* Dividing Line (Defined) */}
-                              <div className="w-full border-t-2 border-[var(--divider-split)] my-1 shadow-xs" />
-
-                              {/* Timesheet Section (Bottom) */}
-                              <div className="flex flex-col items-center justify-center min-h-[22px] w-full gap-0.5">
-                                {actualSegs.length > 0 ? (
-                                  actualSegs.map((s, idx) => {
-                                    const segType = s.actual_segment_type || s.segment_type;
-                                    const colorStyle = getSegmentBadgeColor(segType, true, s.is_unplanned, isWeekend);
-                                    const timeDisplay = (s.actual_in && s.actual_out) 
-                                      ? formatCompactShift(s.actual_in, s.actual_out)
-                                      : (segType !== 'WORK' ? `${segType}${s.actual_hours ? ` (${formatHours(s.actual_hours)})` : ''}` : formatHours(s.actual_hours));
-                                    return (
-                                      <div 
-                                        key={idx} 
-                                        title={s.notes ? `Actual Note: ${s.notes}` : `Actual: ${segType}${s.is_unplanned ? ' (Unplanned)' : ''} (${s.actual_in || ''}-${s.actual_out || ''})`} 
-                                        className={`text-[0.62rem] font-bold px-0.5 py-0.5 rounded border leading-tight w-full truncate flex items-center justify-center gap-0.5 tracking-tighter ${colorStyle}`}
-                                      >
-                                        {s.is_unplanned && <span className="text-[0.55rem] font-black text-[#ef4444] bg-[#ef4444]/20 px-0.5 rounded mr-0.5 shrink-0">U</span>}
-                                        <span className="truncate">{timeDisplay}</span>
-                                        {s.notes && (
-                                          <svg className="w-2 h-2 inline-block ml-0.5 opacity-70 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                                          </svg>
-                                        )}
-                                      </div>
-                                    );
-                                  })
-                                ) : (
-                                  <span className="text-[var(--muted)] text-[0.62rem] opacity-35">—</span>
-                                )}
+                              <span className="w-full border-t-2 border-[var(--divider-split)] my-1.5" aria-hidden="true" />
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span className="text-[var(--success)] text-xs">{totals.worked.toFixed(2)}h</span>
+                                {BUCKETS.filter(b => totals.workedBy[b] > 0).map(b => (
+                                  <span key={b} style={textStyle(BUCKET_STYLE_TYPE[b], 'actual', b === 'Unplanned')}>{b}: {totals.workedBy[b].toFixed(2)}h</span>
+                                ))}
                               </div>
                             </div>
                           </td>
-                        );
-                      })}
-                      {/* Merged Roster / Timesheet Summary Column */}
-                      <td className="text-center bg-[var(--panel)] p-2 align-middle">
-                        <div className="flex flex-col h-full min-h-[52px] justify-between">
-                          {/* Roster Total & Breakdown (Top) */}
-                          <div className="flex flex-col items-center justify-center min-h-[22px]">
-                            <span className="text-[var(--primary)] font-bold text-xs">{totalRoster.toFixed(2)}h</span>
-                            {(rosterBreakdown.Weekdays > 0 || rosterBreakdown.Weekends > 0 || rosterBreakdown.TIL > 0 || rosterBreakdown.Sick > 0 || rosterBreakdown.Annual > 0) && (
-                              <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold w-full">
-                                {rosterBreakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {rosterBreakdown.Weekdays.toFixed(2)}h</span>}
-                                {rosterBreakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {rosterBreakdown.Weekends.toFixed(2)}h</span>}
-                                {rosterBreakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {rosterBreakdown.TIL.toFixed(2)}h</span>}
-                                {rosterBreakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {rosterBreakdown.Sick.toFixed(2)}h</span>}
-                                {rosterBreakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {rosterBreakdown.Annual.toFixed(2)}h</span>}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Dividing Line (Defined) */}
-                          <div className="w-full border-t-2 border-[var(--divider-split)] my-2 shadow-xs" />
-
-                          {/* Timesheet Total & Category Breakdown (Bottom) */}
-                          <div className="flex flex-col items-center justify-center min-h-[22px]">
-                            <span className="text-[var(--success)] font-bold text-xs">{totalTimesheet.toFixed(2)}h</span>
-                            {(timesheetBreakdown.Weekdays > 0 || timesheetBreakdown.Weekends > 0 || timesheetBreakdown.TIL > 0 || timesheetBreakdown.Sick > 0 || timesheetBreakdown.Annual > 0 || timesheetBreakdown.Unplanned > 0) && (
-                              <div className="flex flex-col gap-0.5 mt-1 text-[0.6rem] font-bold w-full">
-                                {timesheetBreakdown.Weekdays > 0 && <span className="text-[var(--primary)]">Weekdays: {timesheetBreakdown.Weekdays.toFixed(2)}h</span>}
-                                {timesheetBreakdown.Weekends > 0 && <span className="text-[#06b6d4]">Weekends: {timesheetBreakdown.Weekends.toFixed(2)}h</span>}
-                                {timesheetBreakdown.TIL > 0 && <span className="text-[#10b981]">TIL: {timesheetBreakdown.TIL.toFixed(2)}h</span>}
-                                {timesheetBreakdown.Sick > 0 && <span className="text-[#f59e0b]">Sick: {timesheetBreakdown.Sick.toFixed(2)}h</span>}
-                                {timesheetBreakdown.Annual > 0 && <span className="text-[#a855f7]">Annual: {timesheetBreakdown.Annual.toFixed(2)}h</span>}
-                                {timesheetBreakdown.Unplanned > 0 && <span className="text-[#ef4444]">Unplanned: {timesheetBreakdown.Unplanned.toFixed(2)}h</span>}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      {/* Variance Column */}
-                      <td className={`text-center font-bold text-xs bg-[var(--panel)] align-middle ${totalTimesheet - totalRoster > 0 ? 'text-[var(--success)]' : totalTimesheet - totalRoster < 0 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
-                        {(totalTimesheet - totalRoster) > 0 ? `+${(totalTimesheet - totalRoster).toFixed(2)}h` : `${(totalTimesheet - totalRoster).toFixed(2)}h`}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Confirmation & Day Selection Modal for Auto-Roster All / Auto-Log All */}
-      {(showAutoRosterModal || showAutoLogModal) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-          <div className="bg-[var(--panel)] rounded-3xl w-full max-w-xl border border-[var(--border)] shadow-2xl p-6 flex flex-col">
-            <div className="flex justify-between items-center mb-4 border-b border-[var(--border)] pb-3">
-              <h3 className="text-xl font-bold text-[var(--text)]">
-                {showAutoRosterModal 
-                  ? (singleEmpTarget ? `Confirm Auto-Roster for ${singleEmpTarget.full_name}` : 'Confirm Auto-Roster All')
-                  : (singleEmpTarget ? `Confirm Auto-Log for ${singleEmpTarget.full_name}` : 'Confirm Auto-Log All')}
-              </h3>
-              <button 
-                onClick={() => { setShowAutoRosterModal(false); setShowAutoLogModal(false); setSingleEmpTarget(null); }}
-                className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-
-            <p className="text-sm text-[var(--muted)] mb-4">
-              {showAutoRosterModal 
-                ? `Select the days of the fortnight you want to generate rosters for ${singleEmpTarget ? singleEmpTarget.full_name : 'all employees'} based on default templates:`
-                : `Select the days of the fortnight you want to copy rostered shifts into actual logged timesheets for ${singleEmpTarget ? singleEmpTarget.full_name : 'all employees'}:`}
-            </p>
-
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">
-                Select Days ({selectedDays.length} / 14 selected)
-              </span>
-              <div className="flex gap-2">
-                <button 
-                  type="button"
-                  onClick={() => setSelectedDays(Array.from({ length: 14 }, (_, i) => i))}
-                  className="text-xs font-bold text-[var(--primary)] hover:underline"
-                >
-                  Select All
-                </button>
-                <span className="text-xs text-[var(--muted)]">|</span>
-                <button 
-                  type="button"
-                  onClick={() => setSelectedDays([])}
-                  className="text-xs font-bold text-[var(--muted)] hover:underline"
-                >
-                  Deselect All
-                </button>
-              </div>
-            </div>
-
-            {/* 14-Day Selector Grid */}
-            <div className="grid grid-cols-7 gap-2 mb-6">
-              {days.map((d, i) => {
-                const isSelected = selectedDays.includes(i);
-                const weekNum = i < 7 ? 1 : 2;
-                const dayName = d.toLocaleString('default', { weekday: 'short' });
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => toggleDaySelection(i)}
-                    className={`p-2 rounded-xl text-center border transition-all cursor-pointer ${
-                      isSelected 
-                        ? 'bg-[var(--primary-light)] border-[var(--primary)] text-[var(--primary)] font-bold shadow-sm' 
-                        : 'bg-[var(--input-bg)] border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    <div className="text-[0.65rem] uppercase font-bold opacity-75">W{weekNum} {dayName}</div>
-                    <div className="text-xs font-bold">{d.getDate()}</div>
-                  </button>
+                          <td className={`text-center font-bold text-xs bg-[var(--panel)] align-middle ${variance > 0 ? 'text-[var(--success)]' : variance < 0 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
+                            {signedHours(variance)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
                 );
               })}
-            </div>
+            </tbody>
+          </table>
+        )}
+      </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border)]">
-              <button 
-                type="button"
-                onClick={() => { setShowAutoRosterModal(false); setShowAutoLogModal(false); }}
-                className="px-5 py-2.5 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--text)] font-bold rounded-xl border border-[var(--border)] text-xs transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                type="button"
-                onClick={showAutoRosterModal ? handleConfirmAutoRoster : handleConfirmAutoLog}
-                className="px-6 py-2.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-[var(--primary-light)]"
-              >
-                {showAutoRosterModal ? 'Run Auto-Roster' : 'Run Auto-Log'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Dialogs */}
+      {editing && editingWorker && (
+        <SegmentEditor
+          key={cellKey(editing.workerId, editing.dateIso)}
+          worker={{ id: editingWorker.id, full_name: editingWorker.full_name, location_id: editingWorker.location_id, location_name: editingWorker.location_name }}
+          dateIso={editing.dateIso}
+          segments={segmentsFor(editing.workerId, editing.dateIso)}
+          breakSettings={breakSettings}
+          rosterLocked={Boolean(editingLock?.roster_locked)}
+          timesheetLocked={Boolean(editingLock?.timesheet_locked)}
+          approved={editingStatus === 'Approved' || editingStatus === 'Locked'}
+          fortnightDays={days}
+          branchWorkers={workers
+            .filter(w => w.location_id === editingWorker.location_id && w.id !== editingWorker.id)
+            .map(w => ({ id: w.id, full_name: w.full_name }))}
+          onClose={() => setEditing(null)}
+          onSaved={saved => onSaved(editing.workerId, editing.dateIso, saved)}
+          onCopied={() => load()}
+        />
       )}
 
-      {/* Lock Authentication Password Modal */}
-      {lockModalType && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-          <div className="bg-[var(--panel)] rounded-3xl w-full max-w-md border border-[var(--border)] shadow-2xl p-6 flex flex-col">
-            <div className="flex justify-between items-center mb-4 border-b border-[var(--border)] pb-3">
-              <h3 className="text-xl font-bold text-[var(--text)]">
-                Authenticate Lock Status
-              </h3>
-              <button 
-                onClick={() => setLockModalType(null)}
-                className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
+      {fillMode && (
+        <DayPickerDialog
+          mode={fillMode}
+          days={days}
+          scopeText={scopeText}
+          busy={Boolean(busy)}
+          onConfirm={dayIndexes => runFill(fillMode, dayIndexes)}
+          onClose={() => setFillMode(null)}
+        />
+      )}
+
+      {lockFlag && (
+        <LockDialog
+          flag={lockFlag}
+          startDate={startIso}
+          periodText={`Pay period ${periodLabel(startIso)}`}
+          branches={branches.filter(b => b.is_active || b.id === branchId).map(b => ({ id: b.id, name: b.name }))}
+          fixedBranchId={branchId || null}
+          lockFor={id => lockByBranch.get(id)}
+          onClose={() => setLockFlag(null)}
+          onChanged={row => {
+            setLocks(ls => [...ls.filter(l => l.location_id !== row.location_id), row]);
+            toast.success(`${lockFlag === 'roster' ? 'Roster' : 'Timesheet'} lock updated for ${branchNameOf(row.location_id)}.`);
+            load();
+          }}
+        />
+      )}
+
+      {applyOpen && (
+        <ApplyFromDialog
+          workers={workers.map(w => ({ id: w.id, full_name: w.full_name }))}
+          days={days}
+          defaultWorkerId={selectedCells[0]?.workerId ?? workers[0]?.id ?? ''}
+          segmentsFor={segmentsFor}
+          targetCount={selectedCells.length}
+          busy={Boolean(busy)}
+          onApply={applyFrom}
+          onClose={() => setApplyOpen(false)}
+        />
+      )}
+
+      {approveAllOpen && (
+        <Dialog
+          title="Approve all draft timesheets?"
+          description={`Pay period ${periodLabel(startIso)} · ${scopeText}`}
+          onClose={() => setApproveAllOpen(false)}
+          closeDisabled={Boolean(busy)}
+          size="sm"
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setApproveAllOpen(false)} disabled={Boolean(busy)} className={buttonClass.secondary}>Cancel</button>
+              <button type="button" onClick={approveAll} disabled={Boolean(busy) || approvable.length === 0} className={buttonClass.primary}>
+                {busy ? 'Approving…' : `Approve ${approvable.length}`}
               </button>
             </div>
-
-            <p className="text-sm text-[var(--muted)] mb-4">
-              Enter your account password to confirm toggling <strong>{lockModalType === 'roster' ? 'Roster Lock' : 'Timesheet Lock'}</strong> for fortnight starting {activeFortnightStart.toLocaleDateString()}:
-            </p>
-
-            {lockError && (
-              <div className="mb-4 text-xs font-bold text-[var(--danger)] bg-[var(--danger-light)] p-3 rounded-xl border border-[var(--danger)]/30">
-                {lockError}
-              </div>
-            )}
-
-            <form onSubmit={confirmLockToggle} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">Account Password</label>
-                <input 
-                  required
-                  type="password"
-                  placeholder="Enter your password"
-                  value={lockPasswordInput}
-                  onChange={e => setLockPasswordInput(e.target.value)}
-                  className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] outline-none focus:border-[var(--primary)] text-sm"
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border)]">
-                <button 
-                  type="button"
-                  onClick={() => setLockModalType(null)}
-                  className="px-5 py-2.5 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--text)] font-bold rounded-xl border border-[var(--border)] text-xs transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  className="px-6 py-2.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-[var(--primary-light)]"
-                >
-                  Confirm Lock Toggle
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {activeCell && (
-          <CellEditorModal 
-              empId={activeCell.empId} 
-              empName={activeCell.empName}
-              dateIso={activeCell.dateIso} 
-              existingRecords={activeCell.records} 
-              rosterLocked={rosterLocked}
-              timesheetLocked={timesheetLocked}
-              onClose={() => setActiveCell(null)} 
-              onSave={fetchData} 
-          />
-      )}
-
-      {/* Push & Finalise Roster Modal */}
-      {showPushLockModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-          <div className="bg-[var(--panel)] rounded-3xl w-full max-w-md border border-[var(--border)] shadow-2xl p-6 flex flex-col">
-            <div className="flex justify-between items-center mb-4 border-b border-[var(--border)] pb-3">
-              <h3 className="text-xl font-bold text-[var(--text)]">
-                Finalise & Lock Roster
-              </h3>
-              <button 
-                onClick={() => setShowPushLockModal(false)}
-                className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-
-            <p className="text-sm text-[var(--muted)] mb-3">
-              The roster for fortnight starting <strong>{activeFortnightStart.toLocaleDateString()}</strong> must be finalised and locked before publishing shifts to employees.
-            </p>
-            <p className="text-xs text-[var(--muted)] mb-4">
-              Enter your Roster Lock Password (or Account Master Password) to finalise, lock and publish immediately:
-            </p>
-
-            {pushLockError && (
-              <div className="mb-4 text-xs font-bold text-[var(--danger)] bg-[var(--danger-light)] p-3 rounded-xl border border-[var(--danger)]/30">
-                {pushLockError}
-              </div>
-            )}
-
-            <form onSubmit={handleConfirmPushAndLock} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-[var(--muted)] uppercase mb-1">Roster Lock Password</label>
-                <input 
-                  required
-                  type="password"
-                  placeholder="Enter lock password"
-                  value={pushLockPassword}
-                  onChange={e => setPushLockPassword(e.target.value)}
-                  className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-[var(--text)] outline-none focus:border-[var(--primary)] text-sm"
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border)]">
-                <button 
-                  type="button"
-                  onClick={() => setShowPushLockModal(false)}
-                  className="px-5 py-2.5 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--text)] font-bold rounded-xl border border-[var(--border)] text-xs transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={publishing}
-                  className="px-6 py-2.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-[var(--primary-light)] disabled:opacity-50"
-                >
-                  {publishing ? 'Publishing...' : 'Finalise, Lock & Push'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Timesheet Submissions Review Modal */}
-      {showSubmissionsModal && (() => {
-        // Collect departments
-        const depts = Array.from(new Set(employees.map(e => e.department).filter(Boolean))).sort();
-
-        // Calculate counts
-        const submittedEmployees = employees.filter(emp => {
-          const empSub = submissions.find(s => s.employee_id === emp.id);
-          return empSub && (empSub.status === 'Submitted' || empSub.status === 'Under Review');
-        });
-
-        // Filtered employees
-        const filteredEmployees = employees.filter(emp => {
-          const empSub = submissions.find(s => s.employee_id === emp.id);
-          const status = empSub ? empSub.status : 'Draft';
-
-          const matchesSearch = !submissionSearch.trim() || 
-            emp.full_name.toLowerCase().includes(submissionSearch.toLowerCase()) ||
-            (emp.department && emp.department.toLowerCase().includes(submissionSearch.toLowerCase()));
-
-          const matchesDept = submissionDeptFilter === 'ALL' || emp.department === submissionDeptFilter;
-
-          const matchesStatus = submissionStatusFilter === 'ALL' || status === submissionStatusFilter;
-
-          return matchesSearch && matchesDept && matchesStatus;
-        });
-
-        const allEligibleSelected = submittedEmployees.length > 0 && submittedEmployees.every(emp => {
-          const sub = submissions.find(s => s.employee_id === emp.id);
-          return sub?.submission_id && selectedSubIds.includes(sub.submission_id);
-        });
-
-        const toggleSelectAll = () => {
-          if (allEligibleSelected) {
-            setSelectedSubIds([]);
-          } else {
-            const allIds = submittedEmployees
-              .map(emp => submissions.find(s => s.employee_id === emp.id)?.submission_id)
-              .filter(Boolean) as string[];
-            setSelectedSubIds(allIds);
           }
-        };
-
-        const toggleSelectSubmission = (subId: string) => {
-          setSelectedSubIds(prev => 
-            prev.includes(subId) ? prev.filter(id => id !== subId) : [...prev, subId]
-          );
-        };
-
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-            <div className="bg-[var(--panel)] rounded-3xl w-full max-w-4xl border border-[var(--border)] shadow-2xl p-6 flex flex-col max-h-[90vh]">
-              {/* Modal Header */}
-              <div className="flex justify-between items-center mb-4 border-b border-[var(--border)] pb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
-                    <FileCheck2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-[var(--text)]">
-                      Timesheet Submissions & Approvals
-                    </h3>
-                    <p className="text-xs text-[var(--muted)]">
-                      Fortnight: <strong className="text-[var(--text)] font-mono">{fnIso}</strong>
-                    </p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowSubmissionsModal(false)}
-                  className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Filters & Actions Bar */}
-              <div className="space-y-3 mb-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  {/* Status Pills */}
-                  <div className="flex flex-wrap items-center gap-1.5 bg-[var(--panel-subtle)] p-1 rounded-xl border border-[var(--border)]">
-                    {[
-                      { id: 'ALL', label: 'All', count: employees.length },
-                      { id: 'Submitted', label: 'Submitted', count: submissions.filter(s => s.status === 'Submitted' || s.status === 'Under Review').length },
-                      { id: 'Approved', label: 'Approved', count: submissions.filter(s => s.status === 'Approved').length },
-                      { id: 'Rejected', label: 'Rejected', count: submissions.filter(s => s.status === 'Rejected').length },
-                      { id: 'Draft', label: 'Draft', count: employees.filter(e => !submissions.some(s => s.employee_id === e.id) || submissions.find(s => s.employee_id === e.id)?.status === 'Draft').length },
-                    ].map(tab => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setSubmissionStatusFilter(tab.id)}
-                        className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                          submissionStatusFilter === tab.id
-                            ? 'bg-[var(--panel)] text-[var(--text)] shadow-xs border border-[var(--border)]'
-                            : 'text-[var(--muted)] hover:text-[var(--text)]'
-                        }`}
-                      >
-                        <span>{tab.label}</span>
-                        {tab.count > 0 && (
-                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                            tab.id === 'Submitted' && tab.count > 0
-                              ? 'bg-amber-500/20 text-amber-400'
-                              : 'bg-[var(--glass-8)] text-[var(--muted)]'
-                          }`}>
-                            {tab.count}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Search & Department */}
-                  <div className="flex items-center gap-2">
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-                      <input
-                        type="text"
-                        value={submissionSearch}
-                        onChange={e => setSubmissionSearch(e.target.value)}
-                        placeholder="Search employee..."
-                        className="bg-[var(--input-bg)] text-xs text-[var(--text)] pl-8 pr-3 py-1.5 rounded-lg border border-[var(--border)] focus:outline-none w-36 sm:w-44"
-                      />
-                    </div>
-                    {depts.length > 0 && (
-                      <select
-                        value={submissionDeptFilter}
-                        onChange={e => setSubmissionDeptFilter(e.target.value)}
-                        className="bg-[var(--panel-subtle)] text-xs text-[var(--text)] px-2.5 py-1.5 rounded-lg border border-[var(--border)] focus:outline-none cursor-pointer"
-                      >
-                        <option value="ALL">All Departments</option>
-                        {depts.map(d => (
-                          <option key={d} value={d}>{d}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </div>
-
-                {/* Bulk Actions Header */}
-                {submittedEmployees.length > 0 && (
-                  <div className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-xl p-2.5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={toggleSelectAll}
-                        className="flex items-center gap-1.5 text-xs font-bold text-[var(--text)] hover:text-indigo-400 transition-colors cursor-pointer"
-                      >
-                        {allEligibleSelected ? (
-                          <CheckSquare className="w-4 h-4 text-emerald-400" />
-                        ) : (
-                          <Square className="w-4 h-4 text-[var(--muted)]" />
-                        )}
-                        <span>Select All Ready ({submittedEmployees.length})</span>
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={selectedSubIds.length === 0 || submittingAction}
-                      onClick={handleBulkApprove}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Approve Selected ({selectedSubIds.length})</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Submissions List */}
-              <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)] pr-1 my-1">
-                {filteredEmployees.length === 0 ? (
-                  <div className="py-12 text-center text-xs text-[var(--muted)]">
-                    No employees matched the selected filter criteria.
-                  </div>
-                ) : (
-                  filteredEmployees.map(emp => {
-                    const empSub = submissions.find(s => s.employee_id === emp.id);
-                    const status = empSub ? empSub.status : 'Draft';
-                    const isSelectable = empSub?.submission_id && (status === 'Submitted' || status === 'Under Review');
-                    const isSelected = empSub?.submission_id && selectedSubIds.includes(empSub.submission_id);
-                    const isInspecting = inspectingEmpId === emp.id;
-
-                    const rosteredHrs = empSub?.rostered_hours != null ? Number(empSub.rostered_hours) : null;
-                    const actualHrs = empSub?.actual_hours != null ? Number(empSub.actual_hours) : null;
-                    const varianceHrs = empSub?.variance_hours != null ? Number(empSub.variance_hours) : null;
-
-                    return (
-                      <div key={emp.id} className="py-3 space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            {/* Checkbox */}
-                            {isSelectable ? (
-                              <button
-                                type="button"
-                                onClick={() => toggleSelectSubmission(empSub.submission_id)}
-                                className="text-[var(--muted)] hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
-                              >
-                                {isSelected ? (
-                                  <CheckSquare className="w-4 h-4 text-emerald-400" />
-                                ) : (
-                                  <Square className="w-4 h-4" />
-                                )}
-                              </button>
-                            ) : (
-                              <div className="w-4 shrink-0" />
-                            )}
-
-                            <div className="min-w-0">
-                              <div className="font-bold text-xs text-[var(--text)] truncate">{emp.full_name}</div>
-                              <div className="text-[11px] text-[var(--muted)] flex items-center gap-2 mt-0.5">
-                                <span>{emp.department || 'General'}</span>
-                                <span>•</span>
-                                <span>{emp.contracted_hours ?? 76}h contract</span>
-                                {empSub?.submitted_at && (
-                                  <>
-                                    <span>•</span>
-                                    <span>Submitted: {new Date(empSub.submitted_at).toLocaleDateString()}</span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Hours & Actions */}
-                          <div className="flex items-center gap-3 shrink-0">
-                            {/* Hours metrics */}
-                            <div className="hidden sm:flex items-center gap-3 text-right">
-                              <div>
-                                <div className="text-[9px] uppercase font-bold text-[var(--muted)]">Rostered</div>
-                                <div className="text-xs font-mono text-[var(--text)]">
-                                  {rosteredHrs != null ? `${rosteredHrs.toFixed(1)}h` : '—'}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-[9px] uppercase font-bold text-[var(--muted)]">Actual</div>
-                                <div className="text-xs font-mono font-bold text-[var(--text)]">
-                                  {actualHrs != null ? `${actualHrs.toFixed(1)}h` : '—'}
-                                </div>
-                              </div>
-                              {varianceHrs != null && (
-                                <div>
-                                  <div className="text-[9px] uppercase font-bold text-[var(--muted)]">Variance</div>
-                                  <div className={`text-xs font-mono font-bold ${
-                                    varianceHrs > 0.05 ? 'text-amber-400' : varianceHrs < -0.05 ? 'text-rose-400' : 'text-emerald-400'
-                                  }`}>
-                                    {varianceHrs > 0 ? `+${varianceHrs.toFixed(1)}h` : `${varianceHrs.toFixed(1)}h`}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Badge */}
-                            <Badge
-                              variant={
-                                status === 'Approved' ? 'success' :
-                                status === 'Submitted' ? 'warning' :
-                                status === 'Under Review' ? 'info' :
-                                status === 'Rejected' ? 'danger' : 'outline'
-                              }
-                              size="sm"
-                            >
-                              {status}
-                            </Badge>
-
-                            {/* Inspect Shifts Button */}
-                            <button
-                              type="button"
-                              onClick={() => setInspectingEmpId(isInspecting ? null : emp.id)}
-                              title={isInspecting ? "Hide shifts breakdown" : "Inspect shift details"}
-                              className={`p-1.5 rounded-lg border text-xs transition-colors flex items-center gap-1 cursor-pointer ${
-                                isInspecting
-                                  ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40'
-                                  : 'bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] border-[var(--border)]'
-                              }`}
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span className="hidden md:inline">{isInspecting ? 'Hide' : 'Inspect'}</span>
-                            </button>
-
-                            {/* Approval actions */}
-                            {(status === 'Submitted' || status === 'Under Review') && (
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  onClick={() => handleApproveSubmission(emp.id, empSub?.submission_id)}
-                                  disabled={submittingAction}
-                                  className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                  <CheckCircle2 className="w-3.5 h-3.5" /> Approve
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setRejectTarget({ employee_id: emp.id, submission_id: empSub?.submission_id, full_name: emp.full_name });
-                                    setRejectionReason('');
-                                  }}
-                                  disabled={submittingAction}
-                                  className="px-2.5 py-1 text-xs font-bold rounded-lg bg-rose-600/20 text-rose-400 hover:bg-rose-600/30 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                  <ThumbsDown className="w-3.5 h-3.5" /> Reject
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Rejection reason callout if rejected */}
-                        {empSub?.rejection_reason && status === 'Rejected' && (
-                          <div className="text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg italic ml-7">
-                            <span className="font-semibold not-italic">Feedback Note: </span>
-                            {empSub.rejection_reason}
-                          </div>
-                        )}
-
-                        {/* Shift Inspection Drawer */}
-                        {isInspecting && (() => {
-                          const fortnightDays = Array.from({ length: 14 }, (_, i) => {
-                            const d = new Date(activeFortnightStart.getTime() + i * 86400000);
-                            const iso = d.toISOString().split('T')[0];
-                            const dayName = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
-                            const rec = records.find(r => r.employee_id === emp.id && r.record_date === iso);
-                            return { dateIso: iso, dayName, rec };
-                          });
-
-                          return (
-                            <div className="mt-2 ml-7 p-3 bg-[var(--panel-subtle)] rounded-xl border border-[var(--border)] space-y-2">
-                              <div className="text-[11px] font-bold text-[var(--muted)] uppercase tracking-wider flex justify-between items-center">
-                                <span>Daily Shift Breakdown (14 Days)</span>
-                                <span>{fnIso}</span>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-2">
-                                {fortnightDays.map(({ dateIso, dayName, rec }) => {
-                                  const segments = rec?.segments || [];
-                                  const validSegs = segments.filter(s => s.roster_in && s.roster_out);
-                                  const hasActual = segments.some(s => s.actual_in && s.actual_out);
-
-                                  return (
-                                    <div key={dateIso} className="p-2 bg-[var(--panel)] rounded-lg border border-[var(--border)] text-left flex flex-col justify-between min-h-[75px]">
-                                      <div>
-                                        <div className="flex justify-between items-center text-[10px]">
-                                          <span className="font-bold text-[var(--text)]">{dayName}</span>
-                                          <span className="text-[var(--muted)]">{dateIso.split('-').slice(1).join('/')}</span>
-                                        </div>
-
-                                        {validSegs.length > 0 ? (
-                                          validSegs.map((s, idx) => (
-                                            <div key={idx} className="mt-1 text-[10px]">
-                                              <div className="text-[var(--muted)] font-mono">
-                                                R: {s.roster_in}-{s.roster_out}
-                                              </div>
-                                              {s.actual_in && s.actual_out ? (
-                                                <div className="text-emerald-400 font-mono font-semibold">
-                                                  A: {s.actual_in}-{s.actual_out}
-                                                </div>
-                                              ) : (
-                                                <div className="text-[var(--muted)] italic text-[9px]">No clock</div>
-                                              )}
-                                              {s.notes && (
-                                                <div className="text-[9px] text-[var(--muted)] truncate italic">
-                                                  {s.notes}
-                                                </div>
-                                              )}
-                                            </div>
-                                          ))
-                                        ) : hasActual ? (
-                                          <div className="mt-1 text-[10px] text-amber-400 font-semibold">
-                                            Unplanned shift
-                                          </div>
-                                        ) : (
-                                          <div className="mt-2 text-[10px] text-[var(--muted)] italic">Off</div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Modal Footer */}
-              <div className="pt-3 border-t border-[var(--border)] flex justify-between items-center">
-                <div className="text-xs text-[var(--muted)]">
-                  Total staff: <strong className="text-[var(--text)]">{employees.length}</strong> • Pending review: <strong className="text-amber-400">{submittedEmployees.length}</strong>
-                </div>
-                <button
-                  onClick={() => setShowSubmissionsModal(false)}
-                  className="px-4 py-2 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--text)] font-semibold rounded-xl text-xs transition-colors cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Reject Timesheet Reason Modal */}
-      {rejectTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
-          <div className="bg-[var(--panel)] rounded-2xl w-full max-w-md border border-[var(--border)] shadow-2xl p-5">
-            <h3 className="text-base font-bold text-[var(--text)] mb-1">
-              Return Timesheet to {rejectTarget.full_name}
-            </h3>
-            <p className="text-xs text-[var(--muted)] mb-3">
-              Provide feedback explaining why the timesheet was rejected so the employee can correct their recorded hours.
-            </p>
-
-            <form onSubmit={handleRejectSubmission} className="space-y-3">
-              <textarea
-                required
-                rows={3}
-                placeholder="e.g. Overtime on Wednesday needs explanation, or incorrect meal break recorded."
-                value={rejectionReason}
-                onChange={e => setRejectionReason(e.target.value)}
-                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3 text-xs text-[var(--text)] outline-none focus:border-indigo-500 resize-none"
-              />
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setRejectTarget(null)}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingAction || !rejectionReason.trim()}
-                  className="px-4 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {submittingAction ? 'Returning...' : 'Reject Timesheet'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        >
+          <p className="text-xs text-[var(--muted)] mb-2">
+            Approved timesheets can’t be edited until they are reopened. Each one is checked on its own; any that can’t be approved are listed afterwards.
+          </p>
+          <ul className="text-xs text-[var(--text)] max-h-48 overflow-y-auto space-y-0.5">
+            {approvable.map(t => (
+              <li key={t.employee_id}>{t.full_name} <span className="text-[var(--muted)]">· {t.actual_hours.toFixed(2)}h worked</span></li>
+            ))}
+          </ul>
+        </Dialog>
       )}
+
+      {result && <BulkResultDialog result={result} onClose={() => setResult(null)} />}
     </div>
   );
-}
-
-function CellEditorModal({ empId, empName, dateIso, existingRecords, rosterLocked, timesheetLocked, onClose, onSave }: any) {
-    const [segments, setSegments] = useState<Segment[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
-
-    useEffect(() => {
-        if (existingRecords.length > 0 && existingRecords[0].segments?.length > 0) {
-            setSegments(existingRecords[0].segments);
-        } else {
-            setSegments([{ segment_type: 'WORK', roster_in: '09:00', roster_out: '17:00', roster_hours: 7.5, actual_in: '', actual_out: '', actual_hours: 0, is_unplanned: false }]);
-        }
-    }, [existingRecords]);
-
-    const formattedDate = () => {
-      const dt = new Date(dateIso + 'T00:00:00');
-      return dt.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    };
-
-    const toMins = (t?: string): number => {
-      if (!t) return 0;
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + (m || 0);
-    };
-
-    const checkOverlaps = (): string | null => {
-      for (let i = 0; i < segments.length; i++) {
-        for (let j = i + 1; j < segments.length; j++) {
-          const s1 = segments[i], s2 = segments[j];
-          if (!s1.is_unplanned && !s2.is_unplanned && s1.roster_in && s1.roster_out && s2.roster_in && s2.roster_out) {
-            let start1 = toMins(s1.roster_in), end1 = toMins(s1.roster_out);
-            let start2 = toMins(s2.roster_in), end2 = toMins(s2.roster_out);
-            if (end1 <= start1) end1 += 1440;
-            if (end2 <= start2) end2 += 1440;
-            if (Math.max(start1, start2) < Math.min(end1, end2)) {
-              return `Planned roster shift times overlap between Segment #${i+1} and Segment #${j+1}. Please adjust shift times.`;
-            }
-          }
-          if (s1.actual_in && s1.actual_out && s2.actual_in && s2.actual_out) {
-            let start1 = toMins(s1.actual_in), end1 = toMins(s1.actual_out);
-            let start2 = toMins(s2.actual_in), end2 = toMins(s2.actual_out);
-            if (end1 <= start1) end1 += 1440;
-            if (end2 <= start2) end2 += 1440;
-            if (Math.max(start1, start2) < Math.min(end1, end2)) {
-              return `Logged timesheet shift times overlap between Segment #${i+1} and Segment #${j+1}. Please adjust shift times.`;
-            }
-          }
-        }
-      }
-      return null;
-    };
-
-    const handleSave = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault();
-        setError('');
-
-        const overlapError = checkOverlaps();
-        if (overlapError) {
-          setError(overlapError);
-          return;
-        }
-
-        setLoading(true);
-        try {
-            await api.post('/records', {
-                employee_id: empId,
-                record_date: dateIso,
-                segments: segments
-            });
-            onSave();
-            onClose();
-        } catch (err: any) {
-            setError(err.response?.data?.error?.message || 'Failed to save shift');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleDelete = async () => {
-        if (!confirm("Are you sure you want to delete shifts for this day?")) return;
-        setLoading(true);
-        try {
-            await api.post('/records', {
-                employee_id: empId,
-                record_date: dateIso,
-                segments: []
-            });
-            onSave();
-            onClose();
-        } catch (err: any) {
-            setError(err.response?.data?.error?.message || 'Failed to delete shift');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleDefaultShift = () => {
-        setSegments([{ segment_type: 'WORK', roster_in: '09:00', roster_out: '17:00', roster_hours: 7.5, actual_in: '09:00', actual_out: '17:00', actual_hours: 7.5, is_unplanned: false }]);
-    };
-
-    const computeShiftHours = (start?: string, end?: string): number => {
-      if (!start || !end) return 0;
-      const [h1, m1] = start.split(':').map(Number);
-      const [h2, m2] = end.split(':').map(Number);
-      let diff = (h2 * 60 + (m2 || 0)) - (h1 * 60 + (m1 || 0));
-      if (diff < 0) diff += 24 * 60;
-      let h = diff / 60;
-      if (h >= 6) h -= 0.5;
-      return Math.max(0, Math.round(h * 100) / 100);
-    };
-
-    const updateSeg = (idx: number, field: string, val: any) => {
-        const up = [...segments];
-        (up[idx] as any)[field] = val;
-
-        // Automatically update duration when start/end times change
-        if (field === 'roster_in' || field === 'roster_out') {
-          const rIn = field === 'roster_in' ? val : up[idx].roster_in;
-          const rOut = field === 'roster_out' ? val : up[idx].roster_out;
-          if (rIn && rOut) {
-            up[idx].roster_hours = computeShiftHours(rIn, rOut);
-          }
-        }
-        if (field === 'actual_in' || field === 'actual_out') {
-          const aIn = field === 'actual_in' ? val : up[idx].actual_in;
-          const aOut = field === 'actual_out' ? val : up[idx].actual_out;
-          if (aIn && aOut) {
-            up[idx].actual_hours = computeShiftHours(aIn, aOut);
-          }
-        }
-
-        setSegments(up);
-        setError('');
-    };
-
-    const addSeg = () => {
-        setSegments([...segments, { segment_type: 'WORK', roster_in: '', roster_out: '', roster_hours: 0, actual_in: '', actual_out: '', actual_hours: 0, is_unplanned: false }]);
-        setError('');
-    };
-
-    const removeSeg = (idx: number) => {
-        if (segments.length === 1) {
-            setSegments([{ segment_type: 'WORK', roster_in: '', roster_out: '', roster_hours: 0, actual_in: '', actual_out: '', actual_hours: 0, is_unplanned: false }]);
-        } else {
-            setSegments(segments.filter((_, i) => i !== idx));
-        }
-        setError('');
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-            <div className="bg-[var(--panel)] rounded-3xl w-full max-w-4xl border border-[var(--border)] shadow-2xl p-6 sm:p-8 flex flex-col max-h-[90vh] relative">
-                {/* Header */}
-                <div className="flex justify-between items-start mb-4 pb-3 border-b border-[var(--border)]">
-                    <div>
-                        <h2 className="text-2xl sm:text-3xl font-black text-[var(--primary)] tracking-tight">{empName}</h2>
-                        <p className="text-xs sm:text-sm font-semibold text-[var(--muted)] mt-0.5">{formattedDate()}</p>
-                    </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-[var(--glass-4)] hover:bg-[var(--glass-8)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors">
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="18" y1="6" x2="6" y2="18"></line>
-                          <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-
-                {error && (
-                  <div className="mb-4 p-4 bg-[var(--danger-light)] text-[var(--danger)] border border-[var(--danger)]/30 rounded-2xl text-sm font-bold flex items-center gap-2">
-                    {error}
-                  </div>
-                )}
-
-                <form onSubmit={handleSave} className="flex flex-col flex-1 min-h-0 overflow-hidden">
-                    {/* Scrollable Segments Container */}
-                    <div className="flex-1 overflow-y-auto space-y-5 pr-1 pb-4">
-                        {segments.map((s, idx) => (
-                            <div key={idx} className="bg-[var(--input-bg)] p-5 sm:p-6 rounded-2xl border border-[var(--border)] space-y-4">
-                                <div className="flex justify-between items-center border-b border-[var(--border)] pb-3">
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Segment #{idx + 1}</span>
-                                        <button 
-                                          type="button" 
-                                          disabled={rosterLocked || timesheetLocked}
-                                          onClick={() => removeSeg(idx)} 
-                                          className="text-[0.65rem] font-bold text-[var(--danger)] hover:underline px-2 py-0.5 rounded bg-[var(--danger-light)] border border-[var(--danger)]/20 transition-colors disabled:opacity-50"
-                                        >
-                                          Delete Segment
-                                        </button>
-                                    </div>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input 
-                                          type="checkbox" 
-                                          checked={s.is_unplanned} 
-                                          onChange={e => updateSeg(idx, 'is_unplanned', e.target.checked)} 
-                                          className="rounded bg-[var(--bg)] border-[var(--border)] text-[var(--primary)]"
-                                        />
-                                        <span className="text-[0.7rem] font-bold text-[var(--muted)] uppercase tracking-wider">UNPLANNED SHIFT / EXCEPTION</span>
-                                    </label>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    {/* Left Column: PLANNED ROSTER */}
-                                    <div className="space-y-3">
-                                        <h4 className="text-[0.7rem] font-bold text-[var(--muted)] uppercase tracking-wider">PLANNED ROSTER</h4>
-                                        <select 
-                                          disabled={rosterLocked}
-                                          value={s.segment_type} 
-                                          onChange={e => updateSeg(idx, 'segment_type', e.target.value)} 
-                                          className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--primary)] disabled:opacity-50"
-                                        >
-                                            <option value="WORK">Normal Work</option>
-                                            <option value="Sick">Sick Leave</option>
-                                            <option value="Annual">Annual Leave</option>
-                                            <option value="TIL">Time In Lieu</option>
-                                        </select>
-                                        <div className="flex gap-3">
-                                            <SmartTimeInput 
-                                              disabled={rosterLocked} 
-                                              value={s.roster_in || ''} 
-                                              onChange={val => updateSeg(idx, 'roster_in', val)} 
-                                              className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--primary)] disabled:opacity-50" 
-                                            />
-                                            <SmartTimeInput 
-                                              disabled={rosterLocked} 
-                                              value={s.roster_out || ''} 
-                                              onChange={val => updateSeg(idx, 'roster_out', val)} 
-                                              className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--primary)] disabled:opacity-50" 
-                                            />
-                                        </div>
-                                        <div className="flex items-center justify-between pt-1">
-                                          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-                                            <span className="font-semibold">Duration:</span>
-                                            <span className="font-extrabold text-[var(--primary)] font-mono">
-                                              {Number(s.roster_hours || 0).toFixed(2)}h
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center gap-1">
-                                            <label className="text-[10px] text-[var(--muted)] font-bold uppercase">Manual Hours:</label>
-                                            <input 
-                                              type="number" 
-                                              step="0.1" 
-                                              min="0" 
-                                              max="24"
-                                              value={s.roster_hours || ''} 
-                                              onChange={e => updateSeg(idx, 'roster_hours', parseFloat(e.target.value) || 0)} 
-                                              placeholder="0"
-                                              className="w-20 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1 text-xs font-mono text-[var(--text)] font-bold outline-none focus:border-[var(--primary)]"
-                                            />
-                                          </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Right Column: LOGGED TIMESHEET */}
-                                    <div className="space-y-3">
-                                        <div className="flex justify-between items-center gap-2">
-                                          <h4 className="text-[0.7rem] font-bold text-[var(--success)] uppercase tracking-wider">LOGGED TIMESHEET</h4>
-                                          <select 
-                                            disabled={timesheetLocked}
-                                            value={s.actual_segment_type || s.segment_type || 'WORK'} 
-                                            onChange={e => updateSeg(idx, 'actual_segment_type', e.target.value)} 
-                                            className="bg-[var(--panel)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs font-bold text-[var(--success)] outline-none focus:border-[var(--success)] disabled:opacity-50"
-                                          >
-                                              <option value="WORK">Normal</option>
-                                              <option value="Sick">Sick Leave</option>
-                                              <option value="Annual">Annual Leave</option>
-                                              <option value="TIL">Time In Lieu (TIL)</option>
-                                          </select>
-                                        </div>
-                                        <div className="h-[46px] hidden md:block"></div>
-                                        <div className="flex gap-3">
-                                            <SmartTimeInput 
-                                              disabled={timesheetLocked} 
-                                              placeholder="e.g. 9a, 1700" 
-                                              value={s.actual_in || ''} 
-                                              onChange={val => updateSeg(idx, 'actual_in', val)} 
-                                              className="w-full bg-[var(--panel)] border border-[var(--success)]/40 rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--success)] disabled:opacity-50" 
-                                            />
-                                            <SmartTimeInput 
-                                              disabled={timesheetLocked} 
-                                              placeholder="e.g. 5p, 1700" 
-                                              value={s.actual_out || ''} 
-                                              onChange={val => updateSeg(idx, 'actual_out', val)} 
-                                              className="w-full bg-[var(--panel)] border border-[var(--success)]/40 rounded-xl px-4 py-3 text-[var(--text)] text-sm outline-none focus:border-[var(--success)] disabled:opacity-50" 
-                                            />
-                                        </div>
-                                        <div className="flex items-center justify-between pt-1">
-                                          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-                                            <span className="font-semibold">Duration:</span>
-                                            <span className="font-extrabold text-[var(--success)] font-mono">
-                                              {Number(s.actual_hours || 0).toFixed(2)}h
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center gap-1">
-                                            <label className="text-[10px] text-[var(--muted)] font-bold uppercase">Manual Hours:</label>
-                                            <input 
-                                              type="number" 
-                                              step="0.1" 
-                                              min="0" 
-                                              max="24"
-                                              value={s.actual_hours || ''} 
-                                              onChange={e => updateSeg(idx, 'actual_hours', parseFloat(e.target.value) || 0)} 
-                                              placeholder="0"
-                                              className="w-20 bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2 py-1 text-xs font-mono text-[var(--text)] font-bold outline-none focus:border-[var(--success)]"
-                                            />
-                                          </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Shift Segment Notes / Comments */}
-                                <div className="pt-2 border-t border-[var(--border)]">
-                                  <label className="block text-[0.7rem] font-bold text-[var(--muted)] uppercase tracking-wider mb-1">
-                                    Comments / Shift Notes
-                                  </label>
-                                  <input 
-                                    type="text"
-                                    placeholder="Add optional comments or notes for this shift (e.g. Approved leave, overtime reason)"
-                                    value={s.notes || ''}
-                                    onChange={e => updateSeg(idx, 'notes', e.target.value)}
-                                    className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
-                                  />
-                                </div>
-                            </div>
-                        ))}
-
-                        <button 
-                          type="button" 
-                          disabled={rosterLocked || timesheetLocked}
-                          onClick={addSeg} 
-                          className="w-full py-3 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] border border-[var(--border)] rounded-2xl text-xs font-bold text-[var(--text)] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                            + Add Another Split / Leave Segment
-                        </button>
-                    </div>
-
-                    {/* Fixed Bottom Action Bar */}
-                    <div className="flex items-center justify-between pt-4 border-t border-[var(--border)] gap-3 bg-[var(--panel)] mt-2">
-                        <button 
-                          type="submit" 
-                          disabled={loading || (rosterLocked && timesheetLocked)} 
-                          className="flex-1 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold py-3 rounded-2xl transition-all shadow-lg shadow-[var(--primary-light)] disabled:opacity-50 text-sm"
-                        >
-                            {loading ? 'Saving...' : 'Save Shifts'}
-                        </button>
-                        
-                        <div className="flex gap-2">
-                          <button 
-                            type="button" 
-                            disabled={rosterLocked || timesheetLocked}
-                            onClick={handleDefaultShift} 
-                            className="px-4 py-3 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--muted)] hover:text-[var(--text)] font-bold rounded-2xl border border-[var(--border)] text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                          >
-                              Default Shift
-                          </button>
-                          <button 
-                            type="button" 
-                            disabled={rosterLocked || timesheetLocked}
-                            onClick={handleDelete} 
-                            className="px-4 py-3 bg-[var(--danger-light)] hover:bg-[var(--danger)]/20 text-[var(--danger)] font-bold rounded-2xl border border-[var(--danger)]/20 text-xs transition-colors disabled:opacity-50"
-                          >
-                              Clear Day
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={onClose} 
-                            className="px-4 py-3 bg-[var(--panel-subtle)] hover:bg-[var(--glass-8)] text-[var(--text)] font-bold rounded-2xl border border-[var(--border)] text-xs transition-colors"
-                          >
-                              Cancel
-                          </button>
-                        </div>
-                    </div>
-                </form>
-            </div>
-        </div>
-    );
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/apiClient';
+import { signOut } from './useAccess';
 
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const WARNING_THRESHOLD_MS = 10 * 60 * 1000;  // 10 minutes (5 min warning)
@@ -16,19 +17,25 @@ export function useSessionTimeout() {
   const lastActivityReportRef = useRef<number>(Date.now());
   const lastBackendTouchRef = useRef<number>(Date.now());
   const isWarningRef = useRef<boolean>(false);
+  const signingOutRef = useRef<boolean>(false);
 
   // Keep ref synced
   useEffect(() => {
     isWarningRef.current = showWarning;
   }, [showWarning]);
 
-  const handleLogoutDueToInactivity = useCallback(() => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem(STORAGE_KEY);
-    window.dispatchEvent(new Event('auth-change'));
-    navigate('/login?reason=inactivity');
+  /** Ends the session on the server (signOut) and goes to the sign-in page with the given reason. */
+  const endSession = useCallback(async (reason: 'inactivity' | 'logout') => {
+    if (signingOutRef.current) return;
+    signingOutRef.current = true;
+    setShowWarning(false);
+    const path = await signOut();
+    navigate(reason === 'logout' ? path : path.replace('reason=logout', `reason=${reason}`), { replace: true });
   }, [navigate]);
+
+  const handleLogoutDueToInactivity = useCallback(() => {
+    void endSession('inactivity');
+  }, [endSession]);
 
   const staySignedIn = useCallback(async () => {
     setIsKeepingAlive(true);
@@ -40,33 +47,16 @@ export function useSessionTimeout() {
       setShowWarning(false);
       setRemainingSeconds(300);
     } catch (err: any) {
-      console.warn('Keep-alive failed:', err);
-      if (err.response?.status === 401) {
-        handleLogoutDueToInactivity();
-      }
+      // A 401 is handled by the API client, which returns to the sign-in page.
+      if (err.response?.status !== 401) console.warn('Keep-alive failed:', err);
     } finally {
       setIsKeepingAlive(false);
     }
-  }, [handleLogoutDueToInactivity]);
+  }, []);
 
-  const logoutNow = useCallback(async () => {
-    try {
-      await api.post('/auth/logout');
-    } catch (err) {
-      console.warn('Logout request failed:', err);
-    } finally {
-      const lastSlug = localStorage.getItem('last_org_slug');
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem(STORAGE_KEY);
-      window.dispatchEvent(new Event('auth-change'));
-      if (lastSlug) {
-        navigate(`/login/${lastSlug}`);
-      } else {
-        navigate('/portal-access');
-      }
-    }
-  }, [navigate]);
+  const logoutNow = useCallback(() => {
+    void endSession('logout');
+  }, [endSession]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');

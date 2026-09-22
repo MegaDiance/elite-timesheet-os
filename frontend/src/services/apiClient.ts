@@ -22,7 +22,7 @@ api.interceptors.response.use((response) => {
     return response;
 }, (error) => {
     if (error.response?.status === 401) {
-        const publicPrefixes = ['/login', '/features', '/pricing', '/portal-access', '/find-organisation', '/reset-password', '/setup-org', '/accept-invite', '/platform-gate', '/platform-login', '/verify-login'];
+        const publicPrefixes = ['/login', '/features', '/pricing', '/signup', '/setup-organisation', '/forgot-password', '/reset-password', '/accept-invite', '/verify-login'];
         const isPublicRoute = window.location.pathname === '/' || publicPrefixes.some(p => window.location.pathname.startsWith(p));
         
         if (!isPublicRoute) {
@@ -34,10 +34,11 @@ api.interceptors.response.use((response) => {
                 reasonParam = '?reason=deactivated';
             } else if (code === 'SESSION_REVOKED') {
                 reasonParam = '?reason=revoked';
+            } else if (code === 'ACCESS_REVOKED') {
+                reasonParam = '?reason=access-ended';
             }
 
             localStorage.removeItem('token');
-            localStorage.removeItem('user');
             localStorage.removeItem('session_last_active');
             window.dispatchEvent(new Event('auth-change'));
 

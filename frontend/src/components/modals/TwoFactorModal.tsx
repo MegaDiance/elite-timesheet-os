@@ -9,9 +9,11 @@ import { ShieldCheck, ShieldAlert, KeyRound, AlertCircle, CheckCircle2 } from 'l
 interface TwoFactorModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Called after two-step verification is turned on or off. */
+  onChange?: (enabled: boolean) => void;
 }
 
-export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose }) => {
+export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose, onChange }) => {
   const [isEnabled, setIsEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<'status' | 'setup' | 'disable'>('status');
@@ -55,12 +57,12 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
       const res = await api.post('/auth/2fa/send-setup-code');
       if (res.data?.success) {
         setStep('setup');
-        setMessage({ text: 'A 6-digit verification code has been dispatched to your email.', type: 'success' });
+        setMessage({ text: 'We have emailed you a 6-digit code.', type: 'success' });
       } else {
-        setMessage({ text: res.data?.error?.message || 'Failed to dispatch code.', type: 'error' });
+        setMessage({ text: res.data?.error?.message || 'The code could not be sent.', type: 'error' });
       }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'Failed to dispatch setup code.', type: 'error' });
+      setMessage({ text: err.response?.data?.error?.message || 'The code could not be sent.', type: 'error' });
     } finally {
       setActionLoading(false);
     }
@@ -69,7 +71,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
   const handleConfirmEnable = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode || otpCode.length !== 6 || !password) {
-      setMessage({ text: 'Please provide both the 6-digit code and your current password.', type: 'error' });
+      setMessage({ text: 'Enter the 6-digit code and your password.', type: 'error' });
       return;
     }
 
@@ -85,12 +87,13 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
       if (res.data?.success) {
         setIsEnabled(true);
         setStep('status');
-        setMessage({ text: 'Two-Factor Authentication is now active on your account.', type: 'success' });
+        setMessage({ text: 'Two-step verification is now on for your account.', type: 'success' });
+        onChange?.(true);
       } else {
         setMessage({ text: res.data?.error?.message || 'Verification failed.', type: 'error' });
       }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'Failed to activate 2FA. Code or password may be invalid.', type: 'error' });
+      setMessage({ text: err.response?.data?.error?.message || 'Two-step verification could not be turned on. Check the code and your password.', type: 'error' });
     } finally {
       setActionLoading(false);
     }
@@ -99,7 +102,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
   const handleConfirmDisable = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!password) {
-      setMessage({ text: 'Password is required to disable 2FA.', type: 'error' });
+      setMessage({ text: 'Enter your password to turn off two-step verification.', type: 'error' });
       return;
     }
 
@@ -111,9 +114,10 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
       if (res.data?.success) {
         setIsEnabled(false);
         setStep('status');
-        setMessage({ text: 'Two-Factor Authentication has been disabled.', type: 'success' });
+        setMessage({ text: 'Two-step verification has been turned off.', type: 'success' });
+        onChange?.(false);
       } else {
-        setMessage({ text: res.data?.error?.message || 'Failed to disable 2FA.', type: 'error' });
+        setMessage({ text: res.data?.error?.message || 'Two-step verification could not be turned off.', type: 'error' });
       }
     } catch (err: any) {
       setMessage({ text: err.response?.data?.error?.message || 'Incorrect password.', type: 'error' });
@@ -126,12 +130,12 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Two-Step Verification (2FA)"
-      description="Protect your timesheet account and identity with an email verification code required on sign-in."
+      title="Two-step verification"
+      description="Protect your SimpleHours account with a code emailed to you each time you sign in."
       maxWidth="md"
     >
       {loading ? (
-        <div className="py-8 text-center text-xs text-[var(--muted)]">Checking security status...</div>
+        <div className="py-8 text-center text-xs text-[var(--muted)]">Checking your settings…</div>
       ) : (
         <div className="space-y-5">
           {message && (
@@ -164,17 +168,17 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
                   </div>
                   <div>
                     <div className="font-semibold text-sm text-[var(--text)]">
-                      {isEnabled ? 'Two-Factor is Active' : 'Two-Factor is Disabled'}
+                      {isEnabled ? 'Two-step verification is on' : 'Two-step verification is off'}
                     </div>
                     <div className="text-xs text-[var(--muted)]">
                       {isEnabled
-                        ? 'A 6-digit OTP code will be sent to your work email on sign-in.'
-                        : 'Your account is currently protected by password only.'}
+                        ? 'A 6-digit code is emailed to you each time you sign in.'
+                        : 'Your account is protected by your password only.'}
                     </div>
                   </div>
                 </div>
                 <Badge variant={isEnabled ? 'success' : 'warning'} size="sm">
-                  {isEnabled ? 'Active' : 'Off'}
+                  {isEnabled ? 'On' : 'Off'}
                 </Badge>
               </div>
 
@@ -185,7 +189,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
                     size="sm"
                     onClick={() => { setStep('disable'); setMessage(null); setPassword(''); }}
                   >
-                    Disable 2FA
+                    Turn off
                   </Button>
                 ) : (
                   <Button
@@ -195,7 +199,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
                     onClick={handleStartSetup}
                     leftIcon={<KeyRound className="w-4 h-4" />}
                   >
-                    Enable 2FA Protection
+                    Turn on
                   </Button>
                 )}
               </div>
@@ -205,11 +209,11 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
           {step === 'setup' && (
             <form onSubmit={handleConfirmEnable} className="space-y-4">
               <div className="bg-[var(--panel-subtle)] p-3 rounded-md border border-[var(--border)] text-xs text-[var(--muted)]">
-                We sent a 6-digit verification code to your email. Enter it below and verify your password to complete activation.
+                Enter the 6-digit code we emailed you and your password to finish turning it on.
               </div>
 
               <Input
-                label="6-Digit Verification Code"
+                label="6-digit code"
                 type="text"
                 placeholder="123456"
                 value={otpCode}
@@ -221,9 +225,9 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
               />
 
               <Input
-                label="Confirm Account Password"
+                label="Your password"
                 type="password"
-                placeholder="Your current account password"
+                placeholder="Your current password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -239,7 +243,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
                   Cancel
                 </Button>
                 <Button type="submit" variant="primary" size="sm" loading={actionLoading}>
-                  Confirm & Activate
+                  Turn on
                 </Button>
               </div>
             </form>
@@ -248,13 +252,13 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
           {step === 'disable' && (
             <form onSubmit={handleConfirmDisable} className="space-y-4">
               <div className="bg-rose-500/10 border border-rose-500/20 p-3 rounded-md text-xs text-rose-500">
-                Warning: Disabling 2FA reduces account security. You will only need a password to sign in.
+                Without two-step verification, only your password is needed to sign in.
               </div>
 
               <Input
-                label="Account Password"
+                label="Your password"
                 type="password"
-                placeholder="Confirm your password to turn off 2FA"
+                placeholder="Confirm your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -271,7 +275,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose 
                   Cancel
                 </Button>
                 <Button type="submit" variant="danger" size="sm" loading={actionLoading}>
-                  Confirm Disable
+                  Turn off
                 </Button>
               </div>
             </form>

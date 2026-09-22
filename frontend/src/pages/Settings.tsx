@@ -1,597 +1,588 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { 
-  Building2, 
-  Copy, 
-  Check, 
-  ShieldCheck, 
-  Sliders, 
-  Lock, 
-  KeyRound, 
-  FileText, 
-  Users, 
-  ExternalLink, 
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  ArrowRightLeft,
+  Building2,
+  Check,
+  Copy,
+  KeyRound,
   Laptop,
+  Lock,
+  Mail,
   RefreshCw,
-  MapPin,
-  Clock,
-  ArrowRight
+  ShieldCheck,
+  Sliders,
+  UserRound,
 } from 'lucide-react';
 import api from '../services/apiClient';
+import { useAccess, ROLE_LABEL } from '../hooks/useAccess';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
+import { Input } from '../components/ui/Input';
+import { Select } from '../components/ui/Select';
+import { Tabs, type TabItem } from '../components/ui/Tabs';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
+import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import { TwoFactorModal } from '../components/modals/TwoFactorModal';
 import { AccountSecurityModal } from '../components/modals/AccountSecurityModal';
 import { LockPasswordsModal } from '../components/modals/LockPasswordsModal';
 import { BreakSettingsModal } from '../components/modals/BreakSettingsModal';
-import { jwtDecode } from 'jwt-decode';
 
-interface DecodedToken {
+interface OrganisationSettings {
+  id: string;
+  name: string;
+  display_name: string;
+  portal_slug?: string;
+  portal_url?: string;
+  break_mins_weekday: number;
+  break_mins_weekend: number;
+  break_threshold_hours: number;
+  has_roster_lock_password: boolean;
+  has_timesheet_lock_password: boolean;
+}
+
+interface BranchAdminOption {
   id: string;
   email: string;
-  organisation_id?: string;
-  role?: string;
+  full_name: string | null;
+  is_active: boolean;
+}
+
+type TabId = 'account' | 'organisation' | 'security' | 'ownership';
+
+const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+
+function SectionHeader({ icon, title, description, action }: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
+      <div className="flex items-center gap-2.5">
+        <div className="w-8 h-8 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center shrink-0">
+          {icon}
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-[var(--text)]">{title}</h2>
+          <p className="text-xs text-[var(--muted)]">{description}</p>
+        </div>
+      </div>
+      {action}
+    </div>
+  );
 }
 
 export default function Settings() {
   const toast = useToast();
-  const [role, setRole] = useState<string>('Employee');
-  const [org, setOrg] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'portal' | 'roster' | 'security' | 'team'>('portal');
+  const navigate = useNavigate();
+  const { access, can, refresh } = useAccess();
+  const canManageOrganisation = can('organisation.manage');
+  const canManageSecurity = can('security.manage');
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Modals
+  const tabs: TabItem[] = [
+    { id: 'account', label: 'My account', icon: <UserRound className="w-3.5 h-3.5" /> },
+    ...(canManageOrganisation ? [{ id: 'organisation', label: 'Organisation', icon: <Building2 className="w-3.5 h-3.5" /> }] : []),
+    ...(canManageSecurity ? [
+      { id: 'security', label: 'Security', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+      { id: 'ownership', label: 'Ownership', icon: <ArrowRightLeft className="w-3.5 h-3.5" /> },
+    ] : []),
+  ];
+  const requestedTab = searchParams.get('tab');
+  const activeTab = (tabs.some(t => t.id === requestedTab) ? requestedTab : 'account') as TabId;
+  const selectTab = (id: string) => setSearchParams(id === 'account' ? {} : { tab: id }, { replace: true });
+
+  // My account
+  const [fullName, setFullName] = useState(access?.user.full_name || '');
+  const [savingName, setSavingName] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
   const [show2FAModal, setShow2FAModal] = useState(false);
-  const [showSecurityModal, setShowSecurityModal] = useState(false);
-  const [showLockModal, setShowLockModal] = useState(false);
+  const [twoFactorChanged, setTwoFactorChanged] = useState(false);
+  const [showActivityModal, setShowActivityModal] = useState(false);
+
+  // Owner sections
+  const [org, setOrg] = useState<OrganisationSettings | null>(null);
+  const [orgError, setOrgError] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState('');
+  const [savingDisplayName, setSavingDisplayName] = useState(false);
   const [showBreakModal, setShowBreakModal] = useState(false);
+  const [showLockModal, setShowLockModal] = useState(false);
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  const [updatingWorkflow, setUpdatingWorkflow] = useState(false);
-
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      try {
-        const decoded = jwtDecode<DecodedToken>(token);
-        setRole(decoded.role || 'Employee');
-      } catch {
-        // ignore
-      }
-    }
-    fetchOrgSettings();
-  }, []);
+  // Ownership transfer
+  const [branchAdmins, setBranchAdmins] = useState<BranchAdminOption[] | null>(null);
+  const [transferTo, setTransferTo] = useState('');
+  const [transferPassword, setTransferPassword] = useState('');
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [showTransferConfirm, setShowTransferConfirm] = useState(false);
+  const [transferring, setTransferring] = useState(false);
 
-  const fetchOrgSettings = async () => {
+  const fetchOrganisation = async () => {
     try {
       const res = await api.get('/organisation/me');
-      if (res.data?.success) {
-        setOrg(res.data.data);
-      }
-    } catch (err) {
-      console.warn('Could not fetch org settings', err);
+      setOrg(res.data.data);
+      setDisplayName(res.data.data.display_name || res.data.data.name || '');
+      setOrgError(null);
+    } catch (err: any) {
+      setOrgError(errorMessage(err, 'Organisation settings could not be loaded.'));
     }
   };
 
-  const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
-  const isAdmin = ['Admin', 'Company Admin', 'Platform Admin'].includes(role);
-  const isOwner = org?.is_owner || role === 'Owner' || role === 'Platform Admin';
+  useEffect(() => {
+    if (canManageOrganisation || canManageSecurity) fetchOrganisation();
+  }, [canManageOrganisation, canManageSecurity]);
 
-  // Portal URL construction
-  const portalSlug = org?.portal_slug || org?.slug || localStorage.getItem('last_org_slug') || '';
-  const portalUrl = org?.portal_url || (portalSlug 
-    ? `${window.location.origin}/login/${portalSlug}` 
-    : `${window.location.origin}/login`);
+  useEffect(() => {
+    if (activeTab !== 'ownership' || !canManageSecurity || branchAdmins !== null) return;
+    api.get('/branch-admins')
+      .then(res => setBranchAdmins((res.data.data?.branch_admins || []).filter((a: BranchAdminOption) => a.is_active)))
+      .catch(err => {
+        setBranchAdmins([]);
+        setTransferError(errorMessage(err, 'Branch Admins could not be loaded.'));
+      });
+  }, [activeTab, canManageSecurity, branchAdmins]);
 
-  const handleCopyPortalUrl = async () => {
+  if (!access) return null;
+
+  // --- My account -----------------------------------------------------------
+  const handleSaveName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fullName.trim()) {
+      toast.error('Enter your name.');
+      return;
+    }
+    setSavingName(true);
     try {
-      await navigator.clipboard.writeText(portalUrl);
+      await api.put('/auth/me', { full_name: fullName.trim() });
+      toast.success('Your name has been updated.');
+      refresh();
+    } catch (err: any) {
+      toast.error(errorMessage(err, 'Your name could not be updated.'));
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const handleSendReset = async () => {
+    setSendingReset(true);
+    try {
+      await api.post('/auth/forgot-password', { email: access.user.email });
+      toast.success(`We have emailed a password reset link to ${access.user.email}.`);
+    } catch (err: any) {
+      toast.error(errorMessage(err, 'The reset link could not be sent. Try again in a few minutes.'));
+    } finally {
+      setSendingReset(false);
+    }
+  };
+
+  const handleClose2FA = () => {
+    setShow2FAModal(false);
+    if (twoFactorChanged) {
+      setTwoFactorChanged(false);
+      refresh();
+    }
+  };
+
+  // --- Organisation -----------------------------------------------------------
+  const handleSaveDisplayName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!displayName.trim()) {
+      toast.error('Enter an organisation name.');
+      return;
+    }
+    setSavingDisplayName(true);
+    try {
+      await api.put('/organisation/settings', { display_name: displayName.trim() });
+      toast.success('Organisation name saved.');
+      refresh();
+    } catch (err: any) {
+      toast.error(errorMessage(err, 'The organisation name could not be saved.'));
+    } finally {
+      setSavingDisplayName(false);
+    }
+  };
+
+  // --- Security ----------------------------------------------------------------
+  const handleCopyLink = async () => {
+    if (!org?.portal_url) return;
+    try {
+      await navigator.clipboard.writeText(org.portal_url);
       setCopied(true);
-      toast.success('Workspace portal URL copied to clipboard');
+      toast.success('Sign-in link copied.');
       setTimeout(() => setCopied(false), 2500);
     } catch {
-      toast.error('Unable to copy to clipboard');
+      toast.error('The link could not be copied. Select it and copy it manually.');
     }
   };
 
-  const handleRegeneratePortalUrl = async () => {
+  const handleRegenerate = async () => {
     setRegenerating(true);
     try {
       const res = await api.post('/organisation/regenerate-portal-url');
-      if (res.data?.success) {
-        toast.success('Custom portal URL regenerated successfully.');
-        setOrg((prev: any) => ({
-          ...prev,
-          portal_slug: res.data.data.portal_slug,
-          slug: res.data.data.portal_slug,
-          portal_url: res.data.data.portal_url
-        }));
-        if (res.data.data.portal_slug) {
-          localStorage.setItem('last_org_slug', res.data.data.portal_slug);
-        }
-        setShowRegenerateModal(false);
-      }
+      const { portal_slug, portal_url } = res.data.data;
+      setOrg(prev => (prev ? { ...prev, portal_slug, portal_url } : prev));
+      localStorage.setItem('last_org_slug', portal_slug);
+      toast.success(res.data?.message || 'A new sign-in link has been created.');
+      setShowRegenerateModal(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error?.message || 'Failed to regenerate portal URL.');
+      toast.error(errorMessage(err, 'The sign-in link could not be regenerated.'));
     } finally {
       setRegenerating(false);
     }
   };
 
-  const handleUpdateTimesheetMode = async (mode: 'employee' | 'manager') => {
-    if (org?.timesheet_entry_mode === mode || updatingWorkflow) return;
-    setUpdatingWorkflow(true);
+  // --- Ownership ---------------------------------------------------------------
+  const transferTarget = branchAdmins?.find(a => a.id === transferTo) || null;
+
+  const handleRequestTransfer = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferTarget) {
+      setTransferError('Choose the Branch Admin who will become the owner.');
+      return;
+    }
+    if (!transferPassword) {
+      setTransferError('Enter your password to confirm.');
+      return;
+    }
+    setTransferError(null);
+    setShowTransferConfirm(true);
+  };
+
+  const handleTransfer = async () => {
+    if (!transferTarget) return;
+    setTransferring(true);
     try {
-      const res = await api.put('/organisation/settings', { timesheet_entry_mode: mode });
-      if (res.data?.success) {
-        toast.success(`Timesheet mode switched to ${mode === 'employee' ? 'Employee Submission' : 'Manager Entry'}`);
-        setOrg((prev: any) => ({
-          ...prev,
-          timesheet_entry_mode: mode
-        }));
-      }
+      const res = await api.post('/organisation/transfer-ownership', {
+        user_id: transferTarget.id,
+        current_password: transferPassword,
+      });
+      toast.success(res.data?.message || `${transferTarget.email} is now the organisation owner.`);
+      setShowTransferConfirm(false);
+      // This account is now a Branch Admin: leave the owner settings, then reload what it may do.
+      navigate('/dashboard', { replace: true });
+      await refresh();
     } catch (err: any) {
-      toast.error(err.response?.data?.error?.message || 'Failed to update timesheet mode.');
-    } finally {
-      setUpdatingWorkflow(false);
+      setTransferError(errorMessage(err, 'Ownership could not be transferred.'));
+      setShowTransferConfirm(false);
+      setTransferring(false);
     }
   };
 
+  const orgUnavailable = orgError && (
+    <EmptyState
+      icon={<Building2 className="w-5 h-5" />}
+      title="Organisation settings could not be loaded"
+      description={orgError}
+      actionLabel="Try again"
+      onAction={fetchOrganisation}
+    />
+  );
+
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
-      {/* Page Header */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-            Settings & Workspace
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Settings</h1>
           <p className="text-xs text-[var(--muted)] mt-1">
-            Manage your organisation configuration, employee portal access, break rules, and security
+            {canManageOrganisation ? 'Your account, your organisation and its security.' : 'Your account and sign-in security.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={role === 'Employee' ? 'default' : 'purple'} size="md">
-            {role}
-          </Badge>
-          {org?.name && (
-            <span className="text-xs font-semibold text-[var(--text)] bg-[var(--panel-subtle)] px-2.5 py-1 rounded-md border border-[var(--border)]">
-              {org.name}
-            </span>
-          )}
+          <Badge variant="purple" size="md">{ROLE_LABEL[access.role]}</Badge>
+          <span className="text-xs font-semibold text-[var(--text)] bg-[var(--panel-subtle)] px-2.5 py-1 rounded-md border border-[var(--border)]">
+            {access.organisation.name}
+          </span>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-[var(--border)] overflow-x-auto pb-px">
-        <button
-          onClick={() => setActiveTab('portal')}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-colors flex items-center gap-2 shrink-0 ${
-            activeTab === 'portal'
-              ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary-light)]/20'
-              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
-          }`}
-        >
-          <Building2 className="w-3.5 h-3.5" />
-          <span>Organisation & Portal URL</span>
-        </button>
+      {tabs.length > 1 && (
+        <Tabs tabs={tabs} activeTab={activeTab} onChange={selectTab} variant="underline" className="overflow-x-auto" />
+      )}
 
-        {isManager && (
-          <button
-            onClick={() => setActiveTab('roster')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-colors flex items-center gap-2 shrink-0 ${
-              activeTab === 'roster'
-                ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary-light)]/20'
-                : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Roster & Break Rules</span>
-          </button>
-        )}
-
-        <button
-          onClick={() => setActiveTab('security')}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-colors flex items-center gap-2 shrink-0 ${
-            activeTab === 'security'
-              ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary-light)]/20'
-              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
-          }`}
-        >
-          <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Security & Sessions</span>
-        </button>
-
-        {isManager && (
-          <button
-            onClick={() => setActiveTab('team')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-colors flex items-center gap-2 shrink-0 ${
-              activeTab === 'team'
-                ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary-light)]/20'
-                : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Staff & Compliance</span>
-          </button>
-        )}
-      </div>
-
-      {/* TAB 1: ORGANISATION & PORTAL URL */}
-      {activeTab === 'portal' && (
+      {/* MY ACCOUNT (everyone) */}
+      {activeTab === 'account' && (
         <div className="space-y-6">
-          {/* Dedicated Organisation Portal Card */}
-          <Card className="p-6 space-y-4 border-[var(--primary)]/30 bg-gradient-to-br from-[var(--panel)] to-[var(--primary-light)]/10">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-[var(--primary)] text-white flex items-center justify-center font-bold text-sm">
-                  <Building2 className="w-4 h-4" />
+          <Card className="p-6 space-y-4">
+            <SectionHeader icon={<UserRound className="w-4 h-4" />} title="Your details" description="How your name appears to others in this organisation." />
+            <form onSubmit={handleSaveName} className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+              <Input label="Email" value={access.user.email} disabled helperText="Your sign-in email cannot be changed here." />
+              <Input label="Name" value={fullName} onChange={e => setFullName(e.target.value)} maxLength={120} required />
+              <div className="sm:col-span-2 flex justify-end">
+                <Button type="submit" variant="primary" size="sm" loading={savingName} disabled={fullName.trim() === (access.user.full_name || '')}>
+                  Save name
+                </Button>
+              </div>
+            </form>
+          </Card>
+
+          <Card className="p-6 space-y-4">
+            <SectionHeader
+              icon={<KeyRound className="w-4 h-4" />}
+              title="Password"
+              description={`We email a reset link to ${access.user.email}. It expires after an hour.`}
+              action={(
+                <Button variant="outline" size="sm" onClick={handleSendReset} loading={sendingReset} leftIcon={<Mail className="w-3.5 h-3.5" />}>
+                  Email me a reset link
+                </Button>
+              )}
+            />
+            <p className="text-xs text-[var(--muted)]">Your password is shared by every organisation you sign in to with this email.</p>
+          </Card>
+
+          <Card className="p-6 space-y-4">
+            <SectionHeader
+              icon={<ShieldCheck className="w-4 h-4" />}
+              title="Two-step verification"
+              description="A code is emailed to you each time you sign in."
+              action={(
+                <div className="flex items-center gap-2">
+                  <Badge variant={access.user.two_factor_enabled ? 'success' : 'warning'} size="sm">
+                    {access.user.two_factor_enabled ? 'On' : 'Off'}
+                  </Badge>
+                  <Button variant="outline" size="sm" onClick={() => setShow2FAModal(true)}>
+                    {access.user.two_factor_enabled ? 'Manage' : 'Turn on'}
+                  </Button>
                 </div>
-                <div>
-                  <h2 className="text-sm font-bold text-[var(--text)]">Your Dedicated Organisation Portal</h2>
-                  <p className="text-xs text-[var(--muted)]">Unique login URL for your employees and managers</p>
+              )}
+            />
+            <p className="text-xs text-[var(--muted)]">Recommended for everyone who can approve timesheets or change rosters.</p>
+          </Card>
+
+          <Card className="p-6 space-y-4">
+            <SectionHeader
+              icon={<Laptop className="w-4 h-4" />}
+              title="Sign-in activity"
+              description="Devices signed in to your account, and recent sign-ins."
+              action={(
+                <Button variant="outline" size="sm" onClick={() => setShowActivityModal(true)} leftIcon={<Laptop className="w-3.5 h-3.5" />}>
+                  View activity
+                </Button>
+              )}
+            />
+            <p className="text-xs text-[var(--muted)]">Sign out any device you don't recognise. Sessions end automatically after 15 minutes without activity.</p>
+          </Card>
+        </div>
+      )}
+
+      {/* ORGANISATION (Organisation Owner) */}
+      {activeTab === 'organisation' && canManageOrganisation && (
+        orgUnavailable || (
+          <div className="space-y-6">
+            <Card className="p-6 space-y-4">
+              <SectionHeader icon={<Building2 className="w-4 h-4" />} title="Organisation name" description="Shown on your sign-in page, reports and exports." />
+              <form onSubmit={handleSaveDisplayName} className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="flex-1">
+                  <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} maxLength={120} required disabled={!org} />
+                </div>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  loading={savingDisplayName}
+                  disabled={!org || displayName.trim() === (org.display_name || '')}
+                >
+                  Save
+                </Button>
+              </form>
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <SectionHeader
+                icon={<Sliders className="w-4 h-4" />}
+                title="Break rules"
+                description="The unpaid break taken off each day's hours, in every branch."
+                action={(
+                  <Button variant="outline" size="sm" onClick={() => setShowBreakModal(true)} leftIcon={<Sliders className="w-3.5 h-3.5" />}>
+                    Change break rules
+                  </Button>
+                )}
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[var(--muted)]">Threshold</div>
+                  <div className="text-xl font-bold text-[var(--text)] mt-1 font-mono">{org?.break_threshold_hours ?? '—'} h</div>
+                  <div className="text-[10px] text-[var(--muted)] mt-0.5">Days at least this long get a break</div>
+                </div>
+                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[var(--muted)]">Weekday break</div>
+                  <div className="text-xl font-bold text-[var(--text)] mt-1 font-mono">{org?.break_mins_weekday ?? '—'} min</div>
+                  <div className="text-[10px] text-[var(--muted)] mt-0.5">Monday to Friday</div>
+                </div>
+                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[var(--muted)]">Weekend break</div>
+                  <div className="text-xl font-bold text-[var(--text)] mt-1 font-mono">{org?.break_mins_weekend ?? '—'} min</div>
+                  <div className="text-[10px] text-[var(--muted)] mt-0.5">Saturday and Sunday</div>
                 </div>
               </div>
-              <Badge variant="success" size="sm">Private URL Active</Badge>
-            </div>
+            </Card>
+          </div>
+        )
+      )}
 
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-[var(--text)]">
-                ORGANISATION PORTAL URL
-              </label>
+      {/* SECURITY (Organisation Owner) */}
+      {activeTab === 'security' && canManageSecurity && (
+        orgUnavailable || (
+          <div className="space-y-6">
+            <Card className="p-6 space-y-4">
+              <SectionHeader
+                icon={<Lock className="w-4 h-4" />}
+                title="Private sign-in link"
+                description="Your organisation's own sign-in page. Share it only with your Branch Admins."
+              />
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <div className="flex-1 px-3.5 py-2.5 rounded-lg bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] select-all truncate">
-                  {portalUrl}
+                <div className="flex-1 min-w-0 px-3.5 py-2.5 rounded-lg bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] select-all truncate">
+                  {org?.portal_url || 'Loading…'}
                 </div>
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={handleCopyPortalUrl}
-                  leftIcon={copied ? <Check className="w-3.5 h-3.5 text-white" /> : <Copy className="w-3.5 h-3.5" />}
-                  className="shrink-0"
+                  onClick={handleCopyLink}
+                  disabled={!org?.portal_url}
+                  leftIcon={copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                 >
-                  {copied ? 'Copied to Clipboard' : 'Copy Portal URL'}
+                  {copied ? 'Copied' : 'Copy link'}
                 </Button>
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => setShowRegenerateModal(true)}
+                  disabled={!org}
+                  leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+                >
+                  Regenerate
+                </Button>
+              </div>
+              <p className="text-xs text-[var(--muted)] leading-relaxed">
+                Knowing the link does not give anyone access: people still need an account in {access.organisation.name}.
+                If the link has been shared too widely, regenerate it and send the new one to your Branch Admins.
+              </p>
+            </Card>
 
-                {isOwner && (
-                  <Button
-                    variant="ghost"
-                    size="md"
-                    onClick={() => setShowRegenerateModal(true)}
-                    leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
-                    className="shrink-0 text-[var(--muted)] hover:text-[var(--text)]"
-                  >
-                    Regenerate URL
+            <Card className="p-6 space-y-4">
+              <SectionHeader
+                icon={<Lock className="w-4 h-4" />}
+                title="Lock passwords"
+                description="Optional shared passwords for locking and unlocking rosters and timesheets."
+                action={(
+                  <Button variant="outline" size="sm" onClick={() => setShowLockModal(true)} disabled={!org} leftIcon={<Lock className="w-3.5 h-3.5" />}>
+                    Change lock passwords
                   </Button>
                 )}
-              </div>
-              <p className="text-xs text-[var(--muted)] leading-relaxed pt-1">
-                Provide this dedicated URL to your employees so they can access your workplace login page.
-                Knowing this link does not grant access — visitors must be authenticated members of <strong className="text-[var(--text)]">{org?.name || 'your organisation'}</strong>.
-              </p>
-            </div>
-
-            <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center gap-4 text-xs text-[var(--muted)]">
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-[var(--success)]" />
-                Multi-tenant data isolation active
-              </span>
-              <span className="flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-[var(--primary)]" />
-                Protected by role-based authentication
-              </span>
-            </div>
-          </Card>
-
-          {/* Timesheet Workflow Mode Card */}
-          {isAdmin && (
-            <Card className="p-6 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
-                    <Clock className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-[var(--text)]">Timesheet Entry Mode</h3>
-                    <p className="text-xs text-[var(--muted)]">Configure how hours are submitted across your organization</p>
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[var(--muted)]">Roster lock</div>
+                  <div className="text-sm font-semibold text-[var(--text)] mt-1">
+                    {org?.has_roster_lock_password ? 'Lock password set' : 'Account passwords only'}
                   </div>
                 </div>
-                <Badge variant="purple" size="sm">
-                  {org?.timesheet_entry_mode === 'manager' ? 'Manager Entry' : 'Employee Submission'}
-                </Badge>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div
-                  onClick={() => handleUpdateTimesheetMode('employee')}
-                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    org?.timesheet_entry_mode !== 'manager'
-                      ? 'border-[var(--primary)] bg-[var(--primary-light)]/20'
-                      : 'border-[var(--border)] hover:border-[var(--border-h)] bg-[var(--panel-subtle)]'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="text-xs font-bold text-[var(--text)]">Employee Submission Mode</div>
-                    {org?.timesheet_entry_mode !== 'manager' && (
-                      <Check className="w-4 h-4 text-[var(--primary)]" />
-                    )}
+                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
+                  <div className="text-[var(--muted)]">Timesheet lock</div>
+                  <div className="text-sm font-semibold text-[var(--text)] mt-1">
+                    {org?.has_timesheet_lock_password ? 'Lock password set' : 'Account passwords only'}
                   </div>
-                  <p className="text-[11px] text-[var(--muted)] mt-1.5 leading-relaxed">
-                    Staff members submit their own timesheet at the end of each fortnight. Managers review, decline with reasons, or approve.
-                  </p>
-                </div>
-
-                <div
-                  onClick={() => handleUpdateTimesheetMode('manager')}
-                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    org?.timesheet_entry_mode === 'manager'
-                      ? 'border-[var(--primary)] bg-[var(--primary-light)]/20'
-                      : 'border-[var(--border)] hover:border-[var(--border-h)] bg-[var(--panel-subtle)]'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="text-xs font-bold text-[var(--text)]">Manager Entry Mode</div>
-                    {org?.timesheet_entry_mode === 'manager' && (
-                      <Check className="w-4 h-4 text-[var(--primary)]" />
-                    )}
-                  </div>
-                  <p className="text-[11px] text-[var(--muted)] mt-1.5 leading-relaxed">
-                    Location managers directly enter or generate shift actuals. The staff timesheet portal remains read-only with submission disabled.
-                  </p>
                 </div>
               </div>
             </Card>
+          </div>
+        )
+      )}
+
+      {/* OWNERSHIP (Organisation Owner) */}
+      {activeTab === 'ownership' && canManageSecurity && (
+        <Card className="p-6 space-y-4">
+          <SectionHeader
+            icon={<ArrowRightLeft className="w-4 h-4" />}
+            title="Transfer ownership"
+            description="Hand the organisation over to one of your current Branch Admins."
+          />
+          <ul className="text-xs text-[var(--muted)] leading-relaxed list-disc pl-5 space-y-1">
+            <li>The new owner gets full control, including settings, branches, Branch Admins and the audit log.</li>
+            <li>You become a Branch Admin of every active branch. The new owner can change or remove your access.</li>
+            <li>An organisation has exactly one owner, and only the new owner can transfer it back.</li>
+          </ul>
+
+          {branchAdmins === null ? (
+            <p className="text-xs text-[var(--muted)]">Loading Branch Admins…</p>
+          ) : branchAdmins.length === 0 ? (
+            <EmptyState
+              icon={<UserRound className="w-5 h-5" />}
+              title="No Branch Admins yet"
+              description="Ownership can only go to someone who is already a Branch Admin here. Invite them first."
+              action={<Link to="/branch-admins"><Button variant="outline" size="sm">Go to Branch Admins</Button></Link>}
+            />
+          ) : (
+            <form onSubmit={handleRequestTransfer} className="space-y-4 max-w-md">
+              {transferError && (
+                <div className="p-3 rounded-md text-xs bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)]">
+                  {transferError}
+                </div>
+              )}
+              <Select label="New owner" value={transferTo} onChange={e => setTransferTo(e.target.value)} required>
+                <option value="" disabled>Choose a Branch Admin…</option>
+                {branchAdmins.map(a => (
+                  <option key={a.id} value={a.id}>{a.full_name ? `${a.full_name} (${a.email})` : a.email}</option>
+                ))}
+              </Select>
+              <Input
+                label="Your password"
+                type="password"
+                autoComplete="current-password"
+                value={transferPassword}
+                onChange={e => setTransferPassword(e.target.value)}
+                required
+              />
+              <Button type="submit" variant="danger" size="sm" leftIcon={<ArrowRightLeft className="w-3.5 h-3.5" />}>
+                Transfer ownership
+              </Button>
+            </form>
           )}
+        </Card>
+      )}
 
-          {/* Quick-Access Locations Card */}
-          {isAdmin && (
-            <Card className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
-                  <MapPin className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-[var(--text)]">Multi-Location Management</h3>
-                  <p className="text-xs text-[var(--muted)] mt-0.5">
-                    View active branches, configure location managers, and monitor isolation rules
-                  </p>
-                </div>
-              </div>
-
-              <Link to="/locations">
-                <Button variant="outline" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                  Manage Locations
-                </Button>
-              </Link>
-            </Card>
-          )}
-
-          {/* Organisation Profile details */}
-          <Card className="p-6 space-y-4">
-            <h3 className="text-sm font-bold text-[var(--text)] pb-2 border-b border-[var(--border)]">
-              Organisation Details
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-1">
-                <div className="text-[var(--muted)] font-medium">Organisation Name</div>
-                <div className="text-sm font-semibold text-[var(--text)]">{org?.name || '—'}</div>
-              </div>
-
-              <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-1">
-                <div className="text-[var(--muted)] font-medium">Workspace Identifier (Slug)</div>
-                <div className="text-sm font-mono font-semibold text-[var(--text)]">@{org?.portal_slug || org?.slug || '—'}</div>
-              </div>
-
-              <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-1">
-                <div className="text-[var(--muted)] font-medium">Team Chat Permission</div>
-                <div className="text-sm font-semibold text-[var(--text)]">
-                  {org?.allow_employee_chat ? 'Enabled for all staff' : 'Management only'}
-                </div>
-              </div>
-
-              <div className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-1">
-                <div className="text-[var(--muted)] font-medium">Fortnight Locks Configured</div>
-                <div className="text-sm font-semibold text-[var(--text)]">
-                  {org?.has_roster_lock_password || org?.has_timesheet_lock_password ? 'Dual Passwords Active' : 'Master Password Fallback'}
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* Regenerate URL Confirm Modal */}
+      {/* Modals */}
+      <TwoFactorModal isOpen={show2FAModal} onClose={handleClose2FA} onChange={() => setTwoFactorChanged(true)} />
+      <AccountSecurityModal isOpen={showActivityModal} onClose={() => setShowActivityModal(false)} />
+      {canManageOrganisation && (
+        <BreakSettingsModal isOpen={showBreakModal} onClose={() => { setShowBreakModal(false); fetchOrganisation(); }} />
+      )}
+      {canManageSecurity && (
+        <>
+          <LockPasswordsModal
+            isOpen={showLockModal}
+            onClose={() => { setShowLockModal(false); fetchOrganisation(); }}
+            hasRosterLockPassword={org?.has_roster_lock_password}
+            hasTimesheetLockPassword={org?.has_timesheet_lock_password}
+          />
           <ConfirmModal
             isOpen={showRegenerateModal}
             onClose={() => setShowRegenerateModal(false)}
-            onConfirm={handleRegeneratePortalUrl}
-            title="Regenerate Custom Portal URL?"
-            message="Regenerating your organisation portal URL will create a new random slug. The previous login URL will immediately stop working. Ensure you distribute the new link to your staff."
-            confirmLabel="Regenerate URL"
+            onConfirm={handleRegenerate}
+            title="Regenerate the sign-in link?"
+            message="The current link stops working straight away. Anyone who uses it, including your Branch Admins, will need the new link."
+            confirmLabel="Regenerate link"
             variant="warning"
             loading={regenerating}
           />
-        </div>
+          <ConfirmModal
+            isOpen={showTransferConfirm}
+            onClose={() => setShowTransferConfirm(false)}
+            onConfirm={handleTransfer}
+            title={`Make ${transferTarget?.full_name || transferTarget?.email || 'this person'} the owner?`}
+            message={`${transferTarget?.email ?? 'They'} will own ${access.organisation.name}. You will become a Branch Admin of every active branch and lose access to owner settings.`}
+            confirmLabel="Transfer ownership"
+            variant="danger"
+            loading={transferring}
+          />
+        </>
       )}
-
-      {/* TAB 2: ROSTER & BREAK RULES */}
-      {activeTab === 'roster' && isManager && (
-        <div className="space-y-6">
-          <Card className="p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-              <div>
-                <h3 className="text-sm font-bold text-[var(--text)]">Automated Break Deduction Policies</h3>
-                <p className="text-xs text-[var(--muted)]">Calculates meal break deductions based on total shift length</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowBreakModal(true)}
-                leftIcon={<Sliders className="w-3.5 h-3.5" />}
-              >
-                Configure Break Rules
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-              <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
-                <div className="text-[var(--muted)]">Shift Threshold</div>
-                <div className="text-xl font-bold text-[var(--text)] mt-1 font-mono">{org?.break_threshold_hours ?? 6} hrs</div>
-                <div className="text-[10px] text-[var(--muted)] mt-0.5">Deduction triggers after this duration</div>
-              </div>
-
-              <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
-                <div className="text-[var(--muted)]">Weekday Break</div>
-                <div className="text-xl font-bold text-[var(--text)] mt-1 font-mono">{org?.break_mins_weekday ?? 30} mins</div>
-                <div className="text-[10px] text-[var(--muted)] mt-0.5">Monday through Friday shifts</div>
-              </div>
-
-              <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
-                <div className="text-[var(--muted)]">Weekend Break</div>
-                <div className="text-xl font-bold text-[var(--text)] mt-1 font-mono">{org?.break_mins_weekend ?? 0} mins</div>
-                <div className="text-[10px] text-[var(--muted)] mt-0.5">Saturday and Sunday shifts</div>
-              </div>
-            </div>
-          </Card>
-
-          {isAdmin && (
-            <Card className="p-6 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-                <div>
-                  <h3 className="text-sm font-bold text-[var(--text)]">Fortnight Lock Security</h3>
-                  <p className="text-xs text-[var(--muted)]">Dedicated passwords to prevent unauthorized changes to rosters or timesheets</p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowLockModal(true)}
-                  leftIcon={<Lock className="w-3.5 h-3.5" />}
-                >
-                  Manage Lock Passwords
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
-                  <div className="text-[var(--muted)]">Roster Lock Status</div>
-                  <div className="text-sm font-semibold text-[var(--text)] mt-1">
-                    {org?.has_roster_lock_password ? 'Dedicated Password Configured' : 'Defaults to Admin Account Password'}
-                  </div>
-                  <div className="text-[10px] text-[var(--muted)] mt-0.5">Protects shift schedule editing</div>
-                </div>
-
-                <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
-                  <div className="text-[var(--muted)]">Timesheet Lock Status</div>
-                  <div className="text-sm font-semibold text-[var(--text)] mt-1">
-                    {org?.has_timesheet_lock_password ? 'Dedicated Password Configured' : 'Defaults to Admin Account Password'}
-                  </div>
-                  <div className="text-[10px] text-[var(--muted)] mt-0.5">Protects final approved payroll figures</div>
-                </div>
-              </div>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* TAB 3: SECURITY & SESSIONS */}
-      {activeTab === 'security' && (
-        <div className="space-y-6">
-          <Card className="p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-              <div>
-                <h3 className="text-sm font-bold text-[var(--text)]">Two-Factor Authentication (2FA)</h3>
-                <p className="text-xs text-[var(--muted)]">Adds email verification challenge on login</p>
-              </div>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setShow2FAModal(true)}
-                leftIcon={<KeyRound className="w-3.5 h-3.5" />}
-              >
-                2FA Settings
-              </Button>
-            </div>
-            <p className="text-xs text-[var(--muted)] leading-relaxed">
-              When 2FA is enabled, every sign-in attempt requires entering a secure 6-digit one-time code sent to your registered email address.
-            </p>
-          </Card>
-
-          <Card className="p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-              <div>
-                <h3 className="text-sm font-bold text-[var(--text)]">Active Sessions & Device Security</h3>
-                <p className="text-xs text-[var(--muted)]">Manage devices and monitor login activity</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowSecurityModal(true)}
-                leftIcon={<Laptop className="w-3.5 h-3.5" />}
-              >
-                Inspect Sessions
-              </Button>
-            </div>
-            <p className="text-xs text-[var(--muted)] leading-relaxed">
-              View current login sessions, approximate locations, and device types. Revoke any unfamiliar session with one click. Sessions automatically expire after 15 minutes of inactivity.
-            </p>
-          </Card>
-        </div>
-      )}
-
-      {/* TAB 4: STAFF & COMPLIANCE */}
-      {activeTab === 'team' && isManager && (
-        <div className="space-y-6">
-          <Card className="p-6 space-y-4">
-            <h3 className="text-sm font-bold text-[var(--text)] pb-2 border-b border-[var(--border)]">
-              Compliance & Team Quick Links
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Link to="/employees" className="p-4 rounded-lg bg-[var(--panel-subtle)] hover:bg-[var(--hover-row)] border border-[var(--border)] transition-colors flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="font-semibold text-xs text-[var(--text)] flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-[var(--primary)]" />
-                    Staff Directory & Roster Templates
-                  </div>
-                  <div className="text-[10px] text-[var(--muted)]">Manage employees, contract hours, and shift defaults</div>
-                </div>
-                <ExternalLink className="w-3.5 h-3.5 text-[var(--muted)]" />
-              </Link>
-
-              <Link to="/audit" className="p-4 rounded-lg bg-[var(--panel-subtle)] hover:bg-[var(--hover-row)] border border-[var(--border)] transition-colors flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="font-semibold text-xs text-[var(--text)] flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-[var(--primary)]" />
-                    Immutable Audit Log Ledger
-                  </div>
-                  <div className="text-[10px] text-[var(--muted)]">Inspect shift modifications, lock toggles, and exports</div>
-                </div>
-                <ExternalLink className="w-3.5 h-3.5 text-[var(--muted)]" />
-              </Link>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Modals triggered from Settings */}
-      <BreakSettingsModal 
-        isOpen={showBreakModal} 
-        onClose={() => { setShowBreakModal(false); fetchOrgSettings(); }} 
-      />
-      <LockPasswordsModal 
-        isOpen={showLockModal} 
-        onClose={() => { setShowLockModal(false); fetchOrgSettings(); }} 
-      />
-      <TwoFactorModal 
-        isOpen={show2FAModal} 
-        onClose={() => setShow2FAModal(false)} 
-      />
-      <AccountSecurityModal 
-        isOpen={showSecurityModal} 
-        onClose={() => setShowSecurityModal(false)} 
-      />
     </div>
   );
 }

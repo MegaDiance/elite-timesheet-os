@@ -1,11 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type Ref } from 'react';
 
 interface SmartTimeInputProps {
   value: string;
   onChange: (parsedVal: string) => void;
   disabled?: boolean;
+  readOnly?: boolean;
   placeholder?: string;
   className?: string;
+  /** Accessible name for the field, e.g. "Rostered start, segment 1". */
+  label?: string;
+  id?: string;
+  /**
+   * Report the parsed time on every keystroke (for live previews) rather than only on blur / Enter.
+   * The text the user typed stays on screen until they leave the field.
+   */
+  live?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
+  /** Select the whole value on focus, so typing replaces it. */
+  selectOnFocus?: boolean;
+  onFocus?: () => void;
+  /** Lets a parent focus the field programmatically. */
+  ref?: Ref<HTMLInputElement>;
 }
 
 export const parseSmartTime = (raw: string): string => {
@@ -19,8 +35,8 @@ export const parseSmartTime = (raw: string): string => {
   }
   if (/^\d{2}:\d{2}$/.test(str)) return str;
 
-  let isPM = str.includes('p') || str.includes('pm');
-  let isAM = str.includes('a') || str.includes('am');
+  const isPM = str.includes('p');
+  const isAM = str.includes('a');
 
   // Handle periods/dots: e.g. 9.30 (9:30), 9.5 (9:30), 9.00 (9:00)
   if (str.includes('.')) {
@@ -81,35 +97,74 @@ export const parseSmartTime = (raw: string): string => {
   return `${hStr}:${mStr}`;
 };
 
-export default function SmartTimeInput({ value, onChange, disabled, placeholder = 'e.g. 9a, 1700', className = '' }: SmartTimeInputProps) {
+/**
+ * A forgiving time field: "9", "9a", "5p", "1730", "9.30" and "17:30" all become HH:MM
+ * when the user leaves the field or presses Enter.
+ */
+export default function SmartTimeInput({
+  value,
+  onChange,
+  disabled,
+  readOnly,
+  placeholder = 'e.g. 9a, 1700',
+  className = '',
+  label,
+  id,
+  live = false,
+  invalid,
+  describedBy,
+  selectOnFocus = false,
+  onFocus,
+  ref,
+}: SmartTimeInputProps) {
   const [val, setVal] = useState(value || '');
+  const focused = useRef(false);
 
   useEffect(() => {
+    // In live mode the parent holds the parsed value while the user is still typing; keep their text.
+    if (live && focused.current) return;
     setVal(value || '');
-  }, [value]);
+  }, [value, live]);
 
-  const handleBlur = () => {
+  const commit = () => {
+    if (disabled || readOnly) return;
     const parsed = parseSmartTime(val);
     setVal(parsed);
     onChange(parsed);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      const parsed = parseSmartTime(val);
-      setVal(parsed);
-      onChange(parsed);
-    }
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') commit();
   };
 
   return (
     <input
+      ref={ref}
+      id={id}
       type="text"
+      inputMode="text"
+      autoComplete="off"
+      spellCheck={false}
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       disabled={disabled}
+      readOnly={readOnly}
       placeholder={placeholder}
       value={val}
-      onChange={e => setVal(e.target.value)}
-      onBlur={handleBlur}
+      onChange={e => {
+        setVal(e.target.value);
+        if (live) onChange(parseSmartTime(e.target.value));
+      }}
+      onFocus={e => {
+        focused.current = true;
+        if (selectOnFocus) e.currentTarget.select();
+        onFocus?.();
+      }}
+      onBlur={() => {
+        focused.current = false;
+        commit();
+      }}
       onKeyDown={handleKeyDown}
       className={className}
     />

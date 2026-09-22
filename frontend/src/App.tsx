@@ -1,236 +1,99 @@
-import { useEffect, useState, type JSX } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { type JSX } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import Layout from './components/Layout';
 import { PublicLayout } from './layouts/PublicLayout';
 import { Home } from './pages/public/Home';
 import { Features } from './pages/public/Features';
 import { Pricing } from './pages/public/Pricing';
-import { PortalAccess } from './pages/public/PortalAccess';
 import { OrgLogin } from './pages/auth/OrgLogin';
-import PlatformGate from './pages/auth/PlatformGate';
-
-import Roster from './pages/Roster';
-import Employees from './pages/Employees';
-import Audit from './pages/Audit';
-import PlatformAdmin from './pages/PlatformAdmin';
-import Login from './pages/Login';
-import SetupAccount from './pages/SetupAccount';
-import ResetPassword from './pages/ResetPassword';
-import ForgotPassword from './pages/ForgotPassword';
-import Locations from './pages/Locations';
-import AcceptLocationInvite from './pages/auth/AcceptLocationInvite';
-import SetupOrganisation from './pages/SetupOrganisation';
-import AcceptInvite from './pages/AcceptInvite';
 import VerifyLogin from './pages/auth/VerifyLogin';
-import Announcements from './pages/Announcements';
-import LeaveRequests from './pages/LeaveRequests';
+import AcceptInvite from './pages/auth/AcceptInvite';
+import SignUp from './pages/auth/SignUp';
+import SetupOrganisation from './pages/SetupOrganisation';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+
 import Dashboard from './pages/Dashboard';
-import Reports from './pages/Reports';
-import Settings from './pages/Settings';
-
-import { jwtDecode } from 'jwt-decode';
-import EmployeeTimesheet from './pages/EmployeeTimesheet';
-import EmployeeSchedule from './pages/EmployeeSchedule';
-import EmployeeHistory from './pages/EmployeeHistory';
+import Roster from './pages/Roster';
 import TimesheetReview from './pages/TimesheetReview';
+import Employees from './pages/Employees';
+import Locations from './pages/Locations';
+import BranchAdmins from './pages/BranchAdmins';
+import Reports from './pages/Reports';
+import Audit from './pages/Audit';
+import Announcements from './pages/Announcements';
+import Settings from './pages/Settings';
+import { useAccess, type Permission } from './hooks/useAccess';
 
-interface DecodedToken {
-  role?: string;
+function Loading() {
+  return <div className="p-10 text-center text-sm text-[var(--muted)]">Loading…</div>;
 }
 
-function getRole(): string | null {
-  const token = localStorage.getItem('token');
-  if (!token) return null;
-  try {
-    const decoded = jwtDecode<DecodedToken>(token);
-    return decoded.role || null;
-  } catch {
-    return null;
-  }
+function NoAccess() {
+  return (
+    <div className="max-w-md mx-auto mt-16 p-8 bg-[var(--panel)] border border-[var(--border)] rounded-2xl text-center space-y-3">
+      <h1 className="text-lg font-bold text-[var(--text)]">You don’t have access to this page</h1>
+      <p className="text-sm text-[var(--muted)]">
+        This area is managed by the Organisation Owner. If you need it, ask the owner to change your access.
+      </p>
+      <Link to="/dashboard" className="inline-block text-sm font-semibold text-[var(--primary)] hover:underline">Go to the dashboard</Link>
+    </div>
+  );
 }
 
-function AppHomeRedirect() {
-  const role = getRole();
-  if (!role) return <Navigate to="/portal-access" replace />;
-  if (role === 'Platform Admin') return <Navigate to="/platform" replace />;
-  return <Navigate to="/dashboard" replace />;
-}
-
-function ProtectedRoute({ allowedRoles, children }: { allowedRoles: string[]; children: JSX.Element }) {
-  const role = getRole();
-  if (!role) return <Navigate to="/portal-access" replace />;
-  const isAuthorized = allowedRoles.includes(role) || 
-    (role === 'Owner' && (allowedRoles.includes('Admin') || allowedRoles.includes('Company Admin') || allowedRoles.includes('Manager') || allowedRoles.includes('Owner')));
-  if (!isAuthorized) {
-    if (role === 'Platform Admin') return <Navigate to="/platform" replace />;
-    return <Navigate to="/dashboard" replace />;
-  }
+/** Shows a page only when the signed-in account holds `permission`. Display only — the API enforces it too. */
+function Guard({ permission, children }: { permission?: Permission; children: JSX.Element }) {
+  const { access, loading, can } = useAccess();
+  if (loading) return <Loading />;
+  if (!access) return <Navigate to="/login" replace />;
+  if (permission && !can(permission)) return <NoAccess />;
   return children;
 }
 
+function AppShell() {
+  const { access, loading } = useAccess();
+  if (!localStorage.getItem('token')) return <Navigate to="/login" replace />;
+  if (loading && !access) return <Loading />;
+  if (!access) return <Navigate to="/login" replace />;
+  return <Layout />;
+}
+
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('token'));
-
-  useEffect(() => {
-    const handleAuthChange = () => {
-      setIsAuthenticated(!!localStorage.getItem('token'));
-    };
-    window.addEventListener('auth-change', handleAuthChange);
-    return () => window.removeEventListener('auth-change', handleAuthChange);
-  }, []);
-
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public SaaS Website Layout */}
+        {/* Public website */}
         <Route element={<PublicLayout />}>
           <Route path="/" element={<Home />} />
           <Route path="/features" element={<Features />} />
           <Route path="/pricing" element={<Pricing />} />
-          <Route path="/portal-access" element={<PortalAccess />} />
-          <Route path="/find-organisation" element={<Navigate to="/portal-access" replace />} />
-          <Route path="/signin" element={<Navigate to="/portal-access" replace />} />
         </Route>
 
-        {/* Branded & General Authentication Routes */}
+        {/* Sign-in and account set-up */}
         <Route path="/login/:slug" element={<OrgLogin />} />
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<OrgLogin />} />
         <Route path="/verify-login" element={<VerifyLogin />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/setup-account" element={<SetupAccount />} />
-        <Route path="/accept-invite" element={<AcceptInvite />} />
-        <Route path="/accept-location-invite" element={<AcceptLocationInvite />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/setup-org" element={<SetupOrganisation />} />
+        <Route path="/signup" element={<SignUp />} />
         <Route path="/setup-organisation" element={<SetupOrganisation />} />
-        
-        {/* Unlisted Secret Platform Admin Console Gateway */}
-        <Route path="/platform-gate" element={<PlatformGate />} />
-        <Route path="/platform-login" element={<PlatformGate />} />
+        <Route path="/accept-invite" element={<AcceptInvite />} />
 
-        {/* Authenticated Application Shell */}
-        <Route element={isAuthenticated ? <Layout /> : <Navigate to="/portal-access" replace />}>
-          <Route path="/app" element={<AppHomeRedirect />} />
-          <Route 
-            path="/dashboard" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
-                <Dashboard />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/locations" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Owner']}>
-                <Locations />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/roster" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
-                <Roster />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/employees" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
-                <Employees />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/announcements" 
-            element={<Announcements />} 
-          />
-          <Route 
-            path="/leave-requests" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
-                <LeaveRequests />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/reports" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
-                <Reports />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/timesheet" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
-                <EmployeeTimesheet />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/schedule" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
-                <EmployeeSchedule />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/history" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee', 'Owner']}>
-                <EmployeeHistory />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/timesheets" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Owner']}>
-                <TimesheetReview />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/portal" 
-            element={
-              <ProtectedRoute allowedRoles={['Employee', 'Manager', 'Company Admin', 'Platform Admin', 'Owner']}>
-                <EmployeeTimesheet />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/audit" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Owner']}>
-                <Audit />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/platform" 
-            element={
-              <ProtectedRoute allowedRoles={['Platform Admin']}>
-                <PlatformAdmin />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/settings" 
-            element={
-              <ProtectedRoute allowedRoles={['Admin', 'Company Admin', 'Platform Admin', 'Manager', 'Employee']}>
-                <Settings />
-              </ProtectedRoute>
-            } 
-          />
+        {/* Signed-in application */}
+        <Route element={<AppShell />}>
+          <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Guard permission="branch.view"><Dashboard /></Guard>} />
+          <Route path="/roster" element={<Guard permission="rosters.manage"><Roster /></Guard>} />
+          <Route path="/timesheets" element={<Guard permission="timesheets.manage"><TimesheetReview /></Guard>} />
+          <Route path="/workers" element={<Guard permission="workers.manage"><Employees /></Guard>} />
+          <Route path="/reports" element={<Guard permission="reports.view"><Reports /></Guard>} />
+          <Route path="/branches" element={<Guard permission="branch.view"><Locations /></Guard>} />
+          <Route path="/branch-admins" element={<Guard permission="branch_admins.manage"><BranchAdmins /></Guard>} />
+          <Route path="/audit" element={<Guard permission="audit.view"><Audit /></Guard>} />
+          <Route path="/announcements" element={<Guard><Announcements /></Guard>} />
+          <Route path="/settings" element={<Guard><Settings /></Guard>} />
+          <Route path="*" element={<Guard><NoAccess /></Guard>} />
         </Route>
-
-        {/* Catch-all fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

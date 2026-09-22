@@ -1,14 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { jwtDecode } from 'jwt-decode';
-import { MessageSquare, Smile, Trash2, Send, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { MessageSquare, RefreshCw, Send, Smile, Trash2 } from 'lucide-react';
 import api from '../services/apiClient';
-
-interface DecodedToken {
-  id: string;
-  email: string;
-  role?: string;
-  organisation_id?: string;
-}
+import { Button } from '../components/ui/Button';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
+import { useToast } from '../components/ui/Toast';
 
 interface ReactionSummary {
   emoji: string;
@@ -17,411 +12,269 @@ interface ReactionSummary {
   users: string[];
 }
 
-interface AnnouncementReply {
+interface Reply {
   id: string;
-  announcement_id: string;
-  org_id: string;
-  author_id: string;
+  author_id: string | null;
   author_name: string;
-  author_role: string;
+  author_role: string | null;
   content: string;
   created_at: string;
+  can_delete: boolean;
 }
 
-interface Announcement {
+interface Post {
   id: string;
-  org_id: string;
-  author_id?: string;
+  author_id: string | null;
   author_name: string;
-  author_role: string;
-  title?: string;
+  author_role: string | null;
+  title: string | null;
   content: string;
   is_system: boolean;
   announcement_type: string;
-  reactions?: ReactionSummary[];
-  replies?: AnnouncementReply[];
-  reply_count?: number;
   created_at: string;
+  can_delete: boolean;
+  reactions: ReactionSummary[];
+  replies: Reply[];
+  reply_count: number;
 }
+
+interface ChatPermissions {
+  can_post: boolean;
+  can_moderate: boolean;
+}
+
+type PendingDelete = { kind: 'post'; postId: string } | { kind: 'reply'; postId: string; replyId: string };
 
 const COMMON_EMOJIS = ['👍', '❤️', '🎉', '👏', '🚀', '👀'];
 
+const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+
 export default function Announcements() {
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const toast = useToast();
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [permissions, setPermissions] = useState<ChatPermissions>({ can_post: false, can_moderate: false });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [allowEmployeeChat, setAllowEmployeeChat] = useState(true);
-  const [togglingPermission, setTogglingPermission] = useState(false);
-  
-  // Composer state
+
+  // Composer
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // Thread replies state
+  // Threads
   const [expandedThreads, setExpandedThreads] = useState<Record<string, boolean>>({});
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
   const [submittingReplies, setSubmittingReplies] = useState<Record<string, boolean>>({});
   const [activePickerId, setActivePickerId] = useState<string | null>(null);
 
-  // User auth context
-  const token = localStorage.getItem('token');
-  let currentUserId = '';
-  let currentUserRole = 'Employee';
-  if (token) {
-    try {
-      const decoded = jwtDecode<DecodedToken>(token);
-      currentUserId = decoded.id || '';
-      currentUserRole = decoded.role || 'Employee';
-    } catch {}
-  }
-  const isMgmt = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(currentUserRole);
+  // Deleting
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3500);
-  };
-
-  const fetchAnnouncements = async () => {
+  const fetchPosts = async () => {
     setLoading(true);
     setError('');
     try {
       const res = await api.get('/announcements');
-      if (res.data?.data) {
-        setAnnouncements(res.data.data);
-      }
-      if (res.data?.permissions) {
-        setAllowEmployeeChat(res.data.permissions.allow_employee_chat !== false);
-      }
+      setPosts(res.data?.data || []);
+      if (res.data?.permissions) setPermissions(res.data.permissions);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to load messages');
+      setError(errorMessage(err, 'Messages could not be loaded.'));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAnnouncements();
+    fetchPosts();
   }, []);
 
-  const handleCreateAnnouncement = async (e: React.FormEvent) => {
+  const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
     setSubmitting(true);
-    setError('');
     try {
-      await api.post('/announcements', {
+      const res = await api.post('/announcements', {
         title: title.trim() || undefined,
-        content: content.trim()
+        content: content.trim(),
       });
       setTitle('');
       setContent('');
-      showToast('Message posted successfully');
-      fetchAnnouncements();
+      if (res.data?.data) setPosts(prev => [res.data.data, ...prev]);
+      toast.success('Message posted.');
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to post message');
+      toast.error(errorMessage(err, 'Your message could not be posted.'));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDeleteAnnouncement = async (id: string) => {
-    if (!window.confirm('Delete this message?')) return;
+  const handleToggleReaction = async (postId: string, emoji: string) => {
+    setActivePickerId(null);
     try {
-      await api.delete(`/announcements/${id}`);
-      showToast('Message removed');
-      setAnnouncements(prev => prev.filter(a => a.id !== id));
+      const res = await api.post(`/announcements/${postId}/reactions`, { emoji });
+      const reactions = res.data?.data?.reactions;
+      if (reactions) setPosts(prev => prev.map(p => (p.id === postId ? { ...p, reactions } : p)));
     } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to delete message');
+      toast.error(errorMessage(err, 'Your reaction could not be saved.'));
     }
   };
 
-  const handleToggleReaction = async (announcementId: string, emoji: string) => {
-    try {
-      const res = await api.post(`/announcements/${announcementId}/reactions`, { emoji });
-      if (res.data?.data?.reactions) {
-        const updatedReactions = res.data.data.reactions;
-        setAnnouncements(prev => prev.map(a => {
-          if (a.id === announcementId) {
-            return { ...a, reactions: updatedReactions };
-          }
-          return a;
-        }));
-      }
-    } catch (err: any) {
-      console.error('Failed to toggle reaction', err);
-    } finally {
-      setActivePickerId(null);
-    }
-  };
-
-  const handleToggleThread = (announcementId: string) => {
-    setExpandedThreads(prev => ({
-      ...prev,
-      [announcementId]: !prev[announcementId]
-    }));
-  };
-
-  const handlePostReply = async (announcementId: string, e: React.FormEvent) => {
+  const handlePostReply = async (postId: string, e: React.FormEvent) => {
     e.preventDefault();
-    const replyText = replyInputs[announcementId]?.trim();
-    if (!replyText) return;
-
-    setSubmittingReplies(prev => ({ ...prev, [announcementId]: true }));
+    const text = replyInputs[postId]?.trim();
+    if (!text) return;
+    setSubmittingReplies(prev => ({ ...prev, [postId]: true }));
     try {
-      const res = await api.post(`/announcements/${announcementId}/replies`, { content: replyText });
-      if (res.data?.data) {
-        const newReply = res.data.data;
-        setAnnouncements(prev => prev.map(a => {
-          if (a.id === announcementId) {
-            const currentReplies = a.replies || [];
-            return {
-              ...a,
-              replies: [...currentReplies, newReply],
-              reply_count: (a.reply_count || currentReplies.length) + 1
-            };
-          }
-          return a;
+      const res = await api.post(`/announcements/${postId}/replies`, { content: text });
+      const reply: Reply | undefined = res.data?.data;
+      if (reply) {
+        setPosts(prev => prev.map(p => (p.id === postId
+          ? { ...p, replies: [...p.replies, reply], reply_count: p.replies.length + 1 }
+          : p)));
+      }
+      setReplyInputs(prev => ({ ...prev, [postId]: '' }));
+    } catch (err: any) {
+      toast.error(errorMessage(err, 'Your reply could not be posted.'));
+    } finally {
+      setSubmittingReplies(prev => ({ ...prev, [postId]: false }));
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      if (pendingDelete.kind === 'post') {
+        await api.delete(`/announcements/${pendingDelete.postId}`);
+        setPosts(prev => prev.filter(p => p.id !== pendingDelete.postId));
+        toast.success('Message deleted.');
+      } else {
+        const { postId, replyId } = pendingDelete;
+        await api.delete(`/announcements/${postId}/replies/${replyId}`);
+        setPosts(prev => prev.map(p => {
+          if (p.id !== postId) return p;
+          const replies = p.replies.filter(r => r.id !== replyId);
+          return { ...p, replies, reply_count: replies.length };
         }));
-        setReplyInputs(prev => ({ ...prev, [announcementId]: '' }));
-        showToast('Reply added');
+        toast.success('Reply deleted.');
       }
     } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to post reply');
+      toast.error(errorMessage(err, 'It could not be deleted.'));
     } finally {
-      setSubmittingReplies(prev => ({ ...prev, [announcementId]: false }));
+      setDeleting(false);
+      setPendingDelete(null);
     }
   };
 
-  const handleDeleteReply = async (announcementId: string, replyId: string) => {
-    if (!window.confirm('Delete this reply?')) return;
-    try {
-      await api.delete(`/announcements/${announcementId}/replies/${replyId}`);
-      setAnnouncements(prev => prev.map(a => {
-        if (a.id === announcementId) {
-          const currentReplies = a.replies || [];
-          const updated = currentReplies.filter(r => r.id !== replyId);
-          return {
-            ...a,
-            replies: updated,
-            reply_count: Math.max(0, (a.reply_count || 1) - 1)
-          };
-        }
-        return a;
-      }));
-      showToast('Reply removed');
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to delete reply');
-    }
-  };
-
-  const handleTogglePermission = async () => {
-    if (!isMgmt || togglingPermission) return;
-    setTogglingPermission(true);
-    try {
-      const targetState = !allowEmployeeChat;
-      const res = await api.patch('/announcements/permissions', { allow_employee_chat: targetState });
-      if (res.data?.success) {
-        setAllowEmployeeChat(res.data.allow_employee_chat);
-        showToast(res.data.message || 'Permissions updated');
-        fetchAnnouncements();
-      }
-    } catch (err: any) {
-      showToast(err.response?.data?.error?.message || 'Failed to update chat permissions');
-    } finally {
-      setTogglingPermission(false);
-    }
-  };
+  const formatPostTime = (iso: string) =>
+    new Date(iso).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 
   return (
     <div className="flex flex-col h-full max-w-5xl mx-auto gap-6 mt-4 pb-16 px-4">
-      {/* Toast Notification */}
-      {toastMsg && (
-        <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-in fade-in">
-          <span>{toastMsg}</span>
-        </div>
-      )}
-
-      {/* Header Bar with Admin Controls */}
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
         <div>
-          <h2 className="text-2xl sm:text-3xl font-black text-[var(--text)] tracking-tight">Team Chat & Notices</h2>
+          <h1 className="text-2xl sm:text-3xl font-black text-[var(--text)] tracking-tight">Team chat</h1>
           <p className="text-xs sm:text-sm text-[var(--muted)] mt-1">
-            Workplace discussions, announcements, emoji reactions, and reply threads
+            Notices and discussion for your organisation's Owner and Branch Admins. Workers do not see this page.
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          {/* Admin Chat Permission Toggle */}
-          {isMgmt && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] text-xs">
-              <span className="text-[var(--muted)] font-medium">Employee Chat:</span>
-              <button
-                type="button"
-                onClick={handleTogglePermission}
-                disabled={togglingPermission}
-                className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
-                  allowEmployeeChat
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30'
-                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30'
-                }`}
-                title="Toggle whether employees can post messages and replies"
-              >
-                <span className={`w-2 h-2 rounded-full ${allowEmployeeChat ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                <span>{allowEmployeeChat ? 'Allowed' : 'Restricted'}</span>
-              </button>
-            </div>
-          )}
-
-          <button
-            onClick={fetchAnnouncements}
-            disabled={loading}
-            className="px-3.5 py-1.5 bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--glass-4)] rounded-xl text-xs font-bold border border-[var(--border)] flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <svg className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="23 4 23 10 17 10"></polyline>
-              <polyline points="1 20 1 14 7 14"></polyline>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-            <span>Refresh</span>
-          </button>
-        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={fetchPosts}
+          disabled={loading}
+          leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
+        >
+          Refresh
+        </Button>
       </div>
 
       {error && (
-        <div className="p-4 bg-[var(--danger-light)] text-[var(--danger)] border border-[var(--danger)]/30 rounded-2xl text-xs font-bold flex items-center gap-2">
+        <div className="p-4 bg-[var(--danger-light)] text-[var(--danger)] border border-[var(--danger)]/30 rounded-2xl text-xs font-bold">
           {error}
         </div>
       )}
 
-      {/* Employee Restricted Notice */}
-      {!isMgmt && !allowEmployeeChat && (
-        <div className="p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl text-xs text-amber-300 font-medium flex items-center gap-3">
-          <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
-          <span>Team chat and replies are currently set to read-only by administrators. You can view all workplace notices below.</span>
-        </div>
-      )}
-
-      {/* Composer Card (if user can post) */}
-      {(isMgmt || allowEmployeeChat) ? (
+      {/* Composer */}
+      {permissions.can_post && (
         <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-5 sm:p-6 shadow-sm">
-          <h3 className="text-xs font-black text-[var(--text)] uppercase tracking-wider mb-3 flex items-center gap-2">
-            <svg className="w-4 h-4 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19l7-7 3 3-7 7-3-3z"></path>
-              <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
-              <path d="M2 2l7.586 7.586"></path>
-              <circle cx="11" cy="11" r="2"></circle>
-            </svg>
-            <span>Post a Message or Team Notice</span>
-          </h3>
-
-          <form onSubmit={handleCreateAnnouncement} className="space-y-3">
-            <div>
-              <input
-                type="text"
-                placeholder="Subject or Topic (Optional, e.g. Shift Coverage Question)"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-3.5 py-2 text-xs text-[var(--text)] font-semibold outline-none focus:border-[var(--primary)]"
-              />
-            </div>
-
-            <div>
-              <textarea
-                required
-                rows={3}
-                placeholder="Share a message, feedback, or update with your team..."
-                value={content}
-                onChange={e => setContent(e.target.value)}
-                className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3.5 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
-              />
-            </div>
-
+          <h2 className="text-xs font-black text-[var(--text)] uppercase tracking-wider mb-3 flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-[var(--primary)]" />
+            <span>Post a message</span>
+          </h2>
+          <form onSubmit={handleCreatePost} className="space-y-3">
+            <input
+              type="text"
+              placeholder="Subject (optional)"
+              value={title}
+              maxLength={200}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-3.5 py-2 text-xs text-[var(--text)] font-semibold outline-none focus:border-[var(--primary)]"
+            />
+            <textarea
+              required
+              rows={3}
+              maxLength={5000}
+              placeholder="Share an update with the team…"
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-xl p-3.5 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
+            />
             <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={submitting || !content.trim()}
-                className="px-5 py-2 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{submitting ? 'Sending...' : 'Send Message'}</span>
-              </button>
+              <Button type="submit" variant="primary" size="sm" loading={submitting} disabled={!content.trim()} leftIcon={<Send className="w-3.5 h-3.5" />}>
+                Post
+              </Button>
             </div>
           </form>
         </div>
-      ) : null}
+      )}
 
-      {/* Feed List */}
+      {/* Feed */}
       <div className="space-y-4">
-        <h3 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">
-          Feed History ({announcements.length})
-        </h3>
+        <h2 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Messages ({posts.length})</h2>
 
-        {loading ? (
+        {loading && posts.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-[var(--muted)] font-bold text-xs gap-2">
-            <div className="w-5 h-5 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
-            <span>Loading messages...</span>
+            <div className="w-5 h-5 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+            <span>Loading messages…</span>
           </div>
-        ) : announcements.length === 0 ? (
+        ) : posts.length === 0 ? (
           <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-12 text-center text-[var(--muted)]">
             <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-[var(--panel-subtle)] text-[var(--muted)] flex items-center justify-center">
               <MessageSquare className="w-6 h-6" />
             </div>
             <div className="font-bold text-sm text-[var(--text)]">No messages yet</div>
-            <div className="text-xs mt-1">
-              Roster alerts, management announcements, and team messages will appear here.
-            </div>
+            <div className="text-xs mt-1">Messages from the Owner and Branch Admins will appear here.</div>
           </div>
         ) : (
-          announcements.map((item) => {
-            const isRosterAlert = item.is_system || item.announcement_type === 'roster_publish';
-            const canDelete = (isMgmt || item.author_id === currentUserId) && !isRosterAlert;
-            const isThreadExpanded = Boolean(expandedThreads[item.id]);
-            const reactions = item.reactions || [];
-            const replies = item.replies || [];
-            const replyCount = item.reply_count !== undefined ? item.reply_count : replies.length;
+          posts.map(post => {
+            const expanded = Boolean(expandedThreads[post.id]);
+            const replyCount = post.replies.length;
 
             return (
               <div
-                key={item.id}
+                key={post.id}
                 className={`p-5 rounded-2xl border transition-all space-y-4 ${
-                  isRosterAlert
-                    ? 'bg-[var(--primary-light)]/40 border-[var(--primary)]/30'
-                    : 'bg-[var(--panel)] border-[var(--border)] shadow-xs'
+                  post.is_system ? 'bg-[var(--primary-light)]/40 border-[var(--primary)]/30' : 'bg-[var(--panel)] border-[var(--border)] shadow-xs'
                 }`}
               >
-                {/* Header info */}
+                {/* Author */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
                   <div className="flex items-center gap-2.5">
                     <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
-                      isRosterAlert
-                        ? 'bg-[var(--primary)] text-white'
-                        : item.author_role === 'Employee'
-                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                        : 'bg-[var(--panel-subtle)] text-[var(--primary)] border border-[var(--primary)]/20'
+                      post.is_system ? 'bg-[var(--primary)] text-white' : 'bg-[var(--panel-subtle)] text-[var(--primary)] border border-[var(--primary)]/20'
                     }`}>
-                      {isRosterAlert ? 'System Roster Notice' : item.author_role}
+                      {post.is_system ? 'SimpleHours' : post.author_role || 'Team'}
                     </span>
-                    <span className="font-bold text-xs text-[var(--text)]">
-                      {item.author_name}
-                    </span>
+                    <span className="font-bold text-xs text-[var(--text)]">{post.author_name}</span>
                   </div>
-
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-[var(--muted)] font-medium">
-                      {new Date(item.created_at).toLocaleString('en-US', {
-                        weekday: 'short',
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </span>
-                    {canDelete && (
+                    <span className="text-xs text-[var(--muted)] font-medium">{formatPostTime(post.created_at)}</span>
+                    {post.can_delete && (
                       <button
-                        onClick={() => handleDeleteAnnouncement(item.id)}
+                        onClick={() => setPendingDelete({ kind: 'post', postId: post.id })}
                         className="text-xs text-[var(--danger)] hover:underline font-semibold cursor-pointer"
                         title="Delete message"
                       >
@@ -433,56 +286,47 @@ export default function Announcements() {
 
                 {/* Content */}
                 <div>
-                  {item.title && (
-                    <h4 className="text-sm sm:text-base font-black text-[var(--text)] mb-1">
-                      {item.title}
-                    </h4>
-                  )}
-                  <p className="text-xs text-[var(--text)] whitespace-pre-wrap leading-relaxed">
-                    {item.content}
-                  </p>
+                  {post.title && <h3 className="text-sm sm:text-base font-black text-[var(--text)] mb-1">{post.title}</h3>}
+                  <p className="text-xs text-[var(--text)] whitespace-pre-wrap leading-relaxed">{post.content}</p>
                 </div>
 
-                {/* Action Bar: Emoji Reactions & Reply Toggle */}
+                {/* Reactions & replies toggle */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--border)]/60 text-xs">
-                  {/* Left: Reactions list and picker */}
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {reactions.map((r) => (
+                    {post.reactions.map(r => (
                       <button
                         key={r.emoji}
-                        onClick={() => handleToggleReaction(item.id, r.emoji)}
+                        onClick={() => handleToggleReaction(post.id, r.emoji)}
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
                           r.user_reacted
-                            ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 shadow-xs'
+                            ? 'bg-[var(--primary-light)] text-[var(--primary)] border-[var(--primary)]/40 shadow-xs'
                             : 'bg-[var(--panel-subtle)] text-[var(--text)] border-[var(--border)] hover:bg-[var(--glass-4)]'
                         }`}
-                        title={`Reacted by: ${r.users.join(', ')}`}
+                        title={r.users.join(', ')}
                       >
                         <span>{r.emoji}</span>
                         <span className="text-[11px] font-bold">{r.count}</span>
                       </button>
                     ))}
 
-                    {/* Quick Reaction Button Bar */}
                     <div className="relative inline-block">
                       <button
                         type="button"
-                        onClick={() => setActivePickerId(activePickerId === item.id ? null : item.id)}
+                        onClick={() => setActivePickerId(activePickerId === post.id ? null : post.id)}
                         className="p-1 px-2 text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] rounded-full border border-dashed border-[var(--border)] transition-colors cursor-pointer text-xs flex items-center gap-1"
-                        title="Add emoji reaction"
+                        title="Add a reaction"
+                        aria-label="Add a reaction"
                       >
                         <Smile className="w-3.5 h-3.5" />
                         <span className="text-[10px]">+</span>
                       </button>
-
-                      {/* Emoji Picker Popover */}
-                      {activePickerId === item.id && (
-                        <div className="absolute left-0 bottom-full mb-1 z-20 flex items-center gap-1 p-1.5 bg-[var(--panel)] border border-[var(--border)] rounded-full shadow-xl animate-in fade-in zoom-in-95">
+                      {activePickerId === post.id && (
+                        <div className="absolute left-0 bottom-full mb-1 z-20 flex items-center gap-1 p-1.5 bg-[var(--panel)] border border-[var(--border)] rounded-full shadow-xl">
                           {COMMON_EMOJIS.map(emoji => (
                             <button
                               key={emoji}
                               type="button"
-                              onClick={() => handleToggleReaction(item.id, emoji)}
+                              onClick={() => handleToggleReaction(post.id, emoji)}
                               className="w-7 h-7 hover:bg-[var(--panel-subtle)] rounded-full flex items-center justify-center text-sm cursor-pointer transition-transform hover:scale-125"
                             >
                               {emoji}
@@ -493,86 +337,76 @@ export default function Announcements() {
                     </div>
                   </div>
 
-                  {/* Right: Reply Thread Toggle */}
                   <button
                     type="button"
-                    onClick={() => handleToggleThread(item.id)}
+                    onClick={() => setExpandedThreads(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
                     className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] font-semibold px-2.5 py-1 rounded-lg hover:bg-[var(--panel-subtle)] transition-colors cursor-pointer"
                   >
-                    <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'Reply' : 'Replies'}` : 'Reply'}</span>
+                    <MessageSquare className="w-3.5 h-3.5 text-[var(--primary)]" />
+                    <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'Reply'}</span>
                   </button>
                 </div>
 
-                {/* Threaded Comments & Replies Drawer */}
-                {isThreadExpanded && (
-                  <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-3 animate-in fade-in">
-                    {/* Replies List */}
-                    {replies.length > 0 ? (
-                      <div className="space-y-2.5 pl-3 border-l-2 border-indigo-500/20">
-                        {replies.map((reply) => {
-                          const canDeleteReply = isMgmt || reply.author_id === currentUserId;
-                          return (
-                            <div key={reply.id} className="bg-[var(--panel-subtle)] p-3 rounded-xl border border-[var(--border)] text-xs space-y-1">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-bold text-[var(--text)]">{reply.author_name}</span>
-                                  <span className="text-[9px] uppercase font-semibold px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                {/* Thread */}
+                {expanded && (
+                  <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-3">
+                    {post.replies.length > 0 ? (
+                      <div className="space-y-2.5 pl-3 border-l-2 border-[var(--primary)]/20">
+                        {post.replies.map(reply => (
+                          <div key={reply.id} className="bg-[var(--panel-subtle)] p-3 rounded-xl border border-[var(--border)] text-xs space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-[var(--text)]">{reply.author_name}</span>
+                                {reply.author_role && (
+                                  <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/20">
                                     {reply.author_role}
                                   </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] text-[var(--muted)]">
-                                    {new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                  {canDeleteReply && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteReply(item.id, reply.id)}
-                                      className="text-rose-400 hover:text-rose-300 transition-colors cursor-pointer"
-                                      title="Delete reply"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                                </div>
+                                )}
                               </div>
-                              <p className="text-[var(--text)] text-xs whitespace-pre-wrap leading-relaxed">
-                                {reply.content}
-                              </p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-[var(--muted)]">{formatPostTime(reply.created_at)}</span>
+                                {reply.can_delete && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPendingDelete({ kind: 'reply', postId: post.id, replyId: reply.id })}
+                                    className="text-[var(--danger)] hover:opacity-80 transition-opacity cursor-pointer"
+                                    title="Delete reply"
+                                    aria-label="Delete reply"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                          );
-                        })}
+                            <p className="text-[var(--text)] text-xs whitespace-pre-wrap leading-relaxed">{reply.content}</p>
+                          </div>
+                        ))}
                       </div>
                     ) : (
-                      <p className="text-[11px] text-[var(--muted)] italic pl-3">
-                        No replies yet. Be the first to start the thread.
-                      </p>
+                      <p className="text-[11px] text-[var(--muted)] italic pl-3">No replies yet.</p>
                     )}
 
-                    {/* Inline Reply Composer */}
-                    {(isMgmt || allowEmployeeChat) ? (
-                      <form onSubmit={(e) => handlePostReply(item.id, e)} className="flex items-center gap-2 pt-1 pl-3">
+                    {permissions.can_post && (
+                      <form onSubmit={e => handlePostReply(post.id, e)} className="flex items-center gap-2 pt-1 pl-3">
                         <input
                           type="text"
-                          placeholder="Write a reply..."
-                          value={replyInputs[item.id] || ''}
-                          onChange={(e) => setReplyInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="Write a reply…"
+                          maxLength={5000}
+                          value={replyInputs[post.id] || ''}
+                          onChange={e => setReplyInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
                           className="flex-1 bg-[var(--input-bg)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
                         />
-                        <button
+                        <Button
                           type="submit"
-                          disabled={submittingReplies[item.id] || !replyInputs[item.id]?.trim()}
-                          className="px-3.5 py-1.5 bg-[var(--primary)] hover:bg-[var(--primary-h)] text-white font-bold rounded-xl text-xs transition-colors shadow-xs disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
+                          variant="primary"
+                          size="sm"
+                          loading={Boolean(submittingReplies[post.id])}
+                          disabled={!replyInputs[post.id]?.trim()}
+                          leftIcon={<Send className="w-3 h-3" />}
                         >
-                          <Send className="w-3 h-3" />
-                          <span>Reply</span>
-                        </button>
+                          Reply
+                        </Button>
                       </form>
-                    ) : (
-                      <div className="pl-3 text-[11px] text-[var(--muted)] italic">
-                        Replies are currently restricted by management.
-                      </div>
                     )}
                   </div>
                 )}
@@ -581,6 +415,19 @@ export default function Announcements() {
           })
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={handleConfirmDelete}
+        title={pendingDelete?.kind === 'reply' ? 'Delete this reply?' : 'Delete this message?'}
+        message={pendingDelete?.kind === 'reply'
+          ? 'The reply is removed for everyone.'
+          : 'The message, its reactions and its replies are removed for everyone.'}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={deleting}
+      />
     </div>
   );
 }

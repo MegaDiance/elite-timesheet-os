@@ -1,35 +1,17 @@
-import { useState, useEffect, useMemo } from 'react';
-import { 
-  Download, 
-  Printer, 
-  RefreshCw, 
-  ChevronLeft, 
-  ChevronRight, 
-  Search, 
-  AlertTriangle, 
-  CheckCircle2, 
-  Users
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Download, Printer, RefreshCw, Search, Users } from 'lucide-react';
 import api from '../services/apiClient';
-import { 
-  Button, 
-  Badge, 
-  Card, 
-  Table, 
-  TableHeader, 
-  TableBody, 
-  TableRow, 
-  TableHead, 
-  TableCell, 
-  Tabs, 
-  EmptyState 
-} from '../components/ui';
-import { getFortnightStart, addDays, formatFortnightLabel, fmtISO } from '../utils/fortnight';
+import { useAccess } from '../hooks/useAccess';
+import { useToast } from '../components/ui/Toast';
+import { Badge, Button, Card, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs } from '../components/ui';
+import { apiErrorMessage, downloadPayrollCsv, openPayrollPrint, signedHours } from '../components/roster/api';
+import { currentFortnightIso, periodLabel, shiftIso } from '../components/roster/dates';
 
-interface EmployeePayrollSummary {
+interface WorkerPayrollSummary {
   employee_id: string;
   full_name: string;
-  department: string;
+  department: string | null;
+  location_name: string | null;
   contracted_hours: number;
   rostered_hours: number;
   actual_hours: number;
@@ -41,283 +23,247 @@ interface EmployeePayrollSummary {
   sick_hours: number;
   annual_hours: number;
   til_hours: number;
+  lwip_hours: number;
+  other_hours: number;
   unplanned_hours: number;
   submission_status: string;
 }
 
+interface PayrollTotals {
+  total_contracted: number;
+  total_rostered: number;
+  total_actual: number;
+  total_variance: number;
+  total_normal: number;
+  total_saturday: number;
+  total_sunday: number;
+  total_public_holiday: number;
+  total_sick: number;
+  total_annual: number;
+  total_til: number;
+  total_lwip: number;
+  total_other: number;
+  total_unplanned: number;
+}
+
 interface PayrollReport {
-  org_id: string;
   org_name: string;
   fortnight_start: string;
   fortnight_end: string;
   generated_at: string;
-  employees: EmployeePayrollSummary[];
-  totals: {
-    total_contracted: number;
-    total_rostered: number;
-    total_actual: number;
-    total_variance: number;
-    total_normal: number;
-    total_saturday: number;
-    total_sunday: number;
-    total_public_holiday: number;
-    total_sick: number;
-    total_annual: number;
-    total_til: number;
-    total_unplanned: number;
-  };
+  employees: WorkerPayrollSummary[];
+  totals: PayrollTotals;
+}
+
+type ReportTab = 'summary' | 'breakdown' | 'exceptions';
+
+const n = (value: unknown): number => Number(value) || 0;
+const hours = (value: unknown): string => `${n(value).toFixed(2)}h`;
+const hoursOrDash = (value: unknown): string => (n(value) > 0 ? hours(value) : '—');
+
+const varianceClass = (v: number) => (v > 0.05 ? 'text-[var(--warn)]' : v < -0.05 ? 'text-[var(--danger)]' : 'text-[var(--success)]');
+
+const hasException = (w: WorkerPayrollSummary) =>
+  Math.abs(n(w.variance_hours)) > 0.1 || w.submission_status === 'Draft' || n(w.unplanned_hours) > 0;
+
+/** Sums a column over the rows shown, so the totals row always matches the filtered table. */
+const sumOf = (rows: WorkerPayrollSummary[], key: keyof WorkerPayrollSummary) => rows.reduce((acc, r) => acc + n(r[key]), 0);
+
+function StatusBadge({ status }: { status: string }) {
+  if (status === 'Approved') return <Badge variant="success"><CheckCircle2 className="w-3 h-3" aria-hidden="true" />Approved</Badge>;
+  if (status === 'Locked') return <Badge variant="warning">Locked</Badge>;
+  return <Badge variant="default">Draft</Badge>;
 }
 
 export default function Reports() {
-  const [selectedStartDate, setSelectedStartDate] = useState<string>(() => {
-    return fmtISO(getFortnightStart(new Date()));
-  });
+  const { access } = useAccess();
+  const toast = useToast();
+  const branches = useMemo(() => access?.branches ?? [], [access]);
+
+  const [branchId, setBranchId] = useState<string>(() => (access?.branches.length === 1 ? access.branches[0].id : ''));
+  const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const [report, setReport] = useState<PayrollReport | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [exportingCsv, setExportingCsv] = useState<boolean>(false);
-  const [exportingPdf, setExportingPdf] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<string>('summary');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedDept, setSelectedDept] = useState<string>('ALL');
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null);
+  const [tab, setTab] = useState<ReportTab>('summary');
+  const [search, setSearch] = useState('');
+  const [department, setDepartment] = useState('ALL');
+  const loadSeq = useRef(0);
 
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3500);
-  };
+  // Recent and upcoming pay periods, always including the one being shown.
+  const periods = useMemo(() => {
+    const current = currentFortnightIso();
+    const list = Array.from({ length: 17 }, (_, i) => shiftIso(current, (i - 12) * 14));
+    if (!list.includes(startIso)) list.push(startIso);
+    return list.sort().map(iso => ({ value: iso, label: `${periodLabel(iso)}${iso === current ? ' (current)' : ''}` }));
+  }, [startIso]);
 
-  // Generate a list of recent and upcoming pay periods (6 past, current, 4 future)
-  const payPeriods = useMemo(() => {
-    const currentFn = getFortnightStart(new Date());
-    const periods: { value: string; label: string }[] = [];
-    for (let i = -6; i <= 4; i++) {
-      const pStart = addDays(currentFn, i * 14);
-      const iso = fmtISO(pStart);
-      const isCurrent = iso === fmtISO(currentFn);
-      periods.push({
-        value: iso,
-        label: `${formatFortnightLabel(iso)}${isCurrent ? ' (Current)' : ''}`,
-      });
-    }
-    return periods;
-  }, []);
-
-  const fetchReport = async (startDate: string) => {
+  const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get(`/reports/payroll?start_date=${startDate}`);
-      if (res.data?.success) {
-        setReport(res.data.data);
-      } else {
-        setError(res.data?.error?.message || 'Failed to load report.');
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch payroll report:', err);
-      setError(err.response?.data?.error?.message || 'Error communicating with server.');
+      const res = await api.get('/reports/payroll', { params: { start_date: startIso, location_id: branchId || undefined } });
+      if (seq === loadSeq.current) setReport(res.data?.data ?? null);
+    } catch (err) {
+      if (seq !== loadSeq.current) return;
+      setReport(null);
+      setError(apiErrorMessage(err, 'The report could not be loaded.'));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  };
+  }, [startIso, branchId]);
 
   useEffect(() => {
-    fetchReport(selectedStartDate);
-  }, [selectedStartDate]);
+    load();
+  }, [load]);
 
-  const handlePrevFortnight = () => {
-    const [y, m, d] = selectedStartDate.split('-').map(Number);
-    const prev = addDays(new Date(Date.UTC(y, m - 1, d)), -14);
-    setSelectedStartDate(fmtISO(prev));
-  };
-
-  const handleNextFortnight = () => {
-    const [y, m, d] = selectedStartDate.split('-').map(Number);
-    const next = addDays(new Date(Date.UTC(y, m - 1, d)), 14);
-    setSelectedStartDate(fmtISO(next));
-  };
-
-  const handleExportCsv = async () => {
-    setExportingCsv(true);
+  const exportCsv = async () => {
+    setExporting('csv');
     try {
-      const res = await api.get(`/reports/export/csv?start_date=${selectedStartDate}`, {
-        responseType: 'blob',
-      });
-      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Payroll_${report?.org_name ? report.org_name.replace(/[^a-zA-Z0-9_-]/g, '_') : 'Org'}_${selectedStartDate}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      showToast('Payroll CSV downloaded successfully');
+      await downloadPayrollCsv(startIso, branchId);
+      toast.success('Payroll CSV downloaded.');
     } catch (err) {
-      console.error('Failed to export CSV:', err);
-      showToast('Could not export CSV file.');
+      toast.error(err instanceof Error ? err.message : 'The CSV could not be exported.');
     } finally {
-      setExportingCsv(false);
+      setExporting(null);
     }
   };
 
-  const handleExportPdf = async () => {
-    setExportingPdf(true);
+  const exportPdf = async () => {
+    setExporting('pdf');
     try {
-      const res = await api.get(`/reports/export/pdf?start_date=${selectedStartDate}`);
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(res.data);
-        printWindow.document.close();
-      }
+      await openPayrollPrint(startIso, branchId);
     } catch (err) {
-      console.error('Failed to export PDF preview:', err);
-      showToast('Could not load print preview.');
+      toast.error(err instanceof Error ? err.message : 'The printable report could not be opened.');
     } finally {
-      setExportingPdf(false);
+      setExporting(null);
     }
   };
 
-  // Distinct department list
-  const departments = useMemo(() => {
-    if (!report?.employees) return [];
-    const depts = new Set<string>();
-    report.employees.forEach(e => {
-      if (e.department) depts.add(e.department);
-    });
-    return Array.from(depts).sort();
-  }, [report]);
+  const workers = useMemo(() => report?.employees ?? [], [report]);
+  const showBranch = !branchId;
+  const departments = useMemo(
+    () => Array.from(new Set(workers.map(w => w.department).filter((d): d is string => Boolean(d)))).sort(),
+    [workers],
+  );
 
-  // Filtered employees
-  const filteredEmployees = useMemo(() => {
-    if (!report?.employees) return [];
-    return report.employees.filter(emp => {
-      const matchesSearch = searchQuery.trim() === '' || 
-        emp.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        emp.department?.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      const matchesDept = selectedDept === 'ALL' || emp.department === selectedDept;
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return workers.filter(w =>
+      (!query || w.full_name.toLowerCase().includes(query) || (w.department ?? '').toLowerCase().includes(query) || (w.location_name ?? '').toLowerCase().includes(query))
+      && (department === 'ALL' || w.department === department)
+      && (tab !== 'exceptions' || hasException(w)));
+  }, [workers, search, department, tab]);
 
-      if (activeTab === 'exceptions') {
-        const hasVariance = Math.abs(emp.variance_hours) > 0.1;
-        const notApproved = emp.submission_status !== 'Approved';
-        const hasOvertime = emp.unplanned_hours > 0;
-        return matchesSearch && matchesDept && (hasVariance || notApproved || hasOvertime);
-      }
-
-      return matchesSearch && matchesDept;
-    });
-  }, [report, searchQuery, selectedDept, activeTab]);
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Approved':
-        return <Badge variant="success">Approved</Badge>;
-      case 'Submitted':
-        return <Badge variant="info">Submitted</Badge>;
-      case 'Under Review':
-        return <Badge variant="warning">Under Review</Badge>;
-      case 'Rejected':
-        return <Badge variant="danger">Rejected</Badge>;
-      case 'Draft':
-      default:
-        return <Badge variant="default">Draft</Badge>;
-    }
-  };
-
+  const exceptionCount = workers.filter(hasException).length;
   const tabs = [
-    { id: 'summary', label: 'Timesheet Summary', badge: report?.employees?.length },
-    { id: 'breakdown', label: 'Hours Classification Breakdown' },
-    { 
-      id: 'exceptions', 
-      label: 'Exceptions & Variances', 
-      badge: report?.employees?.filter(e => Math.abs(e.variance_hours) > 0.1 || e.submission_status !== 'Approved').length || undefined 
-    },
+    { id: 'summary', label: 'Summary', badge: workers.length },
+    { id: 'breakdown', label: 'Hours by category' },
+    { id: 'exceptions', label: 'Exceptions', badge: exceptionCount || undefined },
   ];
+
+  const totals = report?.totals;
+  const totalRow = (cells: ReactNode) => (
+    <TableRow className="bg-[var(--panel-subtle)] font-bold border-t-2 border-[var(--border)]">{cells}</TableRow>
+  );
+  const nameCell = (w: WorkerPayrollSummary) => (
+    <TableCell className="font-semibold text-[var(--text)]">
+      <div>{w.full_name}</div>
+      {w.department && <div className="text-[10px] font-normal text-[var(--muted)]">{w.department}</div>}
+    </TableCell>
+  );
+  const branchCell = (w: WorkerPayrollSummary) => (showBranch ? <TableCell className="text-[var(--muted)]">{w.location_name || '—'}</TableCell> : null);
+  const leadingTotalCells = (label: string) => (
+    <>
+      <TableCell className="text-[var(--text)]">{label} ({filtered.length})</TableCell>
+      {showBranch && <TableCell />}
+    </>
+  );
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
-      {/* Toast Notification */}
-      {toastMsg && (
-        <div className="fixed top-20 right-6 z-50 bg-[var(--primary)] text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2">
-          <span>{toastMsg}</span>
-        </div>
-      )}
-
-      {/* Header & Controls */}
+      {/* Header and controls */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Workforce Reports</h1>
-            <Badge variant="info" size="sm">Payroll & Compliance</Badge>
-          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Reports</h1>
           <p className="text-xs text-[var(--muted)] mt-1">
-            Authoritative payroll hours, shift classification breakdown, submission status, and export compliance.
+            Payroll hours for a pay period: worked hours by category, leave, approval status and exports.
           </p>
         </div>
 
-        {/* Action Buttons & Period Selector */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Period Stepper */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="reports-branch" className="sr-only">Branch</label>
+          <select
+            id="reports-branch"
+            value={branchId}
+            onChange={e => setBranchId(e.target.value)}
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
+          >
+            <option value="">All my branches</option>
+            {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
+          </select>
+
           <div className="flex items-center gap-1 bg-[var(--panel)] border border-[var(--border)] rounded-md p-1">
             <button
-              onClick={handlePrevFortnight}
+              type="button"
+              onClick={() => setStartIso(shiftIso(startIso, -14))}
               disabled={loading}
-              title="Previous Pay Period"
-              className="p-1.5 rounded hover:bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-40 transition-colors"
+              aria-label="Previous pay period"
+              className="p-1.5 rounded hover:bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-40 transition-colors cursor-pointer"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-4 h-4" aria-hidden="true" />
             </button>
+            <label htmlFor="reports-period" className="sr-only">Pay period</label>
             <select
-              value={selectedStartDate}
-              onChange={(e) => setSelectedStartDate(e.target.value)}
+              id="reports-period"
+              value={startIso}
+              onChange={e => setStartIso(e.target.value)}
               disabled={loading}
-              className="bg-transparent text-xs font-semibold text-[var(--text)] px-2 py-1 focus:outline-none cursor-pointer"
+              className="bg-transparent text-xs font-semibold text-[var(--text)] px-2 py-1 outline-none cursor-pointer"
             >
-              {payPeriods.map(p => (
-                <option key={p.value} value={p.value} className="bg-[var(--panel)] text-[var(--text)]">
-                  {p.label}
-                </option>
+              {periods.map(p => (
+                <option key={p.value} value={p.value} className="bg-[var(--panel)] text-[var(--text)]">{p.label}</option>
               ))}
             </select>
             <button
-              onClick={handleNextFortnight}
+              type="button"
+              onClick={() => setStartIso(shiftIso(startIso, 14))}
               disabled={loading}
-              title="Next Pay Period"
-              className="p-1.5 rounded hover:bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-40 transition-colors"
+              aria-label="Next pay period"
+              className="p-1.5 rounded hover:bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-40 transition-colors cursor-pointer"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4" aria-hidden="true" />
             </button>
           </div>
 
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => fetchReport(selectedStartDate)}
+            onClick={() => load()}
             disabled={loading}
-            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
+            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />}
           >
             Refresh
           </Button>
-
           <Button
             variant="secondary"
             size="sm"
-            onClick={handleExportPdf}
-            disabled={loading || exportingPdf || !report}
-            isLoading={exportingPdf}
-            leftIcon={<Printer className="w-3.5 h-3.5" />}
+            onClick={exportPdf}
+            disabled={loading || exporting !== null || !report}
+            isLoading={exporting === 'pdf'}
+            leftIcon={<Printer className="w-3.5 h-3.5" aria-hidden="true" />}
           >
             Print / PDF
           </Button>
-
           <Button
             variant="primary"
             size="sm"
-            onClick={handleExportCsv}
-            disabled={loading || exportingCsv || !report}
-            isLoading={exportingCsv}
-            leftIcon={<Download className="w-3.5 h-3.5" />}
+            onClick={exportCsv}
+            disabled={loading || exporting !== null || !report}
+            isLoading={exporting === 'csv'}
+            leftIcon={<Download className="w-3.5 h-3.5" aria-hidden="true" />}
           >
             Export CSV
           </Button>
@@ -325,300 +271,207 @@ export default function Reports() {
       </div>
 
       {error && (
-        <div className="p-4 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
+        <div role="alert" className="p-4 rounded-lg bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)] text-xs flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* KPI Cards */}
-      {report && (
+      {/* Key figures */}
+      {totals && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Card className="p-4">
-            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Rostered Hours</div>
+            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Rostered</div>
+            <div className="text-xl font-bold text-[var(--text)] mt-1">{hours(totals.total_rostered)}</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Worked</div>
+            <div className="text-xl font-bold text-[var(--text)] mt-1">{hours(totals.total_actual)}</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Variance vs contract</div>
+            <div className={`text-xl font-bold mt-1 ${varianceClass(n(totals.total_variance))}`}>{signedHours(n(totals.total_variance))}</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Unplanned</div>
+            <div className={`text-xl font-bold mt-1 ${n(totals.total_unplanned) > 0 ? 'text-[var(--warn)]' : 'text-[var(--text)]'}`}>{hours(totals.total_unplanned)}</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Leave</div>
             <div className="text-xl font-bold text-[var(--text)] mt-1">
-              {report.totals.total_rostered.toFixed(2)}h
+              {hours(n(totals.total_sick) + n(totals.total_annual) + n(totals.total_til) + n(totals.total_lwip) + n(totals.total_other))}
             </div>
-            <div className="text-[10px] text-[var(--muted)] mt-1">Scheduled across team</div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Worked Hours</div>
-            <div className="text-xl font-bold text-[var(--text)] mt-1">
-              {report.totals.total_actual.toFixed(2)}h
-            </div>
-            <div className="text-[10px] text-[var(--muted)] mt-1">Actual completed time</div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Net Variance</div>
-            <div className={`text-xl font-bold mt-1 ${
-              report.totals.total_variance > 0 
-                ? 'text-amber-400' 
-                : report.totals.total_variance < 0 
-                  ? 'text-rose-400' 
-                  : 'text-emerald-400'
-            }`}>
-              {report.totals.total_variance > 0 ? `+${report.totals.total_variance.toFixed(2)}h` : `${report.totals.total_variance.toFixed(2)}h`}
-            </div>
-            <div className="text-[10px] text-[var(--muted)] mt-1">Actual vs rostered gap</div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Overtime / Unplanned</div>
-            <div className={`text-xl font-bold mt-1 ${report.totals.total_unplanned > 0 ? 'text-amber-400' : 'text-[var(--text)]'}`}>
-              {report.totals.total_unplanned.toFixed(2)}h
-            </div>
-            <div className="text-[10px] text-[var(--muted)] mt-1">Unrostered shifts & OT</div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-wider">Paid Leave & Hol.</div>
-            <div className="text-xl font-bold text-[var(--text)] mt-1">
-              {(report.totals.total_sick + report.totals.total_annual + report.totals.total_til + report.totals.total_public_holiday).toFixed(2)}h
-            </div>
-            <div className="text-[10px] text-[var(--muted)] mt-1">Annual, sick, TIL & hol.</div>
+            <div className="text-[10px] text-[var(--muted)] mt-1">Sick, annual, TIL, LWIP and other</div>
           </Card>
         </div>
       )}
 
-      {/* Tabs & Filters */}
+      {/* Tabs and filters */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <Tabs 
-            tabs={tabs} 
-            activeTab={activeTab} 
-            onChange={setActiveTab} 
-            variant="pill" 
-          />
-
+          <Tabs tabs={tabs} activeTab={tab} onChange={id => setTab(id as ReportTab)} variant="pill" />
           <div className="flex items-center gap-2">
             <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
               <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search staff or dept..."
-                className="bg-[var(--input-bg)] text-xs text-[var(--text)] pl-8 pr-3 py-1.5 rounded-md border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-indigo-500 w-48 sm:w-56"
+                type="search"
+                aria-label="Search workers"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search workers…"
+                className="bg-[var(--input-bg)] text-xs text-[var(--text)] pl-8 pr-3 py-1.5 rounded-md border border-[var(--border)] outline-none focus:border-[var(--primary)] w-48 sm:w-56"
               />
             </div>
-
             {departments.length > 0 && (
               <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
-                className="bg-[var(--panel-subtle)] text-xs text-[var(--text)] px-2.5 py-1.5 rounded-md border border-[var(--border)] focus:outline-none cursor-pointer"
+                aria-label="Department"
+                value={department}
+                onChange={e => setDepartment(e.target.value)}
+                className="bg-[var(--panel-subtle)] text-xs text-[var(--text)] px-2.5 py-1.5 rounded-md border border-[var(--border)] outline-none cursor-pointer"
               >
-                <option value="ALL">All Departments</option>
-                {departments.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
+                <option value="ALL">All departments</option>
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             )}
           </div>
         </div>
 
-        {/* Content Views */}
         {loading ? (
           <div className="p-12 text-center bg-[var(--panel)] border border-[var(--border)] rounded-lg">
-            <RefreshCw className="w-6 h-6 animate-spin text-indigo-400 mx-auto mb-2" />
-            <p className="text-xs text-[var(--muted)]">Aggregating live payroll and timesheet records...</p>
+            <RefreshCw className="w-6 h-6 animate-spin text-[var(--primary)] mx-auto mb-2" aria-hidden="true" />
+            <p className="text-xs text-[var(--muted)]">Adding up the pay period…</p>
           </div>
-        ) : !report || filteredEmployees.length === 0 ? (
+        ) : !report || filtered.length === 0 ? (
           <EmptyState
-            icon={activeTab === 'exceptions' ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Users className="w-5 h-5" />}
-            title={activeTab === 'exceptions' ? "No Exceptions Found" : "No Staff Records Found"}
+            icon={tab === 'exceptions' ? <CheckCircle2 className="w-5 h-5 text-[var(--success)]" aria-hidden="true" /> : <Users className="w-5 h-5" aria-hidden="true" />}
+            title={tab === 'exceptions' ? 'No exceptions' : 'No workers to show'}
             description={
-              activeTab === 'exceptions'
-                ? "Every timesheet in this pay period perfectly matches the roster and has been approved with zero discrepancies."
-                : "No employee data matched your active filters or department selection for this pay period."
+              tab === 'exceptions'
+                ? 'Every timesheet shown is approved, matches the contract and has no unplanned hours.'
+                : 'No workers match these filters for this pay period.'
             }
           />
         ) : (
-          <div>
-            {/* Tab 1: Summary Table */}
-            {activeTab === 'summary' && (
+          <div className="overflow-x-auto">
+            {tab === 'summary' && (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Department</TableHead>
+                    <TableHead>Worker</TableHead>
+                    {showBranch && <TableHead>Branch</TableHead>}
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Contract</TableHead>
                     <TableHead className="text-right">Rostered</TableHead>
-                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Worked</TableHead>
                     <TableHead className="text-right">Variance</TableHead>
                     <TableHead className="text-right">Unplanned</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredEmployees.map((emp) => (
-                    <TableRow key={emp.employee_id}>
-                      <TableCell className="font-semibold text-[var(--text)]">
-                        {emp.full_name}
-                      </TableCell>
-                      <TableCell className="text-[var(--muted)]">
-                        {emp.department || '—'}
-                      </TableCell>
-                      <TableCell>
-                        {getStatusBadge(emp.submission_status)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-[var(--muted)]">
-                        {emp.contracted_hours > 0 ? `${emp.contracted_hours.toFixed(1)}h` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-[var(--muted)]">
-                        {emp.rostered_hours.toFixed(2)}h
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold text-[var(--text)]">
-                        {emp.actual_hours.toFixed(2)}h
-                      </TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${
-                        emp.variance_hours > 0.05
-                          ? 'text-amber-400'
-                          : emp.variance_hours < -0.05
-                            ? 'text-rose-400'
-                            : 'text-emerald-400'
-                      }`}>
-                        {emp.variance_hours > 0 ? `+${emp.variance_hours.toFixed(2)}h` : `${emp.variance_hours.toFixed(2)}h`}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-[var(--muted)]">
-                        {emp.unplanned_hours > 0 ? (
-                          <span className="text-amber-400 font-semibold">+{emp.unplanned_hours.toFixed(2)}h</span>
-                        ) : '—'}
-                      </TableCell>
+                  {filtered.map(w => (
+                    <TableRow key={w.employee_id}>
+                      {nameCell(w)}
+                      {branchCell(w)}
+                      <TableCell><StatusBadge status={w.submission_status} /></TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hoursOrDash(w.contracted_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hours(w.rostered_hours)}</TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-[var(--text)]">{hours(w.actual_hours)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${varianceClass(n(w.variance_hours))}`}>{signedHours(n(w.variance_hours))}</TableCell>
+                      <TableCell className="text-right font-mono">{hoursOrDash(w.unplanned_hours)}</TableCell>
                     </TableRow>
                   ))}
+                  {totalRow(
+                    <>
+                      {leadingTotalCells('Total')}
+                      <TableCell />
+                      <TableCell className="text-right font-mono">{hours(sumOf(filtered, 'contracted_hours'))}</TableCell>
+                      <TableCell className="text-right font-mono">{hours(sumOf(filtered, 'rostered_hours'))}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--text)]">{hours(sumOf(filtered, 'actual_hours'))}</TableCell>
+                      <TableCell className={`text-right font-mono ${varianceClass(sumOf(filtered, 'variance_hours'))}`}>{signedHours(sumOf(filtered, 'variance_hours'))}</TableCell>
+                      <TableCell className="text-right font-mono">{hours(sumOf(filtered, 'unplanned_hours'))}</TableCell>
+                    </>,
+                  )}
                 </TableBody>
               </Table>
             )}
 
-            {/* Tab 2: Hours Classification Breakdown Table */}
-            {activeTab === 'breakdown' && (
+            {tab === 'breakdown' && (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Employee</TableHead>
+                    <TableHead>Worker</TableHead>
+                    {showBranch && <TableHead>Branch</TableHead>}
                     <TableHead className="text-right">Ordinary</TableHead>
                     <TableHead className="text-right">Saturday</TableHead>
                     <TableHead className="text-right">Sunday</TableHead>
-                    <TableHead className="text-right">Pub Holiday</TableHead>
+                    <TableHead className="text-right">Public holiday</TableHead>
                     <TableHead className="text-right">Annual Leave</TableHead>
                     <TableHead className="text-right">Sick Leave</TableHead>
-                    <TableHead className="text-right">TIL Taken</TableHead>
-                    <TableHead className="text-right font-bold text-[var(--text)]">Total Actual</TableHead>
+                    <TableHead className="text-right">TIL</TableHead>
+                    <TableHead className="text-right">LWIP</TableHead>
+                    <TableHead className="text-right">Other</TableHead>
+                    <TableHead className="text-right">Total worked</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredEmployees.map((emp) => (
-                    <TableRow key={emp.employee_id}>
-                      <TableCell className="font-semibold text-[var(--text)]">
-                        <div>{emp.full_name}</div>
-                        <div className="text-[10px] text-[var(--muted)]">{emp.department || 'General'}</div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {emp.normal_hours > 0 ? `${emp.normal_hours.toFixed(2)}h` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {emp.saturday_hours > 0 ? (
-                          <span className="text-indigo-400 font-semibold">{emp.saturday_hours.toFixed(2)}h</span>
-                        ) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {emp.sunday_hours > 0 ? (
-                          <span className="text-purple-400 font-semibold">{emp.sunday_hours.toFixed(2)}h</span>
-                        ) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {emp.public_holiday_hours > 0 ? (
-                          <span className="text-amber-400 font-semibold">{emp.public_holiday_hours.toFixed(2)}h</span>
-                        ) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-[var(--muted)]">
-                        {emp.annual_hours > 0 ? `${emp.annual_hours.toFixed(2)}h` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-[var(--muted)]">
-                        {emp.sick_hours > 0 ? `${emp.sick_hours.toFixed(2)}h` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-[var(--muted)]">
-                        {emp.til_hours > 0 ? `${emp.til_hours.toFixed(2)}h` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-bold text-[var(--text)]">
-                        {emp.actual_hours.toFixed(2)}h
-                      </TableCell>
+                  {filtered.map(w => (
+                    <TableRow key={w.employee_id}>
+                      {nameCell(w)}
+                      {branchCell(w)}
+                      <TableCell className="text-right font-mono">{hoursOrDash(w.normal_hours)}</TableCell>
+                      <TableCell className="text-right font-mono">{hoursOrDash(w.saturday_hours)}</TableCell>
+                      <TableCell className="text-right font-mono">{hoursOrDash(w.sunday_hours)}</TableCell>
+                      <TableCell className="text-right font-mono">{hoursOrDash(w.public_holiday_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hoursOrDash(w.annual_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hoursOrDash(w.sick_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hoursOrDash(w.til_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hoursOrDash(w.lwip_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-[var(--muted)]">{hoursOrDash(w.other_hours)}</TableCell>
+                      <TableCell className="text-right font-mono font-bold text-[var(--text)]">{hours(w.actual_hours)}</TableCell>
                     </TableRow>
                   ))}
+                  {totalRow(
+                    <>
+                      {leadingTotalCells('Total')}
+                      {(['normal_hours', 'saturday_hours', 'sunday_hours', 'public_holiday_hours', 'annual_hours', 'sick_hours', 'til_hours', 'lwip_hours', 'other_hours', 'actual_hours'] as const).map(key => (
+                        <TableCell key={key} className="text-right font-mono">{hours(sumOf(filtered, key))}</TableCell>
+                      ))}
+                    </>,
+                  )}
                 </TableBody>
               </Table>
             )}
 
-            {/* Tab 3: Exceptions & Variances Table */}
-            {activeTab === 'exceptions' && (
+            {tab === 'exceptions' && (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Employee</TableHead>
+                    <TableHead>Worker</TableHead>
+                    {showBranch && <TableHead>Branch</TableHead>}
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Rostered</TableHead>
-                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Worked</TableHead>
                     <TableHead className="text-right">Variance</TableHead>
-                    <TableHead>Exception Details</TableHead>
+                    <TableHead>Why it’s listed</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredEmployees.map((emp) => {
-                    const isUnder = emp.variance_hours < -0.1;
-                    const isOver = emp.variance_hours > 0.1;
-                    const isUnsubmitted = emp.submission_status === 'Draft';
-                    const isRejected = emp.submission_status === 'Rejected';
-
+                  {filtered.map(w => {
+                    const variance = n(w.variance_hours);
                     return (
-                      <TableRow key={emp.employee_id}>
-                        <TableCell className="font-semibold text-[var(--text)]">
-                          <div>{emp.full_name}</div>
-                          <div className="text-[10px] text-[var(--muted)]">{emp.department || 'General'}</div>
-                        </TableCell>
-                        <TableCell>
-                          {getStatusBadge(emp.submission_status)}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-[var(--muted)]">
-                          {emp.rostered_hours.toFixed(2)}h
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-semibold text-[var(--text)]">
-                          {emp.actual_hours.toFixed(2)}h
-                        </TableCell>
-                        <TableCell className={`text-right font-mono font-semibold ${
-                          isOver ? 'text-amber-400' : isUnder ? 'text-rose-400' : 'text-emerald-400'
-                        }`}>
-                          {emp.variance_hours > 0 ? `+${emp.variance_hours.toFixed(2)}h` : `${emp.variance_hours.toFixed(2)}h`}
-                        </TableCell>
+                      <TableRow key={w.employee_id}>
+                        {nameCell(w)}
+                        {branchCell(w)}
+                        <TableCell><StatusBadge status={w.submission_status} /></TableCell>
+                        <TableCell className="text-right font-mono text-[var(--muted)]">{hours(w.rostered_hours)}</TableCell>
+                        <TableCell className="text-right font-mono font-semibold text-[var(--text)]">{hours(w.actual_hours)}</TableCell>
+                        <TableCell className={`text-right font-mono font-semibold ${varianceClass(variance)}`}>{signedHours(variance)}</TableCell>
                         <TableCell>
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {isOver && (
-                              <Badge variant="warning" size="sm">
-                                Overtime (+{emp.variance_hours.toFixed(2)}h)
-                              </Badge>
-                            )}
-                            {isUnder && (
-                              <Badge variant="danger" size="sm">
-                                Undertime ({emp.variance_hours.toFixed(2)}h)
-                              </Badge>
-                            )}
-                            {isUnsubmitted && (
-                              <Badge variant="default" size="sm">
-                                Not Submitted
-                              </Badge>
-                            )}
-                            {isRejected && (
-                              <Badge variant="danger" size="sm">
-                                Submission Rejected
-                              </Badge>
-                            )}
-                            {emp.unplanned_hours > 0 && (
-                              <Badge variant="purple" size="sm">
-                                {emp.unplanned_hours.toFixed(2)}h Unplanned Shift
-                              </Badge>
-                            )}
+                            {variance > 0.1 && <Badge variant="warning" size="sm">Over contract ({signedHours(variance)})</Badge>}
+                            {variance < -0.1 && <Badge variant="danger" size="sm">Under contract ({signedHours(variance)})</Badge>}
+                            {w.submission_status === 'Draft' && <Badge variant="default" size="sm">Not approved</Badge>}
+                            {n(w.unplanned_hours) > 0 && <Badge variant="purple" size="sm">{hours(w.unplanned_hours)} unplanned</Badge>}
                           </div>
                         </TableCell>
                       </TableRow>

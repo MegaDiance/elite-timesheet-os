@@ -1,226 +1,216 @@
 import { useState, useRef, useEffect, type FormEvent } from 'react';
-import { 
-  X, 
-  Send, 
-  Bot, 
-  User, 
-  ArrowRight,
-  ChevronDown
-} from 'lucide-react';
+import { X, Send, Bot, User, ArrowRight, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { ROLE_LABEL, useAccess, type Permission } from '../hooks/useAccess';
 
-interface HelpChatbotProps {
-  role: string;
+interface ChatAction {
+  label: string;
+  path?: string;
+  permission?: Permission;
+  triggerTutorial?: boolean;
 }
 
 interface ChatMessage {
   id: string;
   sender: 'bot' | 'user';
   text: string;
-  action?: {
-    label: string;
-    path?: string;
-    triggerTutorial?: boolean;
-  };
+  action?: ChatAction;
 }
 
-export default function HelpChatbot({ role }: HelpChatbotProps) {
+interface Topic {
+  /** Matched against the lower-cased question. */
+  match: RegExp;
+  owner: string;
+  branchAdmin: string;
+  action?: ChatAction;
+}
+
+const TOPICS: Topic[] = [
+  {
+    match: /tutorial|tour|walkthrough/,
+    owner: 'Starting the one-minute tour of SimpleHours.',
+    branchAdmin: 'Starting the one-minute tour of SimpleHours.',
+    action: { label: 'Start the tour', triggerTutorial: true },
+  },
+  {
+    match: /branch admin|invit|access|assign/,
+    owner:
+      'Invite a Branch Admin from the Branch Admins page: enter their email and choose the branches they look after. They get an email invitation and, once they accept, sign in with your organisation’s sign-in link. You can change their branches or remove their access at any time.',
+    branchAdmin:
+      'The Organisation Owner decides who is a Branch Admin and which branches they look after. Ask the owner if you need access to another branch.',
+    action: { label: 'Open Branch Admins', path: '/branch-admins', permission: 'branch_admins.manage' },
+  },
+  {
+    match: /\block|unlock/,
+    owner:
+      'Locks are set per branch for each fortnight. A roster lock stops changes to rostered shifts (worked hours can still be entered). A timesheet lock stops all timesheet changes. To lock or unlock, enter your own password or the organisation lock password for that lock. You can set the lock passwords in Settings.',
+    branchAdmin:
+      'Locks are set per branch for each fortnight. A roster lock stops changes to rostered shifts (worked hours can still be entered). A timesheet lock stops all timesheet changes. To lock or unlock, enter your own password or the organisation lock password the owner gave you.',
+    action: { label: 'Go to the Roster', path: '/roster', permission: 'rosters.manage' },
+  },
+  {
+    match: /segment|split|roster|shift|schedule|template|copy/,
+    owner:
+      'Plan each fortnight on the Roster. A day is a list of segments: use “+ Add segment” for a split shift or part-day leave (for example Normal Work 08:00–12:00 and Annual Leave 13:00–16:00). Segments can’t overlap, and an end time earlier than the start is an overnight shift. You can copy a day to other days or workers, or auto-roster from each worker’s template.',
+    branchAdmin:
+      'Plan each fortnight for your branches on the Roster. A day is a list of segments: use “+ Add segment” for a split shift or part-day leave (for example Normal Work 08:00–12:00 and Annual Leave 13:00–16:00). Segments can’t overlap, and an end time earlier than the start is an overnight shift. You can copy a day to other days or workers, or auto-roster from each worker’s template.',
+    action: { label: 'Go to the Roster', path: '/roster', permission: 'rosters.manage' },
+  },
+  {
+    match: /timesheet|approv|reopen|worked|actual|hours/,
+    owner:
+      'On Timesheets, record the hours actually worked for each segment; the roster stays as planned. When a worker’s fortnight is right, select Approve (you can approve several at once). Approved timesheets can’t be edited: select Reopen to correct one, then approve it again.',
+    branchAdmin:
+      'On Timesheets, record the hours actually worked for each segment; the roster stays as planned. When a worker’s fortnight is right, select Approve (you can approve several at once). Approved timesheets can’t be edited: select Reopen to correct one, then approve it again.',
+    action: { label: 'Go to Timesheets', path: '/timesheets', permission: 'timesheets.manage' },
+  },
+  {
+    match: /break|lunch|meal/,
+    owner:
+      'Your organisation’s unpaid break (set in Settings, with separate weekday and weekend lengths) is taken once per day when the day’s segments add up to at least the break threshold and the gaps between them are shorter than the break. It comes off the longest Normal Work segment. SimpleHours calculates this for you.',
+    branchAdmin:
+      'The organisation’s unpaid break (set by the Organisation Owner, with separate weekday and weekend lengths) is taken once per day when the day’s segments add up to at least the break threshold and the gaps between them are shorter than the break. It comes off the longest Normal Work segment. SimpleHours calculates this for you.',
+  },
+  {
+    match: /leave|sick|annual|\btil\b|lwip|holiday/,
+    owner:
+      'Leave is recorded as a segment on the day: Sick Leave, Annual Leave, TIL, LWIP (leave without pay) or Other. Add it on the Roster or Timesheets with “+ Add segment”. You set the organisation’s public holidays, and they’re counted separately in reports.',
+    branchAdmin:
+      'Leave is recorded as a segment on the day: Sick Leave, Annual Leave, TIL, LWIP (leave without pay) or Other. Add it on the Roster or Timesheets with “+ Add segment”.',
+    action: { label: 'Go to the Roster', path: '/roster', permission: 'rosters.manage' },
+  },
+  {
+    match: /report|payroll|export|csv|pdf/,
+    owner:
+      'Reports totals each worker’s fortnight by category: normal, Saturday, Sunday and public holiday hours, Sick Leave, Annual Leave, TIL, LWIP, Other and unplanned hours, next to rostered, worked and contracted hours. Export it as CSV or PDF for payroll.',
+    branchAdmin:
+      'Reports totals each worker’s fortnight for your branches by category: normal, Saturday, Sunday and public holiday hours, Sick Leave, Annual Leave, TIL, LWIP, Other and unplanned hours. Export it as CSV or PDF for payroll.',
+    action: { label: 'Open Reports', path: '/reports', permission: 'reports.view' },
+  },
+  {
+    match: /worker|people|team member|department|contract/,
+    owner:
+      'Workers are the people you roster and pay; they don’t sign in. Add them on the Workers page with their branch, department and contracted hours, and give them a fortnight template to speed up rostering.',
+    branchAdmin:
+      'Workers are the people you roster and pay; they don’t sign in. Add them to one of your branches on the Workers page with their department and contracted hours, and give them a fortnight template to speed up rostering.',
+    action: { label: 'Open Workers', path: '/workers', permission: 'workers.manage' },
+  },
+  {
+    match: /branch|location|site/,
+    owner:
+      'Create, rename, deactivate and reactivate branches on the Branches page. Each branch has its own address and timezone, and its own roster and timesheet locks. The last active branch can’t be deactivated.',
+    branchAdmin:
+      'The Branches page shows the branches you look after. Only the Organisation Owner can add or change branches.',
+    action: { label: 'Open Branches', path: '/branches', permission: 'branch.view' },
+  },
+  {
+    match: /password|sign in|sign-in|login|log in|2fa|two-step|two factor|security|session/,
+    owner:
+      'Change your password, turn on two-step verification and see where you’re signed in from Settings. You’re signed out after 15 minutes without activity.',
+    branchAdmin:
+      'Change your password, turn on two-step verification and see where you’re signed in from Settings. You’re signed out after 15 minutes without activity.',
+    action: { label: 'Open Settings', path: '/settings' },
+  },
+  {
+    match: /audit|history|\blogs?\b/,
+    owner: 'The Audit Log records sign-ins, approvals, lock changes and other edits, with who made them and when.',
+    branchAdmin: 'The Audit Log is available to the Organisation Owner.',
+    action: { label: 'Open the Audit Log', path: '/audit', permission: 'audit.view' },
+  },
+  {
+    match: /chat|notice|announce|message/,
+    owner: 'Team Chat is where you and your Branch Admins post updates, react and reply.',
+    branchAdmin: 'Team Chat is where the Organisation Owner and Branch Admins post updates, react and reply.',
+    action: { label: 'Open Team Chat', path: '/announcements' },
+  },
+];
+
+const HELP_TEXT = {
+  owner:
+    'Try asking about:\n• "segments" – split shifts and part-day leave\n• "timesheets" – recording, approving and reopening\n• "locks" – per-branch roster and timesheet locks\n• "breaks" – how the unpaid break is worked out\n• "workers" and "branches"\n• "branch admins" – inviting and assigning\n• "reports" – payroll hours and exports\n• "tour" – the one-minute walkthrough',
+  branchAdmin:
+    'Try asking about:\n• "segments" – split shifts and part-day leave\n• "timesheets" – recording, approving and reopening\n• "locks" – per-branch roster and timesheet locks\n• "breaks" – how the unpaid break is worked out\n• "workers" – adding workers to your branches\n• "reports" – payroll hours and exports\n• "tour" – the one-minute walkthrough',
+};
+
+export default function HelpChatbot() {
   const navigate = useNavigate();
+  const { access, isOwner, can } = useAccess();
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isMinimized, setIsMinimized] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const isManager = ['Admin', 'Company Admin', 'Platform Admin', 'Manager'].includes(role);
-
-  // Initial greeting depending on role
-  const initialMessages: ChatMessage[] = [
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [
     {
       id: 'welcome',
       sender: 'bot',
-      text: isManager
-        ? `Hello! I'm your SimpleHours Manager Assistant. I can guide you through managing rosters, approving timesheets, reviewing leave, and running payroll reports. Type "help" or select a quick topic below.`
-        : `Hi there! I'm your SimpleHours Assistant. I can help you check your schedule, record your daily hours, submit timesheets, and request leave. Type "help" or select a quick topic below.`
-    }
-  ];
+      text: isOwner
+        ? 'Hi! I can help with branches, Branch Admins, rosters, timesheets, locks and payroll reports. Type "help" or pick a topic below.'
+        : 'Hi! I can help with rosters, timesheets, locks, workers and payroll reports for your branches. Type "help" or pick a topic below.',
+    },
+  ]);
 
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
-
-  // Quick suggestion chips
-  const employeeChips = [
-    { label: 'How to enter hours', query: 'enter hours' },
-    { label: 'When to submit', query: 'when to submit' },
-    { label: 'How breaks work', query: 'breaks' },
-    { label: 'Start visual tour', query: 'tutorial' }
-  ];
-
-  const managerChips = [
-    { label: 'Review timesheets', query: 'review timesheets' },
-    { label: 'Publish roster', query: 'roster' },
-    { label: 'Approve leave', query: 'leave' },
-    { label: 'Start visual tour', query: 'tutorial' }
-  ];
-
-  const chips = isManager ? managerChips : employeeChips;
+  const chips = isOwner
+    ? [
+        { label: 'Invite a Branch Admin', query: 'branch admin' },
+        { label: 'Add segments', query: 'segments' },
+        { label: 'Approve timesheets', query: 'approve timesheets' },
+        { label: 'Lock a fortnight', query: 'lock' },
+        { label: 'Payroll report', query: 'report' },
+        { label: 'Start the tour', query: 'tour' },
+      ]
+    : [
+        { label: 'Add segments', query: 'segments' },
+        { label: 'Approve timesheets', query: 'approve timesheets' },
+        { label: 'Lock a fortnight', query: 'lock' },
+        { label: 'Add a worker', query: 'workers' },
+        { label: 'Payroll report', query: 'report' },
+        { label: 'Start the tour', query: 'tour' },
+      ];
 
   useEffect(() => {
-    if (isOpen && !isMinimized) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (isOpen && !isMinimized) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isOpen, isMinimized]);
 
   const processQuery = (rawQuery: string) => {
     const q = rawQuery.trim().toLowerCase();
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      sender: 'user',
-      text: rawQuery
-    };
+    const now = Date.now();
+    const userMsg: ChatMessage = { id: `${now}-q`, sender: 'user', text: rawQuery };
+    const reply: ChatMessage = { id: `${now}-a`, sender: 'bot', text: '' };
 
-    let botResponse: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      sender: 'bot',
-      text: ''
-    };
-
-    if (q === 'help' || q === 'commands' || q === '?') {
-      if (isManager) {
-        botResponse.text = `Available commands for Managers & Admins:\n• "timesheets" - Review and approve pending fortnights\n• "roster" - Build, auto-assign, and publish schedules\n• "leave" - Review and action employee leave requests\n• "employees" - Manage staff profiles and send invitations\n• "reports" - Export payroll and award variance reports\n• "tutorial" - Launch the interactive 1-minute visual tour`;
-      } else {
-        botResponse.text = `Available commands for Team Members:\n• "timesheet" - Enter today's hours or submit fortnight\n• "schedule" - View your shifts and rostered days off\n• "breaks" - Learn how automatic meal breaks work\n• "leave" - How to check your leave balances\n• "history" - View past pay cycles and approval status\n• "tutorial" - Launch the interactive 1-minute visual tour`;
-      }
-    } else if (q.includes('tutorial') || q.includes('tour') || q.includes('walkthrough')) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `Starting the 1-minute visual walkthrough of SimpleHours!`,
-        action: {
-          label: 'Start 1-Minute Tour',
-          triggerTutorial: true
-        }
-      };
-    } else if (isManager && (q.includes('timesheet') || q.includes('approve') || q.includes('review'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `You can review and approve employee timesheets in the Timesheet Review queue. You can approve timesheets with 1-click, approve all in bulk, or return timesheets with specific feedback notes if changes are needed.`,
-        action: {
-          label: 'Go to Timesheet Review',
-          path: '/timesheets'
-        }
-      };
-    } else if (!isManager && (q.includes('enter') || q.includes('hours') || q.includes('clock') || q.includes('timesheet'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `To record your hours:\n1. Open your Timesheet.\n2. Verify your Start and Finish times for each day worked.\n3. Tap "Match Schedule" if your hours matched the roster.\n4. Tap "Save" on that day.\n5. Once all 14 days are recorded, tap "Submit timesheet".`,
-        action: {
-          label: 'Go to My Timesheet',
-          path: '/timesheet'
-        }
-      };
-    } else if (!isManager && (q.includes('when') || q.includes('submit') || q.includes('deadline'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `Submit your timesheet at the end of every 14-day pay fortnight, once your final shift is completed. Your manager will then review and approve it for payroll.`,
-        action: {
-          label: 'Open Timesheet',
-          path: '/timesheet'
-        }
-      };
-    } else if (q.includes('break') || q.includes('lunch') || q.includes('meal')) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `Under standard award rules, shifts over 6 hours automatically have a 30-minute unpaid meal break deducted. If your actual break was different, you can select None, 15m, 30m, 45m, or 60m from the dropdown when saving your hours.`
-      };
-    } else if (q.includes('lock') || q.includes('locked')) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: isManager
-          ? `Timesheets and rosters are locked once the fortnight payroll period is sealed. You can lock or unlock cycles from the Roster toolbar status indicators.`
-          : `Your timesheet is locked once your manager has approved it or closed the pay period. If you need to correct a past shift, contact your manager so they can return it for changes.`
-      };
-    } else if (isManager && (q.includes('roster') || q.includes('schedule') || q.includes('shift'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `Manage schedules in the Roster Grid. You can add shifts, auto-roster staff according to their weekly availability templates, check budget totals, and publish to your team with 1 click.`,
-        action: {
-          label: 'Go to Roster Grid',
-          path: '/roster'
-        }
-      };
-    } else if (!isManager && (q.includes('schedule') || q.includes('shift') || q.includes('roster') || q.includes('working'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `You can check your upcoming shifts and rostered days off anytime on the Schedule page. It shows your start/finish times and total rostered hours for the 14-day fortnight.`,
-        action: {
-          label: 'View My Schedule',
-          path: '/schedule'
-        }
-      };
-    } else if (q.includes('leave') || q.includes('holiday') || q.includes('sick') || q.includes('annual')) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: isManager
-          ? `You can view, approve, or reject employee leave applications from the Leave Board.`
-          : `You can check leave balances or apply for leave through your management portal. Shifts approved as leave will automatically show on your schedule.`,
-        action: isManager ? { label: 'Open Leave Board', path: '/leave-requests' } : undefined
-      };
-    } else if (isManager && (q.includes('employee') || q.includes('staff') || q.includes('invite') || q.includes('user'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `Manage your team from the Staff Directory. Add new employees, set pay rates and contracted hours, and generate secure invite links.`,
-        action: {
-          label: 'Open Staff Directory',
-          path: '/employees'
-        }
-      };
-    } else if (isManager && (q.includes('report') || q.includes('payroll') || q.includes('export') || q.includes('xero'))) {
-      botResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'bot',
-        text: `Export pay runs, award breakdown summaries, and audit logs from the Reports hub. You can download CSVs or sync with Xero.`,
-        action: {
-          label: 'Open Reports',
-          path: '/reports'
-        }
-      };
+    if (q === 'help' || q === '?' || q === 'commands') {
+      reply.text = isOwner ? HELP_TEXT.owner : HELP_TEXT.branchAdmin;
     } else {
-      botResponse.text = isManager
-        ? `I didn't quite catch that. Try asking about "timesheets", "roster", "leave", "employees", "reports", or type "help" for a full list of commands.`
-        : `I didn't quite catch that. Try asking about "enter hours", "when to submit", "breaks", "schedule", or type "help" for a list of topics.`;
+      const topic = TOPICS.find(t => t.match.test(q));
+      if (topic) {
+        reply.text = isOwner ? topic.owner : topic.branchAdmin;
+        // Only offer a shortcut to a page this account can open.
+        if (topic.action && (!topic.action.permission || can(topic.action.permission))) reply.action = topic.action;
+      } else {
+        reply.text = 'Sorry, I didn’t catch that. Try "segments", "timesheets", "locks", "breaks", "workers" or "reports", or type "help".';
+      }
     }
 
-    setMessages(prev => [...prev, userMsg, botResponse]);
+    setMessages(prev => [...prev, userMsg, reply]);
     setInput('');
   };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    processQuery(input);
+    if (input.trim()) processQuery(input);
   };
 
-  const handleActionClick = (action: NonNullable<ChatMessage['action']>) => {
+  const handleActionClick = (action: ChatAction) => {
     if (action.triggerTutorial) {
-      window.dispatchEvent(new CustomEvent('start-simplehours-tutorial'));
-      setIsOpen(false);
+      window.dispatchEvent(new Event('start-simplehours-tutorial'));
     } else if (action.path) {
       navigate(action.path);
-      setIsOpen(false);
     }
+    setIsOpen(false);
   };
 
   return (
     <>
-      {/* Floating Launcher Button */}
       {!isOpen && (
         <button
           onClick={() => {
@@ -228,25 +218,23 @@ export default function HelpChatbot({ role }: HelpChatbotProps) {
             setIsMinimized(false);
           }}
           className="fixed bottom-20 sm:bottom-6 right-5 sm:right-6 z-40 p-3 rounded-full bg-[var(--primary)] text-white shadow-xl hover:bg-[var(--primary-h)] hover:scale-105 active:scale-95 transition-all duration-200 flex items-center gap-2 group"
-          title="SimpleHours Help Assistant"
-          aria-label="Open SimpleHours Help Assistant"
+          title="SimpleHours help assistant"
+          aria-label="Open the SimpleHours help assistant"
         >
           <Bot className="w-5 h-5 transition-transform group-hover:rotate-12" />
-          <span className="hidden sm:inline-block text-xs font-bold pr-1">Need Help?</span>
+          <span className="hidden sm:inline-block text-xs font-bold pr-1">Need help?</span>
           <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-400 ring-2 ring-[var(--panel)]"></span>
         </button>
       )}
 
-      {/* Chatbot Window */}
       {isOpen && (
-        <div 
+        <div
           className={`fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-50 w-[calc(100vw-32px)] sm:w-96 bg-[var(--panel)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-200 animate-in fade-in slide-in-from-bottom-4 ${
             isMinimized ? 'h-14' : 'h-[500px] max-h-[75vh]'
           }`}
           role="dialog"
-          aria-label="SimpleHours Help Assistant"
+          aria-label="SimpleHours help assistant"
         >
-          {/* Header */}
           <div className="px-4 py-3 bg-[var(--sidebar-bg)] text-white border-b border-white/10 flex items-center justify-between shrink-0 select-none">
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-[var(--primary)] flex items-center justify-center text-white">
@@ -255,11 +243,11 @@ export default function HelpChatbot({ role }: HelpChatbotProps) {
               <div>
                 <div className="font-bold text-xs flex items-center gap-1.5">
                   <span>SimpleHours Assistant</span>
-                  <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-white/10 text-emerald-300">
-                    {isManager ? 'Manager Mode' : 'Staff Mode'}
-                  </span>
+                  {access && (
+                    <span className="px-1.5 rounded text-[9px] font-semibold bg-white/10 text-emerald-300">{ROLE_LABEL[access.role]}</span>
+                  )}
                 </div>
-                <div className="text-[10px] text-white/60">Instant answers & guidance</div>
+                <div className="text-[10px] text-white/60">Quick answers and shortcuts</div>
               </div>
             </div>
 
@@ -267,14 +255,14 @@ export default function HelpChatbot({ role }: HelpChatbotProps) {
               <button
                 onClick={() => setIsMinimized(!isMinimized)}
                 className="p-1 rounded text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-                title={isMinimized ? 'Expand' : 'Minimize'}
+                title={isMinimized ? 'Expand' : 'Minimise'}
               >
                 <ChevronDown className={`w-4 h-4 transition-transform ${isMinimized ? 'rotate-180' : ''}`} />
               </button>
               <button
                 onClick={() => setIsOpen(false)}
                 className="p-1 rounded text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-                title="Close Assistant"
+                title="Close assistant"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -283,13 +271,9 @@ export default function HelpChatbot({ role }: HelpChatbotProps) {
 
           {!isMinimized && (
             <>
-              {/* Messages Area */}
               <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-[var(--panel)] text-xs">
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'flex-row-reverse' : ''}`}
-                  >
+                {messages.map(msg => (
+                  <div key={msg.id} className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'flex-row-reverse' : ''}`}>
                     <div
                       className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
                         msg.sender === 'user'
@@ -327,11 +311,10 @@ export default function HelpChatbot({ role }: HelpChatbotProps) {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Quick Topic Chips */}
               <div className="px-3 py-2 border-t border-[var(--border)] bg-[var(--panel-subtle)]/50 flex flex-wrap gap-1.5 shrink-0">
-                {chips.map((chip, idx) => (
+                {chips.map(chip => (
                   <button
-                    key={idx}
+                    key={chip.label}
                     type="button"
                     onClick={() => processQuery(chip.query)}
                     className="px-2.5 py-1 rounded-full text-[10px] font-medium bg-[var(--panel)] hover:bg-[var(--primary-light)] hover:text-[var(--primary)] border border-[var(--border)] text-[var(--muted)] transition-colors"
@@ -341,21 +324,20 @@ export default function HelpChatbot({ role }: HelpChatbotProps) {
                 ))}
               </div>
 
-              {/* Input Form */}
               <form onSubmit={handleSubmit} className="p-3 border-t border-[var(--border)] bg-[var(--panel)] flex items-center gap-2 shrink-0">
                 <input
                   type="text"
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={isManager ? "Ask a manager question or type 'help'..." : "Ask a question or type 'help'..."}
+                  onChange={e => setInput(e.target.value)}
+                  placeholder="Ask a question or type 'help'…"
                   className="flex-1 px-3 py-2 text-xs rounded-xl bg-[var(--input-bg)] border border-[var(--border)] text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--primary)] focus:ring-1 focus:ring-[var(--primary)]"
                 />
                 <button
                   type="submit"
                   disabled={!input.trim()}
                   className="p-2 rounded-xl bg-[var(--primary)] hover:bg-[var(--primary-h)] disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
-                  title="Send message"
-                  aria-label="Send message"
+                  title="Send"
+                  aria-label="Send"
                 >
                   <Send className="w-4 h-4" />
                 </button>

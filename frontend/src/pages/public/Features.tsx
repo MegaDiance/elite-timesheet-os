@@ -1,248 +1,235 @@
 import React from 'react';
-import { 
-  Calendar, 
-  Clock, 
-  Lock, 
-  Layers, 
-  Check, 
-  ArrowRight,
-  Database,
-  Building2,
-  KeyRound
-} from 'lucide-react';
+import { Calendar, Clock, Lock, Layers, Check, ArrowRight, Building2, KeyRound, FileSpreadsheet, MessageSquare, ScrollText, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 
+function Point({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-2">
+      <Check className="w-4 h-4 text-[var(--success)] shrink-0 mt-0.5" />
+      <span>
+        <strong className="text-[var(--text)]">{title}:</strong> {children}
+      </span>
+    </li>
+  );
+}
+
+function SectionIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="w-10 h-10 rounded-lg bg-[var(--primary-light)] border border-[var(--primary)]/20 flex items-center justify-center text-[var(--primary)]">
+      {children}
+    </div>
+  );
+}
+
 export const Features: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-20">
-      {/* Header */}
       <div className="text-center max-w-3xl mx-auto space-y-4">
-        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">
-          Technical Specifications & Architecture
-        </h1>
+        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">How SimpleHours works</h1>
         <p className="text-base text-[var(--muted)] leading-relaxed">
-          A granular look into the underlying algorithms, compliance models, and security guarantees built into Simple Hours.
+          Rosters, timesheets and payroll hours for organisations with one or many branches, run by an Organisation Owner and
+          the Branch Admins they invite.
         </p>
       </div>
 
-      {/* Deep Dive Section 1: Rostering */}
+      {/* Roster */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
         <div className="lg:col-span-5 space-y-4">
-          <div className="w-10 h-10 rounded-lg bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-            <Calendar className="w-5 h-5" />
-          </div>
-          <h2 className="text-2xl font-bold text-[var(--text)]">
-            Fortnight Rostering & Actual Shift Reconciliation
-          </h2>
+          <SectionIcon><Calendar className="w-5 h-5" /></SectionIcon>
+          <h2 className="text-2xl font-bold text-[var(--text)]">A fortnightly roster on one screen</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            The core scheduling engine operates on strict 14-day fortnight cycles mapped from Day 0 through Day 13. Shift segments differentiate between planned roster hours and verified actual hours worked.
+            Each pay period runs for 14 days from a Sunday. Plan every worker's fortnight in one grid, with rostered and worked
+            hours kept side by side.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Full Fortnight View:</strong> View all 14 days simultaneously on standard desktop screens without horizontal scroll.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Preserved Actuals:</strong> Updating future shifts never overwrites historic actual attendance or clock-in records.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Smart Time Input:</strong> Accepts flexible operator time entry (<code className="text-indigo-400">7</code>, <code className="text-indigo-400">0730</code>, <code className="text-indigo-400">3p</code>, <code className="text-indigo-400">15:30</code>) and standardizes automatically.</span>
-            </li>
+            <Point title="Templates">Give each worker a fortnight template and roster from it in one step.</Point>
+            <Point title="Copy a day">Copy a day to other days or other workers. Days that already have worked hours are never overwritten.</Point>
+            <Point title="Quick time entry">
+              Type times the way you say them (<code className="text-[var(--primary)]">7</code>, <code className="text-[var(--primary)]">0730</code>,{' '}
+              <code className="text-[var(--primary)]">3p</code>, <code className="text-[var(--primary)]">15:30</code>). An end time before the start is an overnight shift.
+            </Point>
           </ul>
         </div>
         <div className="lg:col-span-7">
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden group">
-            <div className="px-3.5 py-2 bg-[var(--panel-subtle)] border-b border-[var(--border)] flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
-                <span className="ml-2 text-[10px] font-mono text-[var(--muted)]">Master Fortnight Schedule</span>
-              </div>
-              <span className="text-[10px] text-emerald-400 font-mono">14-DAY OVERVIEW</span>
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden">
+            <div className="px-3.5 py-2 bg-[var(--panel-subtle)] border-b border-[var(--border)] flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
+              <span className="ml-2 text-[10px] font-medium text-[var(--muted)]">Roster · 14-day view</span>
             </div>
-            <div className="bg-black/30 overflow-hidden">
-              <img
-                src="/screenshots/roster_overview.jpg"
-                alt="14-Day Master Roster Overview"
-                className="w-full h-auto object-cover object-top transition-transform duration-300 group-hover:scale-[1.01]"
-              />
-            </div>
+            <img src="/screenshots/roster_overview.jpg" alt="The SimpleHours fortnightly roster" className="w-full h-auto object-cover object-top" />
           </div>
         </div>
       </div>
 
-      {/* Deep Dive Section 2: Employee Portal & Engagement */}
+      {/* Segments */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
         <div className="lg:col-span-7 order-2 lg:order-1">
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden group">
-            <div className="px-3.5 py-2 bg-[var(--panel-subtle)] border-b border-[var(--border)] flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
-                <span className="ml-2 text-[10px] font-mono text-[var(--muted)]">Employee Portal & Approvals</span>
+          <Card className="p-6 space-y-3 bg-[var(--panel-subtle)]">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[var(--text)]">Wednesday 1 April</span>
+              <span className="text-[var(--muted)]">3 segments</span>
+            </div>
+            {[
+              { type: 'Normal Work', time: '07:00 – 11:00' },
+              { type: 'TIL', time: '11:00 – 12:00' },
+              { type: 'Normal Work', time: '15:00 – 19:00' },
+            ].map((seg, i) => (
+              <div key={i} className="flex items-center justify-between bg-[var(--panel)] p-3 rounded-lg border border-[var(--border)] text-xs">
+                <span className="font-medium text-[var(--text)]">{seg.type}</span>
+                <span className="font-mono text-[var(--muted)]">{seg.time}</span>
               </div>
-              <span className="text-[10px] text-indigo-400 font-mono">ONE-CLICK SUBMIT</span>
+            ))}
+            <div className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--primary)]">
+              <Plus className="w-3.5 h-3.5" /> Add segment
             </div>
-            <div className="bg-black/30 overflow-hidden">
-              <img
-                src="/screenshots/employee_portal.jpg"
-                alt="Employee Self-Service Portal"
-                className="w-full h-auto object-cover object-top transition-transform duration-300 group-hover:scale-[1.01]"
-              />
-            </div>
-          </div>
+          </Card>
         </div>
         <div className="lg:col-span-5 space-y-4 order-1 lg:order-2">
-          <div className="w-10 h-10 rounded-lg bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-            <Layers className="w-5 h-5" />
-          </div>
-          <h2 className="text-2xl font-bold text-[var(--text)]">
-            Employee Self-Service, Leave & Interactive Announcements
-          </h2>
+          <SectionIcon><Layers className="w-5 h-5" /></SectionIcon>
+          <h2 className="text-2xl font-bold text-[var(--text)]">Days with more than one segment</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Empower your team with a personalized workspace where they can check shifts, submit timesheets with one click, request leaves, and engage with team updates.
+            Real days aren't one block of time. A day in SimpleHours is a list of segments, so split shifts and part-day leave
+            are recorded exactly as they happened.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>One-Click Timesheet Approval:</strong> Workers review daily totals and confirm fortnight actuals directly to managers.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Interactive Emoji Reactions & Replies:</strong> Team members can react and reply to company notices in threaded conversations.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Admin Chat Moderation:</strong> Managers can toggle employee chat permissions on or off at any time from organisation settings.</span>
-            </li>
+            <Point title="Segment types">Normal Work, Sick Leave, Annual Leave, TIL, LWIP (leave without pay) and Other.</Point>
+            <Point title="Checked as you go">Overlapping or backwards times are caught before they're saved.</Point>
+            <Point title="Unplanned work">Record shifts that weren't on the roster so they show up in reports.</Point>
           </ul>
         </div>
       </div>
 
-      {/* Deep Dive Section 3: Break Deductions */}
+      {/* Breaks */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
         <div className="space-y-4">
-          <div className="w-10 h-10 rounded-lg bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-            <Clock className="w-5 h-5" />
-          </div>
-          <h2 className="text-2xl font-bold text-[var(--text)]">
-            Automated Break Deductions & Fair Work Alignment
-          </h2>
+          <SectionIcon><Clock className="w-5 h-5" /></SectionIcon>
+          <h2 className="text-2xl font-bold text-[var(--text)]">Unpaid breaks worked out for you</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Eliminate tedious manual math for break adjustments. The engine evaluates every shift segment against tenant-defined threshold policies.
+            Set your organisation's break rule once. SimpleHours applies it to every day, on the roster and on timesheets.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Threshold Evaluation:</strong> Automatically subtracts designated meal breaks when continuous shift duration exceeds the threshold (e.g. 6.0 hours).</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Day-Specific Flexibility:</strong> Different deduction rates can be configured for weekday versus weekend shifts.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Public Holiday Calendar:</strong> Built-in public holiday tables overlay shift calculations for penalty rate determination.</span>
-            </li>
+            <Point title="Once per day">The break comes off when the day's segments reach your threshold, not once per segment.</Point>
+            <Point title="Weekday and weekend">Use a different break length on Saturdays and Sundays.</Point>
+            <Point title="Public holidays">Hours on your organisation's public holidays are reported separately.</Point>
           </ul>
         </div>
-        <Card className="p-6 space-y-4 bg-[var(--panel-subtle)] font-mono text-xs">
-          <div className="flex items-center justify-between pb-2 border-b border-[var(--border)] text-[var(--muted)]">
-            <span>COMPLIANCE_RULES_ENGINE</span>
-            <span className="text-indigo-400">ORG_CONFIGURABLE</span>
-          </div>
-          <div className="text-[var(--text)] space-y-1">
-            <div><span className="text-indigo-400">break_mins_weekday:</span> 30</div>
-            <div><span className="text-indigo-400">break_mins_weekend:</span> 0</div>
-            <div><span className="text-indigo-400">break_threshold_hours:</span> 6.0</div>
-            <div><span className="text-indigo-400">timezone_safe_date:</span> "YYYY-MM-DD" (OID 1082)</div>
-          </div>
+        <Card className="p-6 space-y-3 bg-[var(--panel-subtle)] text-xs">
+          <div className="font-semibold text-[var(--text)] pb-2 border-b border-[var(--border)]">Break rule</div>
+          {[
+            { label: 'Weekday break', value: '30 min' },
+            { label: 'Weekend break', value: '0 min' },
+            { label: 'Applies from', value: '6 hours per day' },
+          ].map(row => (
+            <div key={row.label} className="flex items-center justify-between">
+              <span className="text-[var(--muted)]">{row.label}</span>
+              <span className="font-mono font-semibold text-[var(--text)]">{row.value}</span>
+            </div>
+          ))}
         </Card>
       </div>
 
-      {/* Deep Dive Section 4: Dual Passwords & Security */}
+      {/* Timesheets & locks */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
         <div className="space-y-4">
-          <div className="w-10 h-10 rounded-lg bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-            <Lock className="w-5 h-5" />
-          </div>
-          <h2 className="text-2xl font-bold text-[var(--text)]">
-            Dual-Password Fortnight Locks & Publication Control
-          </h2>
+          <SectionIcon><Lock className="w-5 h-5" /></SectionIcon>
+          <h2 className="text-2xl font-bold text-[var(--text)]">Approvals and per-branch locks</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Separate operational milestones ensure draft schedules are protected from tampering and finalized payroll numbers are frozen.
+            Record the hours actually worked against the roster, then sign each worker's fortnight off.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Roster Lock Password:</strong> Restricts editing of scheduled shifts while permitting employee actual time entry.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Timesheet Lock Password:</strong> Freezes actuals completely once approved by management, safeguarding export data.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>Automated Publication Alerts:</strong> Publishing a finalized roster dispatches an instant announcement to the staff portal.</span>
-            </li>
+            <Point title="Approve and reopen">Approve one worker or many at once. Reopen a timesheet to correct it, then approve it again.</Point>
+            <Point title="Roster lock">Stops changes to a branch's rostered shifts for the fortnight, while worked hours can still be entered.</Point>
+            <Point title="Timesheet lock">Freezes a branch's timesheets for the fortnight once payroll is done.</Point>
+            <Point title="Password protected">Locking and unlocking needs your own password or the organisation's lock password.</Point>
           </ul>
         </div>
-        <Card className="p-6 space-y-4 bg-[var(--panel-subtle)] font-mono text-xs">
-          <div className="flex items-center justify-between pb-2 border-b border-[var(--border)] text-[var(--muted)]">
-            <span>LOCK_SECURITY_POLICY</span>
-            <span className="text-rose-400">ENFORCED</span>
-          </div>
-          <div className="text-[var(--text)] space-y-1">
-            <div><span className="text-indigo-400">roster_lock_status:</span> LOCKED</div>
-            <div><span className="text-indigo-400">timesheet_lock_status:</span> LOCKED</div>
-            <div><span className="text-indigo-400">auth_method:</span> DEDICATED_BCRYPT_HASH</div>
-            <div><span className="text-indigo-400">master_admin_override:</span> ENABLED</div>
-            <div><span className="text-indigo-400">audit_action:</span> "LOCKED_ROSTER_2026-03-30"</div>
-          </div>
+        <Card className="p-6 space-y-3 bg-[var(--panel-subtle)] text-xs">
+          <div className="font-semibold text-[var(--text)] pb-2 border-b border-[var(--border)]">Fortnight starting 29 March</div>
+          {[
+            { branch: 'Richmond', roster: true, timesheet: true },
+            { branch: 'Footscray', roster: true, timesheet: false },
+            { branch: 'Geelong', roster: false, timesheet: false },
+          ].map(row => (
+            <div key={row.branch} className="flex items-center justify-between gap-2">
+              <span className="font-medium text-[var(--text)]">{row.branch}</span>
+              <span className="flex gap-1.5">
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${row.roster ? 'bg-[var(--warn-light)] text-[var(--warn)]' : 'bg-[var(--panel)] text-[var(--muted)] border border-[var(--border)]'}`}>
+                  Roster {row.roster ? 'locked' : 'open'}
+                </span>
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${row.timesheet ? 'bg-[var(--warn-light)] text-[var(--warn)]' : 'bg-[var(--panel)] text-[var(--muted)] border border-[var(--border)]'}`}>
+                  Timesheets {row.timesheet ? 'locked' : 'open'}
+                </span>
+              </span>
+            </div>
+          ))}
         </Card>
       </div>
 
-      {/* Feature Badges Grid */}
+      {/* Reports */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+        <Card className="p-6 space-y-3 bg-[var(--panel-subtle)] text-xs order-2 lg:order-1">
+          <div className="font-semibold text-[var(--text)] pb-2 border-b border-[var(--border)]">Payroll hours · one worker</div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {[
+              { label: 'Normal', value: '60.00' },
+              { label: 'Saturday', value: '7.50' },
+              { label: 'Sunday', value: '0.00' },
+              { label: 'Sick', value: '7.60' },
+              { label: 'Annual', value: '0.00' },
+              { label: 'LWIP', value: '0.00' },
+            ].map(cell => (
+              <div key={cell.label} className="bg-[var(--panel)] p-2 rounded-lg border border-[var(--border)]">
+                <div className="text-[10px] uppercase text-[var(--muted)] font-semibold">{cell.label}</div>
+                <div className="font-mono font-bold text-[var(--text)]">{cell.value}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <div className="space-y-4 order-1 lg:order-2">
+          <SectionIcon><FileSpreadsheet className="w-5 h-5" /></SectionIcon>
+          <h2 className="text-2xl font-bold text-[var(--text)]">Reports ready for payroll</h2>
+          <p className="text-sm text-[var(--muted)] leading-relaxed">
+            Each fortnight's report totals every worker's hours by category, for one branch or the whole organisation.
+          </p>
+          <ul className="space-y-2.5 text-xs text-[var(--muted)]">
+            <Point title="Categories">Normal, Saturday, Sunday and public holiday hours, Sick Leave, Annual Leave, TIL, LWIP, Other and unplanned hours.</Point>
+            <Point title="Variance">Contracted, rostered and worked hours side by side, with the approval status of each timesheet.</Point>
+            <Point title="Export">Download as CSV for your payroll system, or as a PDF to print and file.</Point>
+          </ul>
+        </div>
+      </div>
+
+      {/* Roles & security */}
       <div className="border-t border-[var(--border)] pt-16">
-        <h3 className="text-xl font-bold text-center text-[var(--text)] mb-8">
-          Enterprise Multi-Tenant Infrastructure
-        </h3>
+        <h3 className="text-xl font-bold text-center text-[var(--text)] mb-8">Built for the people who run the roster</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
-            <Database className="w-5 h-5 text-indigo-400 mx-auto" />
-            <h4 className="font-semibold text-xs text-[var(--text)]">Supabase & PostgreSQL</h4>
-            <p className="text-[11px] text-[var(--muted)]">Production-ready schema</p>
-          </div>
-          <div className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
-            <Building2 className="w-5 h-5 text-indigo-400 mx-auto" />
-            <h4 className="font-semibold text-xs text-[var(--text)]">Strict Tenant Isolation</h4>
-            <p className="text-[11px] text-[var(--muted)]">No cross-org leaks</p>
-          </div>
-          <div className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
-            <KeyRound className="w-5 h-5 text-indigo-400 mx-auto" />
-            <h4 className="font-semibold text-xs text-[var(--text)]">Two-Factor Auth</h4>
-            <p className="text-[11px] text-[var(--muted)]">Email OTP with lockouts</p>
-          </div>
-          <div className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
-            <Layers className="w-5 h-5 text-indigo-400 mx-auto" />
-            <h4 className="font-semibold text-xs text-[var(--text)]">Zero-Dependency Dev</h4>
-            <p className="text-[11px] text-[var(--muted)]">Full in-memory pg-mem</p>
-          </div>
+          {[
+            { icon: <Building2 className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Owner and Branch Admins', text: 'Branch Admins only see their branches' },
+            { icon: <KeyRound className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Two-step verification', text: 'Email codes at sign-in' },
+            { icon: <ScrollText className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Audit log', text: 'Who changed what, and when' },
+            { icon: <MessageSquare className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Team Chat', text: 'Updates for your Branch Admins' },
+          ].map(card => (
+            <div key={card.title} className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
+              {card.icon}
+              <h4 className="font-semibold text-xs text-[var(--text)]">{card.title}</h4>
+              <p className="text-[11px] text-[var(--muted)]">{card.text}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Bottom CTA */}
-      <div className="text-center pt-8">
-        <Link to="/pricing">
+      <div className="text-center pt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+        <Link to="/signup">
           <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            View Plans & Pricing
+            Get started
           </Button>
+        </Link>
+        <Link to="/pricing">
+          <Button variant="secondary" size="lg">View pricing</Button>
         </Link>
       </div>
     </div>

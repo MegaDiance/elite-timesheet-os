@@ -10,23 +10,19 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
-  const [deliveryNotice, setDeliveryNotice] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus('loading');
-    setDeliveryNotice('');
-    
+
     try {
-      const response = await api.post('/auth/forgot-password', { email });
+      await api.post('/auth/forgot-password', { email: email.trim() });
+      // The same answer whether or not the email has an account.
       setStatus('success');
-      setMessage(response.data.message || 'If an account exists, a reset link was sent.');
-      if (response.data.delivery_notice) {
-        setDeliveryNotice(response.data.delivery_notice);
-      }
+      setMessage('If an account exists for that email, we\u2019ve sent it a link to reset the password.');
     } catch (err: any) {
       setStatus('error');
-      setMessage(err.response?.data?.error || err.response?.data?.error?.message || 'An error occurred while requesting password reset.');
+      setMessage(err.response?.data?.error?.message || 'We couldn\u2019t send a reset link right now. Please try again.');
     }
   };
 
@@ -42,7 +38,7 @@ export default function ForgotPassword() {
             Reset Password
           </h1>
           <p className="text-xs text-[var(--muted)]">
-            Enter your account email to receive a password recovery link
+            Enter your email and we'll send you a link to reset your password
           </p>
         </div>
 
@@ -53,27 +49,22 @@ export default function ForgotPassword() {
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>{message}</span>
               </div>
-              {deliveryNotice && (
-                <div className="p-3 rounded-lg bg-[var(--primary-light)] border border-[var(--primary)]/20 text-[var(--text)] text-xs font-medium text-center">
-                  {deliveryNotice}
-                </div>
-              )}
               <p className="text-xs text-[var(--muted)] text-center leading-relaxed">
-                Check your inbox for the reset link. It expires in 1 hour.
+                The link works once and expires in 1 hour. Check your spam folder if it doesn't arrive.
               </p>
               <Link to="/login" className="block">
                 <Button variant="primary" size="md" className="w-full">
-                  Return to Sign In
+                  Back to sign in
                 </Button>
               </Link>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <Input
-                label="Account Email Address"
+                label="Email"
                 type="email"
                 required
-                placeholder="name@company.com"
+                placeholder="you@example.com.au"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 leftIcon={<Mail className="w-4 h-4 text-[var(--muted)]" />}
@@ -93,7 +84,7 @@ export default function ForgotPassword() {
                 className="w-full"
                 loading={status === 'loading'}
               >
-                Send Password Reset Link
+                Send reset link
               </Button>
 
               <div className="text-center pt-2">
@@ -102,7 +93,7 @@ export default function ForgotPassword() {
                   className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] transition-colors"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Sign In</span>
+                  <span>Back to sign in</span>
                 </Link>
               </div>
             </form>

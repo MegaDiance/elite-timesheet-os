@@ -20,35 +20,44 @@ import {
 
 interface SessionItem {
   id: string;
-  ip_address: string;
+  ip_address: string | null;
   approx_location: string;
-  device_summary: string;
+  device_info: string;
   created_at: string;
   last_active_at: string;
   is_current: boolean;
 }
 
-interface LoginHistoryItem {
+type SignInStatus = 'SUCCESS' | 'FAILED' | 'CHALLENGE_REQUIRED' | 'CHALLENGE_VERIFIED' | 'RATE_LIMITED';
+
+interface SignInHistoryItem {
   id: string;
-  timestamp: string;
-  ip_address: string;
-  approx_location: string;
-  device_summary: string;
-  auth_method: string;
-  status: 'SUCCESS' | 'FAILED' | 'CHALLENGED';
-  failure_reason?: string | null;
+  created_at: string;
+  approx_location: string | null;
+  device_info: string | null;
+  auth_method: string | null;
+  status: SignInStatus;
 }
 
 interface SecurityActivityData {
   last_login: {
     timestamp: string;
-    approx_location: string;
-    device_summary: string;
-    auth_method: string;
+    approx_location: string | null;
+    device_info: string | null;
   } | null;
   active_sessions: SessionItem[];
-  recent_activity: LoginHistoryItem[];
+  recent_history: SignInHistoryItem[];
 }
+
+const STATUS_LABEL: Record<SignInStatus, string> = {
+  SUCCESS: 'Signed in',
+  CHALLENGE_VERIFIED: 'Signed in (verified)',
+  CHALLENGE_REQUIRED: 'Verification sent',
+  FAILED: 'Failed',
+  RATE_LIMITED: 'Blocked (too many attempts)',
+};
+
+const isSuccess = (status: SignInStatus) => status === 'SUCCESS' || status === 'CHALLENGE_VERIFIED';
 
 interface AccountSecurityModalProps {
   isOpen: boolean;
@@ -77,10 +86,10 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
       if (res.data?.success && res.data?.data) {
         setData(res.data.data);
       } else {
-        setError('Failed to load account security data.');
+        setError('Your sign-in activity could not be loaded.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to fetch security activity.');
+      setError(err.response?.data?.error?.message || 'Your sign-in activity could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -93,13 +102,13 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
     try {
       const res = await api.post('/auth/security/revoke-session', { session_id: sessionId });
       if (res.data?.success) {
-        setSuccessNotice('Session revoked successfully.');
+        setSuccessNotice('That device has been signed out.');
         await fetchSecurityActivity();
       } else {
-        setError(res.data?.error?.message || 'Failed to revoke session.');
+        setError(res.data?.error?.message || 'That session could not be signed out.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to revoke session.');
+      setError(err.response?.data?.error?.message || 'That session could not be signed out.');
     } finally {
       setRevokingId(null);
     }
@@ -112,13 +121,13 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
     try {
       const res = await api.post('/auth/security/revoke-other-sessions');
       if (res.data?.success) {
-        setSuccessNotice('All other sessions signed out successfully.');
+        setSuccessNotice('All your other devices have been signed out.');
         await fetchSecurityActivity();
       } else {
-        setError(res.data?.error?.message || 'Failed to revoke other sessions.');
+        setError(res.data?.error?.message || 'Your other devices could not be signed out.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to revoke other sessions.');
+      setError(err.response?.data?.error?.message || 'Your other devices could not be signed out.');
     } finally {
       setRevokingAllOthers(false);
     }
@@ -137,7 +146,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
     }
   };
 
-  const getDeviceIcon = (summary: string) => {
+  const getDeviceIcon = (summary: string | null) => {
     const s = (summary || '').toLowerCase();
     if (s.includes('mobile') || s.includes('iphone') || s.includes('android')) {
       return <Smartphone className="w-4 h-4 text-indigo-400 shrink-0" />;
@@ -151,8 +160,8 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Account Security & Active Sessions"
-      description="Monitor active sign-in sessions, review recent login activity, and manage session credentials."
+      title="Sign-in activity"
+      description="Where your account is signed in, and its recent sign-ins."
       maxWidth="2xl"
     >
       <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
@@ -173,7 +182,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         {loading && !data ? (
           <div className="py-12 flex flex-col items-center justify-center gap-3 text-[var(--muted)]">
             <RefreshCw className="w-6 h-6 animate-spin text-indigo-500" />
-            <p className="text-xs">Loading account security details...</p>
+            <p className="text-xs">Loading your sign-in activity…</p>
           </div>
         ) : (
           <>
@@ -186,21 +195,21 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
                   </div>
                   <div>
                     <div className="text-[11px] font-semibold text-indigo-400 uppercase tracking-wider">
-                      Last Successful Sign-in
+                      Previous sign-in
                     </div>
                     <div className="text-xs font-semibold text-[var(--text)] mt-0.5 flex items-center gap-2 flex-wrap">
                       <span>{formatDate(data.last_login.timestamp)}</span>
                       <span className="text-[var(--border)]">•</span>
                       <span className="flex items-center gap-1 text-[var(--muted)] font-normal">
                         <MapPin className="w-3 h-3 text-indigo-400" />
-                        {data.last_login.approx_location}
+                        {data.last_login.approx_location || 'Unknown location'}
                       </span>
                     </div>
                   </div>
                 </div>
                 <div className="text-right sm:self-center">
                   <span className="text-[11px] font-mono text-[var(--muted)] bg-[var(--panel-subtle)] px-2 py-0.5 rounded border border-[var(--border)]">
-                    {data.last_login.device_summary}
+                    {data.last_login.device_info || 'Unknown device'}
                   </span>
                 </div>
               </div>
@@ -211,10 +220,10 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">
-                    Active Sessions ({data?.active_sessions.length || 0})
+                    Signed-in devices ({data?.active_sessions.length || 0})
                   </h4>
                   <p className="text-[11px] text-[var(--muted)]">
-                    Devices currently authorized to access your account.
+                    Devices where your account is signed in right now.
                   </p>
                 </div>
                 {otherSessionsCount > 0 && (
@@ -226,7 +235,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
                     className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 text-xs"
                     leftIcon={<Trash2 className="w-3.5 h-3.5" />}
                   >
-                    Sign Out Other Devices ({otherSessionsCount})
+                    Sign out other devices ({otherSessionsCount})
                   </Button>
                 )}
               </div>
@@ -243,22 +252,22 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
                   >
                     <div className="flex items-start gap-3">
                       <div className="mt-0.5">
-                        {getDeviceIcon(session.device_summary)}
+                        {getDeviceIcon(session.device_info)}
                       </div>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs font-semibold text-[var(--text)]">
-                            {session.device_summary}
+                            {session.device_info}
                           </span>
                           {session.is_current ? (
                             <Badge variant="success" size="sm">
-                              Active Now (This Device)
+                              This device
                             </Badge>
-                          ) : (
+                          ) : session.ip_address ? (
                             <span className="text-[11px] text-[var(--muted)]">
                               IP: {session.ip_address}
                             </span>
-                          )}
+                          ) : null}
                         </div>
 
                         <div className="flex items-center gap-3 text-[11px] text-[var(--muted)] flex-wrap">
@@ -283,7 +292,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
                         loading={revokingId === session.id}
                         className="text-xs sm:self-center"
                       >
-                        Revoke
+                        Sign out
                       </Button>
                     )}
                   </div>
@@ -296,10 +305,10 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">
-                    Recent Sign-In History
+                    Recent sign-ins
                   </h4>
                   <p className="text-[11px] text-[var(--muted)]">
-                    Audit log of the latest authentication attempts and security challenges.
+                    The latest sign-in attempts on your account.
                   </p>
                 </div>
                 <Button
@@ -313,18 +322,18 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
                 </Button>
               </div>
 
-              {(!data?.recent_activity || data.recent_activity.length === 0) ? (
+              {(!data?.recent_history || data.recent_history.length === 0) ? (
                 <div className="p-4 text-center text-xs text-[var(--muted)] border border-dashed border-[var(--border)] rounded-lg">
-                  No login history recorded yet.
+                  No sign-ins recorded yet.
                 </div>
               ) : (
                 <div className="border border-[var(--border)] rounded-lg overflow-hidden divide-y divide-[var(--border)] text-xs">
-                  {data.recent_activity.slice(0, 10).map((act) => (
+                  {data.recent_history.map((act) => (
                     <div key={act.id} className="p-3 flex items-center justify-between gap-3 hover:bg-[var(--hover-row)] transition-colors">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        {act.status === 'SUCCESS' ? (
+                        {isSuccess(act.status) ? (
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        ) : act.status === 'CHALLENGED' ? (
+                        ) : act.status === 'CHALLENGE_REQUIRED' ? (
                           <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                         ) : (
                           <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
@@ -332,34 +341,30 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-[var(--text)] truncate">
-                              {act.device_summary}
+                              {act.device_info || 'Unknown device'}
                             </span>
-                            <Badge 
-                              variant={act.status === 'SUCCESS' ? 'success' : act.status === 'CHALLENGED' ? 'warning' : 'danger'} 
+                            <Badge
+                              variant={isSuccess(act.status) ? 'success' : act.status === 'CHALLENGE_REQUIRED' ? 'warning' : 'danger'}
                               size="sm"
                             >
-                              {act.status}
+                              {STATUS_LABEL[act.status] || act.status}
                             </Badge>
                           </div>
                           <div className="text-[11px] text-[var(--muted)] flex items-center gap-2 mt-0.5">
-                            <span>{act.approx_location}</span>
+                            <span>{act.approx_location || 'Unknown location'}</span>
                             <span>•</span>
-                            <span>{formatDate(act.timestamp)}</span>
-                            {act.failure_reason && (
-                              <>
-                                <span>•</span>
-                                <span className="text-rose-400 font-mono text-[10px]">{act.failure_reason}</span>
-                              </>
-                            )}
+                            <span>{formatDate(act.created_at)}</span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="text-right shrink-0">
-                        <span className="text-[10px] font-mono text-[var(--muted)] uppercase px-1.5 py-0.5 rounded bg-[var(--panel-subtle)] border border-[var(--border)]">
-                          {act.auth_method}
-                        </span>
-                      </div>
+                      {act.auth_method && (
+                        <div className="text-right shrink-0">
+                          <span className="text-[10px] font-mono text-[var(--muted)] uppercase px-1.5 py-0.5 rounded bg-[var(--panel-subtle)] border border-[var(--border)]">
+                            {act.auth_method.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -372,7 +377,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between text-[11px] text-[var(--muted)]">
           <div className="flex items-center gap-1.5">
             <Globe className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Approximate locations derived from conservative network routing</span>
+            <span>Locations are approximate, based on network address.</span>
           </div>
           <Button variant="secondary" size="sm" onClick={onClose}>
             Close

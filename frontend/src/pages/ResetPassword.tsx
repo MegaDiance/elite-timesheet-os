@@ -28,7 +28,7 @@ export default function ResetPassword() {
       return;
     }
 
-    api.get(`/auth/verify-reset-token?token=${token}`)
+    api.get('/auth/verify-reset-token', { params: { token } })
       .then(res => {
         if (res.data?.valid) {
           setTokenValid(true);
@@ -60,16 +60,18 @@ export default function ResetPassword() {
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match. Please re-enter your new password.');
+      setError('The passwords don\u2019t match.');
       return;
     }
 
     setIsSubmitting(true);
     try {
       await api.post('/auth/reset-password', { token, password });
-      navigate('/login?reset=success');
+      // Every session was ended by the reset, so sign in again.
+      const slug = localStorage.getItem('last_org_slug');
+      navigate(slug ? `/login/${slug}?reason=password-reset` : '/login?reason=password-reset', { replace: true });
     } catch (err: any) {
-      setError(err.response?.data?.error || err.response?.data?.error?.message || 'Failed to reset password. The link may have expired.');
+      setError(err.response?.data?.error?.message || 'We couldn\u2019t reset your password. The link may have expired.');
     } finally {
       setIsSubmitting(false);
     }
@@ -84,10 +86,10 @@ export default function ResetPassword() {
             <Clock className="w-5 h-5" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-            Create New Password
+            Choose a new password
           </h1>
           <p className="text-xs text-[var(--muted)]">
-            Set a new secure password for your Simple Hours account
+            Set a new password for your SimpleHours account
           </p>
         </div>
 
@@ -95,26 +97,26 @@ export default function ResetPassword() {
           {checkingToken ? (
             <div className="text-center py-10 space-y-3">
               <Clock className="w-6 h-6 animate-spin text-[var(--primary)] mx-auto" />
-              <p className="text-xs font-medium text-[var(--muted)]">Verifying password reset link...</p>
+              <p className="text-xs font-medium text-[var(--muted)]">Checking your reset link…</p>
             </div>
           ) : !tokenValid ? (
             <div className="text-center py-4 space-y-4">
               <div className="w-12 h-12 rounded-full bg-[var(--danger-light)] text-[var(--danger)] flex items-center justify-center mx-auto">
                 <AlertCircle className="w-6 h-6" />
               </div>
-              <h2 className="text-lg font-bold text-[var(--text)]">Invalid or Expired Link</h2>
+              <h2 className="text-lg font-bold text-[var(--text)]">This reset link can't be used</h2>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
-                This password reset link is invalid or has already expired. Password reset links are single-use and expire in 1 hour.
+                It may have expired or already been used. Reset links work once and expire after 1 hour.
               </p>
               <div className="pt-2 space-y-2">
                 <Link to="/forgot-password" className="block">
                   <Button variant="primary" size="md" className="w-full">
-                    Request a New Reset Link
+                    Request a new link
                   </Button>
                 </Link>
                 <Link to="/login" className="block">
                   <Button variant="ghost" size="sm" className="w-full">
-                    Return to Sign In
+                    Back to sign in
                   </Button>
                 </Link>
               </div>
@@ -136,7 +138,7 @@ export default function ResetPassword() {
 
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-semibold text-[var(--text)]">New Password</label>
+                  <label className="text-xs font-semibold text-[var(--text)]">New password</label>
                   <button 
                     type="button" 
                     onClick={() => setShowPassword(!showPassword)}
@@ -157,7 +159,7 @@ export default function ResetPassword() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[var(--text)] mb-1">Confirm New Password</label>
+                <label className="block text-xs font-semibold text-[var(--text)] mb-1">Confirm new password</label>
                 <input 
                   type={showPassword ? 'text' : 'password'} 
                   value={confirmPassword}
@@ -175,13 +177,13 @@ export default function ResetPassword() {
                 className="w-full"
                 loading={isSubmitting}
               >
-                Reset Password
+                Save new password
               </Button>
 
               <div className="text-center pt-2">
                 <Link to="/login" className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]">
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Sign In</span>
+                  <span>Back to sign in</span>
                 </Link>
               </div>
             </form>

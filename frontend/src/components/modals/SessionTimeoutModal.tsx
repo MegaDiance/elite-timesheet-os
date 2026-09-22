@@ -43,10 +43,10 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
 
           <div>
             <h3 id="session-timeout-title" className="text-lg font-bold text-[var(--text)]">
-              Session Inactivity Warning
+              Are you still there?
             </h3>
             <p id="session-timeout-desc" className="text-xs text-[var(--muted)] mt-1.5 leading-relaxed">
-              You have been inactive for over 10 minutes. For your data protection, you will be automatically signed out in:
+              You haven't used SimpleHours for 10 minutes. To protect your organisation's data, you'll be signed out in:
             </p>
           </div>
 
@@ -58,7 +58,7 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
           </div>
 
           <p className="text-[11px] text-[var(--muted)]">
-            Click <strong className="text-[var(--text)]">Stay Signed In</strong> to refresh your secure session and continue working.
+            Select <strong className="text-[var(--text)]">Stay signed in</strong> to keep working.
           </p>
 
           <div className="pt-2 flex flex-col sm:flex-row gap-2.5 justify-center">
@@ -70,7 +70,7 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
               className="w-full sm:w-auto min-w-[140px]"
               leftIcon={<CheckCircle2 className="w-4 h-4" />}
             >
-              Stay Signed In
+              Stay signed in
             </Button>
             <Button
               variant="ghost"
@@ -80,13 +80,13 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
               className="w-full sm:w-auto text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
               leftIcon={<LogOut className="w-4 h-4" />}
             >
-              Sign Out
+              Sign out
             </Button>
           </div>
 
           <div className="pt-3 border-t border-[var(--border)] flex items-center justify-center gap-1.5 text-[11px] text-[var(--muted)]">
             <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
-            <span>Automatic compliance with 15-minute security logout policy</span>
+            <span>Sessions end after 15 minutes without activity.</span>
           </div>
         </div>
       </div>

@@ -245,7 +245,7 @@ export function buildBranchAdminInviteEmailTemplate(params: {
     const branches = params.branchNames.join(', ');
     const subject = `You have been invited to manage ${params.organisationName} on SimpleHours`;
     const footer = `This single-use invitation was issued to ${params.recipientEmail} and expires in 7 days.`;
-    const body = `You have been invited to be a Branch Admin at ${params.organisationName} for: ${branches}. Branch Admins manage the staff list, roster and timesheets of their assigned branches.`;
+    const body = `You have been invited to be a Branch Admin at ${params.organisationName} for: ${branches}. Branch Admins manage the workers, roster and timesheets of their assigned branches.`;
     const text = `${subject}\n\n${body}\n\nAccept the invitation:\n${params.inviteLink}\n\n${footer}`;
     const html = buildActionEmail({
         title: `Branch Admin invitation — ${params.organisationName}`,
