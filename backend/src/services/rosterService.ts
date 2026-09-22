@@ -162,8 +162,9 @@ export async function autoRosterAll(scope: BulkScope): Promise<{ workers: number
 }
 
 /**
- * Copies the roster into worked hours for the selected days. Only fills segments that have no
- * worked hours yet — hours that were already recorded are never overwritten.
+ * Copies the roster into worked hours for the selected days: the whole rostered day, timed and
+ * hours-only entries alike. Only days with no worked time at all are filled, so recorded hours are
+ * never overwritten and never overlapped by copied times.
  */
 export async function autoLogAll(scope: BulkScope): Promise<{ workers: number }> {
     const fortnightStart = parseIsoDateUtc(scope.fortnightStartIso);
@@ -177,8 +178,9 @@ export async function autoLogAll(scope: BulkScope): Promise<{ workers: number }>
                     SET actual_in = ss.roster_in, actual_out = ss.roster_out, actual_hours = ss.roster_hours, actual_segment_type = ss.segment_type
                    FROM daily_records dr
                   WHERE dr.id = ss.record_id AND dr.org_id = $1 AND dr.employee_id = ANY($2::uuid[]) AND dr.record_date = ANY($3::date[])
-                    AND ss.roster_in IS NOT NULL AND ss.roster_out IS NOT NULL
-                    AND ss.actual_in IS NULL AND COALESCE(ss.actual_hours, 0) = 0
+                    AND ((ss.roster_in IS NOT NULL AND ss.roster_out IS NOT NULL) OR COALESCE(ss.roster_hours, 0) > 0)
+                    AND NOT EXISTS (SELECT 1 FROM shift_segments w
+                                     WHERE w.record_id = dr.id AND (w.actual_in IS NOT NULL OR COALESCE(w.actual_hours, 0) > 0))
                   RETURNING ss.record_id`,
                 [scope.orgId, workerIds, dates]
             );

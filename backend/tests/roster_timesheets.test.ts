@@ -183,6 +183,21 @@ describe('automatic roster and log', () => {
         expect((await dayOf(w.workers.mel, TUESDAY)).timesheet[0].start).toBe('09:30');
     });
 
+    it('auto-log copies the whole rostered day, including hours-only leave', async () => {
+        await save(w.tokens.sarah, w.workers.mel, MONDAY, { scope: 'ROSTER', roster: [entry('09:00', '13:00'), entry(null, null, 'Annual', 4)] });
+        await request(app).post('/api/roster/auto-log').set(bearer(w.tokens.sarah)).send({ start_date: PERIOD, selected_days: [1] });
+        const day = await dayOf(w.workers.mel, MONDAY);
+        expect(times(day.timesheet)).toEqual(times(day.roster));
+        expect(times(day.timesheet)).toContainEqual(['Annual', null, null, 4]);
+    });
+
+    it('auto-log leaves a day alone once any worked time is recorded on it (no overlapping worked time)', async () => {
+        await save(w.tokens.sarah, w.workers.mel, MONDAY, { scope: 'ROSTER', roster: [entry('09:00', '13:00'), entry('13:00', '17:00')] });
+        await save(w.tokens.sarah, w.workers.mel, MONDAY, { scope: 'TIMESHEET', timesheet: [entry('13:30', '15:00')] });
+        await request(app).post('/api/roster/auto-log').set(bearer(w.tokens.sarah)).send({ start_date: PERIOD, selected_days: [1] });
+        expect(times((await dayOf(w.workers.mel, MONDAY)).timesheet)).toEqual([['WORK', '13:30', '15:00', 1.5]]);
+    });
+
     it('templates are validated with the same rules', async () => {
         const res = await request(app).post(`/api/employees/${w.workers.mel}/templates`).set(bearer(w.tokens.sarah))
             .send({ templates: [{ day_index: 1, roster_in: '09:00', roster_out: '13:00' }, { day_index: 1, roster_in: '12:00', roster_out: '17:00' }] });
