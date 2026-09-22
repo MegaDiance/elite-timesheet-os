@@ -9,7 +9,6 @@ import { ROLE_LABEL, storeSession, type Role } from '../../hooks/useAccess';
 
 interface OrganisationBrand {
   name: string;
-  logo_url: string | null;
 }
 
 interface OrganisationOption {
@@ -234,9 +233,7 @@ export const OrgLogin: React.FC = () => {
         <div className="text-center space-y-2">
           <Link to="/" className="inline-flex" aria-label="SimpleHours home">
             <div className="w-12 h-12 rounded-xl bg-[var(--primary)] flex items-center justify-center text-white font-bold text-xl shadow-xs mx-auto overflow-hidden">
-              {brand?.logo_url ? (
-                <img src={brand.logo_url} alt="" className="w-full h-full object-cover" />
-              ) : brand ? (
+              {brand ? (
                 brand.name.charAt(0).toUpperCase()
               ) : (
                 <Clock className="w-6 h-6" />

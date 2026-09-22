@@ -29,8 +29,6 @@ interface Post {
   author_role: string | null;
   title: string | null;
   content: string;
-  is_system: boolean;
-  announcement_type: string;
   created_at: string;
   can_delete: boolean;
   reactions: ReactionSummary[];
@@ -256,17 +254,13 @@ export default function Announcements() {
             return (
               <div
                 key={post.id}
-                className={`p-5 rounded-2xl border transition-all space-y-4 ${
-                  post.is_system ? 'bg-[var(--primary-light)]/40 border-[var(--primary)]/30' : 'bg-[var(--panel)] border-[var(--border)] shadow-xs'
-                }`}
+                className="p-5 rounded-2xl border transition-all space-y-4 bg-[var(--panel)] border-[var(--border)] shadow-xs"
               >
                 {/* Author */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
                   <div className="flex items-center gap-2.5">
-                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
-                      post.is_system ? 'bg-[var(--primary)] text-white' : 'bg-[var(--panel-subtle)] text-[var(--primary)] border border-[var(--primary)]/20'
-                    }`}>
-                      {post.is_system ? 'SimpleHours' : post.author_role || 'Team'}
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[var(--panel-subtle)] text-[var(--primary)] border border-[var(--primary)]/20">
+                      {post.author_role || 'Team'}
                     </span>
                     <span className="font-bold text-xs text-[var(--text)]">{post.author_name}</span>
                   </div>

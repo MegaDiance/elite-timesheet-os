@@ -33,7 +33,6 @@ import { BreakSettingsModal } from '../components/modals/BreakSettingsModal';
 interface OrganisationSettings {
   id: string;
   name: string;
-  display_name: string;
   portal_slug?: string;
   portal_url?: string;
   break_mins_weekday: number;
@@ -127,7 +126,7 @@ export default function Settings() {
     try {
       const res = await api.get('/organisation/me');
       setOrg(res.data.data);
-      setDisplayName(res.data.data.display_name || res.data.data.name || '');
+      setDisplayName(res.data.data.name || '');
       setOrgError(null);
     } catch (err: any) {
       setOrgError(errorMessage(err, 'Organisation settings could not be loaded.'));
@@ -198,7 +197,7 @@ export default function Settings() {
     }
     setSavingDisplayName(true);
     try {
-      await api.put('/organisation/settings', { display_name: displayName.trim() });
+      await api.put('/organisation/settings', { name: displayName.trim() });
       toast.success('Organisation name saved.');
       refresh();
     } catch (err: any) {
@@ -386,7 +385,7 @@ export default function Settings() {
                   variant="primary"
                   size="md"
                   loading={savingDisplayName}
-                  disabled={!org || displayName.trim() === (org.display_name || '')}
+                  disabled={!org || displayName.trim() === (org.name || '')}
                 >
                   Save
                 </Button>

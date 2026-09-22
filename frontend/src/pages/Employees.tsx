@@ -53,13 +53,12 @@ interface Worker {
   phone: string | null;
   contracted_hours: number | string | null;
   is_active: boolean;
-  deleted_at: string | null;
-  status: 'Active' | 'Inactive' | 'Deleted';
+  status: 'Active' | 'Inactive';
   template: TemplateRow[];
 }
 
 const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
-const isActiveWorker = (w: Worker) => w.is_active && !w.deleted_at;
+const isActiveWorker = (w: Worker) => w.is_active;
 
 function csvCell(value: unknown): string {
   const text = value === null || value === undefined ? '' : String(value);

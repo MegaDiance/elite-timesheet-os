@@ -17,7 +17,6 @@ interface AuditEntry {
   previous_value: string | null;
   new_value: string | null;
   ip_address: string | null;
-  timestamp: string | null;
   created_at: string | null;
   actor_email: string | null;
   actor_full_name: string | null;
@@ -25,7 +24,7 @@ interface AuditEntry {
 
 const PAGE_SIZE = 100;
 
-const entryTime = (e: AuditEntry) => e.created_at || e.timestamp || '';
+const entryTime = (e: AuditEntry) => e.created_at || '';
 const actorLabel = (e: AuditEntry) => e.actor_full_name || e.actor_email || 'System';
 const humanise = (code: string | null) => {
   if (!code) return '';
