@@ -1,155 +1,198 @@
-import React, { useState, useEffect } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Clock, ShieldCheck, Menu, X } from 'lucide-react';
-import { Button } from '../components/ui/Button';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
+import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
+import { Clock, Menu, X } from 'lucide-react';
+import { CtaLink } from '../pages/public/ui';
+
+/**
+ * Layout for the public website (/, /features, /pricing).
+ * Purely presentational: it never calls the API or shows account data, even for a signed-in visitor.
+ */
+
+const PAGE_TITLES: Record<string, string> = {
+  '/': 'SimpleHours · Rosters, timesheets and payroll preparation',
+  '/features': 'Features · SimpleHours',
+  '/pricing': 'Pricing · SimpleHours',
+};
+
+const NAV = [
+  { label: 'Features', to: '/features' },
+  { label: 'Pricing', to: '/pricing' },
+];
+
+const focusRing =
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--primary)]';
+
+function savedTheme(): 'light' | 'dark' | null {
+  try {
+    const value = localStorage.getItem('theme');
+    return value === 'light' || value === 'dark' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Use the theme saved by the app if there is one, otherwise follow the device setting. Never writes the setting. */
+function usePublicTheme() {
+  useLayoutEffect(() => {
+    const media = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    const apply = () => {
+      const theme = savedTheme() ?? (media?.matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+      document.body.classList.toggle('light-mode', theme === 'light');
+    };
+    apply();
+    media?.addEventListener('change', apply);
+    return () => media?.removeEventListener('change', apply);
+  }, []);
+}
+
+function usePageTitle(pathname: string) {
+  useEffect(() => {
+    const previous = document.title;
+    const title = PAGE_TITLES[pathname];
+    if (title) document.title = title;
+    return () => {
+      document.title = previous;
+    };
+  }, [pathname]);
+}
+
+function Logo() {
+  return (
+    <Link to="/" aria-label="SimpleHours home" className={`flex items-center gap-2.5 rounded-md ${focusRing}`}>
+      <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)] text-white">
+        <Clock className="h-4 w-4" strokeWidth={2.25} />
+      </span>
+      <span className="text-base font-semibold tracking-tight text-[var(--text)]">SimpleHours</span>
+    </Link>
+  );
+}
 
 export const PublicLayout: React.FC = () => {
-  const location = useLocation();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { pathname } = useLocation();
+  // The menu is open for the page it was opened on, so it closes by itself on navigation.
+  const [menuOpenOn, setMenuOpenOn] = useState<string | null>(null);
+  const menuOpen = menuOpenOn === pathname;
 
+  usePublicTheme();
+  usePageTitle(pathname);
+
+  // Close the mobile menu with Escape.
   useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [location.pathname]);
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpenOn(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
 
-  const navLinks = [
-    { label: 'Overview', path: '/' },
-    { label: 'Features', path: '/features' },
-    { label: 'Pricing', path: '/pricing' },
-  ];
+  const closeMenu = () => setMenuOpenOn(null);
 
-  const isActive = (path: string) => (path === '/' ? location.pathname === '/' : location.pathname.startsWith(path));
+  const navLinkClass = ({ isActive }: { isActive: boolean }, size = 'text-sm') =>
+    `rounded-md px-3 py-2 ${size} font-medium transition-colors ${focusRing} ${
+      isActive ? 'text-[var(--text)] bg-[var(--glass-8)]' : 'text-[var(--text)]/75 hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
+    }`;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
-      <div className="border-b border-[var(--border)] bg-[var(--panel-subtle)]/70 px-4 py-1.5 text-xs text-center text-[var(--muted)] flex items-center justify-center gap-2">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--success)]" />
-        <span>SimpleHours: fortnightly rosters, timesheets and payroll hours for multi-branch teams</span>
-      </div>
+    <div className="flex min-h-screen flex-col bg-[var(--bg)] text-[var(--text)]">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-[var(--panel)] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[var(--text)] focus:shadow-lg focus:outline-2 focus:outline-[color:var(--primary)]"
+      >
+        Skip to content
+      </a>
 
-      <header className="sticky top-0 z-40 w-full border-b border-[var(--border)] bg-[var(--panel)]/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-lg bg-[var(--primary)] flex items-center justify-center text-white shadow-xs group-hover:bg-[var(--primary-h)] transition-colors">
-              <Clock className="w-4 h-4" />
-            </div>
-            <span className="font-bold text-base tracking-tight text-[var(--text)]">SimpleHours</span>
-          </Link>
+      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--bg)]/90 backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <Logo />
 
-          <nav className="hidden md:flex items-center gap-1 bg-[var(--panel-subtle)]/70 px-2 py-1 rounded-lg border border-[var(--border)]">
-            {navLinks.map(link => (
-              <Link
-                key={link.path}
-                to={link.path}
-                className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  isActive(link.path)
-                    ? 'bg-[var(--panel)] text-[var(--text)] shadow-xs font-semibold'
-                    : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-4)]'
-                }`}
-              >
-                {link.label}
-              </Link>
+          <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
+            {NAV.map(item => (
+              <NavLink key={item.to} to={item.to} className={navLinkClass}>
+                {item.label}
+              </NavLink>
             ))}
+            <span aria-hidden="true" className="mx-2 h-5 w-px bg-[var(--border)]" />
+            <NavLink to="/login" className={navLinkClass}>
+              Sign in
+            </NavLink>
+            <CtaLink to="/signup" size="sm" className="ml-1">
+              Get started
+            </CtaLink>
           </nav>
 
-          <div className="hidden md:flex items-center gap-2">
-            <Link to="/login" className="px-3 py-1.5 text-xs font-semibold text-[var(--text)] hover:text-[var(--primary)] transition-colors">
-              Sign in
-            </Link>
-            <Link to="/signup">
-              <Button variant="primary" size="sm">Get started</Button>
-            </Link>
-          </div>
-
           <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] border border-[var(--border)] transition-colors"
-            aria-label="Toggle navigation menu"
-            aria-expanded={mobileMenuOpen}
+            type="button"
+            onClick={() => setMenuOpenOn(menuOpen ? null : pathname)}
+            className={`flex h-10 w-10 items-center justify-center rounded-md border border-[var(--border)] text-[var(--text)] hover:bg-[var(--glass-4)] md:hidden ${focusRing}`}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            aria-controls="public-menu"
           >
-            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4 text-[var(--text)]" />}
+            {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
 
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-[var(--border)] bg-[var(--panel)] px-4 py-3 space-y-1 shadow-lg">
-            {navLinks.map(link => (
-              <Link
-                key={link.path}
-                to={link.path}
-                className={`block px-3 py-2 rounded-md text-sm font-medium ${
-                  isActive(link.path) ? 'bg-[var(--primary-light)] text-[var(--primary)] font-semibold' : 'text-[var(--text)] hover:bg-[var(--panel-subtle)]'
-                }`}
-              >
-                {link.label}
-              </Link>
-            ))}
-            <div className="pt-2 mt-2 border-t border-[var(--border)] grid grid-cols-2 gap-2">
-              <Link to="/login">
-                <Button variant="secondary" size="md" className="w-full">Sign in</Button>
-              </Link>
-              <Link to="/signup">
-                <Button variant="primary" size="md" className="w-full">Get started</Button>
-              </Link>
+        {menuOpen && (
+          <nav id="public-menu" aria-label="Main" className="border-t border-[var(--border)] bg-[var(--bg)] px-4 pt-2 pb-4 md:hidden">
+            <ul className="space-y-1">
+              {NAV.map(item => (
+                <li key={item.to}>
+                  <NavLink to={item.to} onClick={closeMenu} className={props => `block ${navLinkClass(props, 'text-base')}`}>
+                    {item.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-4">
+              <CtaLink to="/login" variant="secondary" onClick={closeMenu}>
+                Sign in
+              </CtaLink>
+              <CtaLink to="/signup" onClick={closeMenu}>
+                Get started
+              </CtaLink>
             </div>
-          </div>
+          </nav>
         )}
       </header>
 
-      <main className="flex-1">
+      <main id="main" tabIndex={-1} className="flex-1 focus:outline-none">
         <Outlet />
       </main>
 
-      <footer className="border-t border-[var(--border)] bg-[var(--panel)] py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-          <div className="md:col-span-1 space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-white">
-                <Clock className="w-4 h-4" />
-              </div>
-              <span className="font-semibold text-sm text-[var(--text)]">SimpleHours</span>
-            </div>
-            <p className="text-xs text-[var(--muted)] leading-relaxed">
-              Rosters, timesheets and payroll-hours reports for organisations with one or many branches.
+      <footer className="border-t border-[var(--border)] bg-[var(--panel)]">
+        <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-10 sm:px-6 md:flex-row md:items-start md:justify-between lg:px-8">
+          <div className="max-w-sm space-y-3">
+            <Logo />
+            <p className="text-sm leading-relaxed text-[var(--text)]/70">
+              Rosters, timesheets and payroll preparation for Australian organisations with one or more branches.
             </p>
-            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-              <ShieldCheck className="w-4 h-4 text-[var(--success)]" />
-              <span>Two-step verification and audit log</span>
-            </div>
           </div>
-
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Product</h4>
-            <ul className="space-y-2 text-xs text-[var(--muted)]">
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Fortnightly roster</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Multi-segment days</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Per-branch locks</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Payroll hours, CSV and PDF</Link></li>
+          <nav aria-label="Footer">
+            <ul className="grid grid-cols-2 gap-x-10 gap-y-2 text-sm sm:flex sm:flex-wrap sm:gap-x-8">
+              {[
+                { label: 'Features', to: '/features' },
+                { label: 'Pricing', to: '/pricing' },
+                { label: 'Sign in', to: '/login' },
+                { label: 'Get started', to: '/signup' },
+              ].map(item => (
+                <li key={item.to}>
+                  <Link
+                    to={item.to}
+                    className={`rounded-sm text-[var(--text)]/75 hover:text-[var(--text)] hover:underline hover:underline-offset-4 ${focusRing}`}
+                  >
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
             </ul>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Security</h4>
-            <ul className="space-y-2 text-xs text-[var(--muted)]">
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Owner and Branch Admin access</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Two-step verification</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Session timeout</Link></li>
-              <li><Link to="/features" className="hover:text-[var(--text)] transition-colors">Audit log</Link></li>
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text)] mb-3">Get going</h4>
-            <ul className="space-y-2 text-xs text-[var(--muted)]">
-              <li><Link to="/signup" className="hover:text-[var(--text)] transition-colors">Set up a new organisation</Link></li>
-              <li><Link to="/login" className="hover:text-[var(--text)] transition-colors">Sign in</Link></li>
-              <li><Link to="/pricing" className="hover:text-[var(--text)] transition-colors">Pricing</Link></li>
-            </ul>
-          </div>
+          </nav>
         </div>
-
-        <div className="max-w-7xl mx-auto pt-6 border-t border-[var(--border)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--muted)]">
-          <p>© {new Date().getFullYear()} SimpleHours. All rights reserved.</p>
-          <p>Made for Australian workplaces.</p>
+        <div className="border-t border-[var(--border)]">
+          <p className="mx-auto max-w-7xl px-4 py-6 text-sm text-[var(--text)]/70 sm:px-6 lg:px-8">
+            © {new Date().getFullYear()} SimpleHours
+          </p>
         </div>
       </footer>
     </div>

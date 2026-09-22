@@ -1,305 +1,435 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { ArrowRight, Building2, Clock3, EyeOff, KeyRound, Link2, ScrollText, ServerCog, UserRound } from 'lucide-react';
+import { CtaLink, Eyebrow, Point, SectionIntro } from './ui';
 import {
-  CalendarDays,
-  Lock,
-  FileSpreadsheet,
-  ShieldCheck,
-  ArrowRight,
-  CheckCircle2,
-  Sparkles,
-  Layers,
-  ClipboardCheck,
-  SlidersHorizontal,
-  Building2,
-  UserCog,
-} from 'lucide-react';
-import { Button } from '../../components/ui/Button';
-import { Card } from '../../components/ui/Card';
-import { Badge } from '../../components/ui/Badge';
+  BranchAccessIllustration,
+  DefaultRosterIllustration,
+  PayrollReportIllustration,
+  RosterIllustration,
+  TimesheetDayIllustration,
+} from './illustrations';
 
-const pillars = [
+/**
+ * The public home page. Static content only: it never calls the API or reads account data,
+ * so it looks the same whether or not the visitor is signed in.
+ */
+
+const container = 'mx-auto max-w-7xl px-4 sm:px-6 lg:px-8';
+const sectionPad = 'py-16 sm:py-24';
+
+const STEPS = [
   {
-    icon: <CalendarDays className="w-5 h-5 text-[var(--primary)]" />,
-    title: 'Fortnightly roster',
-    description: 'Plan all 14 days of a pay period on one screen. Start from each worker’s template, copy a day across the team, or auto-roster the fortnight.',
+    title: 'Set up',
+    body: 'Create your organisation and its branches, add your workers and invite your Branch Admins.',
   },
   {
-    icon: <Layers className="w-5 h-5 text-[var(--primary)]" />,
-    title: 'Multi-segment days',
-    description: 'Split shifts and part-day leave are just more segments on the day: Normal Work, Sick Leave, Annual Leave, TIL, LWIP or Other.',
+    title: 'Roster',
+    body: 'Plan each fortnight from every worker’s default roster, then adjust the days that are different.',
   },
   {
-    icon: <SlidersHorizontal className="w-5 h-5 text-[var(--primary)]" />,
-    title: 'Breaks worked out for you',
-    description: 'Set your unpaid break once, with separate weekday and weekend lengths. It’s taken once per day when the day reaches your threshold.',
+    title: 'Record hours',
+    body: 'Enter the hours actually worked beside what was rostered, including any part-day leave.',
   },
   {
-    icon: <ClipboardCheck className="w-5 h-5 text-[var(--primary)]" />,
-    title: 'Timesheets and approval',
-    description: 'Record the hours actually worked beside the roster, see the variance, approve each worker’s fortnight and reopen it if something needs fixing.',
-  },
-  {
-    icon: <Lock className="w-5 h-5 text-[var(--primary)]" />,
-    title: 'Per-branch locks',
-    description: 'Each branch locks its roster and its timesheets for a fortnight, protected by a password, so finished periods stay finished.',
-  },
-  {
-    icon: <FileSpreadsheet className="w-5 h-5 text-[var(--primary)]" />,
-    title: 'Payroll-hours reports',
-    description: 'Hours by category for every worker: normal, Saturday, Sunday, public holiday, leave and LWIP. Export to CSV or PDF for your payroll.',
+    title: 'Approve and export',
+    body: 'Approve each worker’s timesheet, lock the pay period and export the report for payroll.',
   },
 ];
 
-export const Home: React.FC = () => {
+const SECURITY = [
+  {
+    icon: Building2,
+    title: 'Organisations kept apart',
+    body: 'Each organisation’s data is kept separate from every other organisation’s.',
+  },
+  {
+    icon: EyeOff,
+    title: 'Access by branch',
+    body: 'Branch Admins only see the branches they’re assigned to. The Organisation Owner sees them all.',
+  },
+  {
+    icon: ServerCog,
+    title: 'Checked on the server',
+    body: 'Every request is checked on the server, not just hidden on screen.',
+  },
+  {
+    icon: Link2,
+    title: 'Your own sign-in link',
+    body: 'Each organisation signs in through its own private sign-in link.',
+  },
+  {
+    icon: KeyRound,
+    title: 'Two-step verification',
+    body: 'Optionally, confirm each sign-in with a code sent by email.',
+  },
+  {
+    icon: Clock3,
+    title: 'Automatic sign-out',
+    body: 'Sessions end after 15 minutes of inactivity.',
+  },
+  {
+    icon: ScrollText,
+    title: 'Audit log',
+    body: 'The Organisation Owner can review a log of the changes made in the organisation.',
+  },
+];
+
+const SETUP = [
+  {
+    title: 'Sign up with your email',
+    body: 'We email you a link to set up your organisation. It works once and expires after 24 hours.',
+  },
+  {
+    title: 'Set up your organisation and first branch',
+    body: 'Name your organisation, create your account, add your first branch and choose your break rule. You’ll get your organisation’s private sign-in link.',
+  },
+  {
+    title: 'Add your workers',
+    body: 'Add the people you roster. Workers don’t sign in, so there’s nothing for them to install or remember.',
+  },
+  {
+    title: 'Invite your Branch Admins',
+    body: 'Invite the people who run each branch and choose which branches they can see.',
+  },
+];
+
+function Hero() {
   return (
-    <div className="space-y-24 py-12 md:py-20">
-      {/* Hero */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-3xl mx-auto space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-[var(--muted)] font-medium">
-            <Sparkles className="w-3.5 h-3.5 text-[var(--primary)]" />
-            <span>Rosters and timesheets for teams with one branch or many</span>
-          </div>
+    <section aria-labelledby="hero-title" className={`${container} pt-12 pb-16 sm:pt-20 sm:pb-24`}>
+      <Eyebrow>For Australian organisations with one branch or many</Eyebrow>
 
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-[var(--text)] leading-[1.12]">
-            Rosters and timesheets, without the spreadsheet.
-          </h1>
+      <div className="mt-6 grid gap-8 lg:grid-cols-12 lg:items-end lg:gap-12">
+        <h1
+          id="hero-title"
+          className="text-[2.25rem] leading-[1.1] font-semibold tracking-tight text-[var(--text)] sm:text-5xl lg:col-span-7 xl:text-[3.75rem]"
+        >
+          Rosters, timesheets and payroll preparation for every branch
+        </h1>
 
-          <p className="text-base sm:text-lg text-[var(--muted)] leading-relaxed max-w-2xl mx-auto">
-            SimpleHours lets you plan each fortnight, record the hours actually worked, approve them and hand payroll a clean
-            report. The Organisation Owner sets things up; Branch Admins run their own branches.
+        <div className="lg:col-span-5">
+          <p className="text-lg leading-relaxed text-[var(--text)]/75">
+            Plan each fortnight’s roster, record the hours actually worked, approve them and hand a clear report to
+            whoever runs your payroll. Branch by branch, in one place.
           </p>
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-            <Link to="/signup" className="w-full sm:w-auto">
-              <Button variant="primary" size="lg" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                Get started
-              </Button>
-            </Link>
-            <Link to="/features" className="w-full sm:w-auto">
-              <Button variant="secondary" size="lg" className="w-full">
-                See how it works
-              </Button>
-            </Link>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <CtaLink to="/signup" size="lg">
+              Get started
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </CtaLink>
+            <CtaLink to="/login" size="lg" variant="secondary">
+              Sign in
+            </CtaLink>
           </div>
+        </div>
+      </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-6 pt-4 text-xs text-[var(--muted)]">
-            {['14-day roster grid', 'Split shifts and part-day leave', 'CSV and PDF payroll exports'].map(point => (
-              <span key={point} className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-[var(--success)]" />
-                {point}
+      <RosterIllustration className="mt-12 sm:mt-16" />
+    </section>
+  );
+}
+
+function HowItWorks() {
+  return (
+    <section aria-labelledby="how-title" className="border-t border-[var(--border)] bg-[var(--panel)]">
+      <div className={`${container} ${sectionPad}`}>
+        <SectionIntro id="how-title" title="How it works" className="max-w-2xl">
+          <p>Set up once. Then every fortnight follows the same four steps.</p>
+        </SectionIntro>
+
+        <ol className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+          {STEPS.map((step, i) => (
+            <li key={step.title} className="border-t-2 border-[var(--border-hover)] pt-5">
+              <span className="flex items-center gap-2 font-mono text-sm font-semibold text-[var(--text)]/70">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--primary)]" />
+                Step {i + 1}
               </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Product view */}
-        <div className="mt-16 relative max-w-5xl mx-auto">
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden">
-            <div className="px-4 py-3 bg-[var(--panel-subtle)] border-b border-[var(--border)] flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
-                <span className="ml-3 hidden sm:inline text-xs font-medium text-[var(--muted)]">Roster · fortnight starting Sunday 29 March</span>
-              </div>
-              <Badge variant="info" size="sm">14-day view</Badge>
-            </div>
-
-            <div className="relative bg-black/5 overflow-hidden flex items-center justify-center min-h-[360px] sm:min-h-[480px]">
-              <img
-                src="/screenshots/roster_overview.jpg"
-                alt="The SimpleHours fortnightly roster"
-                className="w-full h-auto object-cover object-top border-b border-[var(--border)]"
-                loading="eager"
-              />
-            </div>
-
-            <div className="p-4 sm:p-5 bg-[var(--panel)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-[var(--border)]">
-              <div>
-                <div className="font-semibold text-sm text-[var(--text)]">The whole fortnight on one screen</div>
-                <div className="text-xs text-[var(--muted)] mt-0.5">
-                  Rostered and worked hours side by side, with overlaps caught and breaks worked out as you type.
-                </div>
-              </div>
-              <Link to="/features" className="shrink-0">
-                <Button variant="secondary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                  Explore features
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Capabilities */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-14 space-y-3">
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text)]">Everything a fortnight needs</h2>
-          <p className="text-sm text-[var(--muted)]">From the first shift you plan to the report you send to payroll.</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {pillars.map(p => (
-            <Card key={p.title} hoverable className="space-y-3 p-6">
-              <div className="w-10 h-10 rounded-lg bg-[var(--primary-light)] border border-[var(--primary)]/20 flex items-center justify-center">
-                {p.icon}
-              </div>
-              <h3 className="font-semibold text-base text-[var(--text)]">{p.title}</h3>
-              <p className="text-xs text-[var(--muted)] leading-relaxed">{p.description}</p>
-            </Card>
+              <h3 className="mt-2 text-lg font-semibold text-[var(--text)]">{step.title}</h3>
+              <p className="mt-2 text-[15px] leading-relaxed text-[var(--text)]/75">{step.body}</p>
+            </li>
           ))}
-        </div>
-      </section>
+        </ol>
+      </div>
+    </section>
+  );
+}
 
-      {/* How it works */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 border-y border-[var(--border)] bg-[var(--panel-subtle)]/40">
-        <div className="text-center max-w-2xl mx-auto mb-12 space-y-2">
-          <Badge variant="info" size="sm">Three steps</Badge>
-          <h2 className="text-2xl sm:text-3xl font-bold text-[var(--text)]">How SimpleHours works</h2>
-          <p className="text-xs sm:text-sm text-[var(--muted)]">Every step has a clear owner.</p>
+function Rosters() {
+  return (
+    <section aria-labelledby="rosters-title" className="border-t border-[var(--border)]">
+      <div className={`${container} ${sectionPad} grid items-center gap-12 lg:grid-cols-12 lg:gap-16`}>
+        <div className="lg:col-span-5">
+          <SectionIntro id="rosters-title" eyebrow="Rosters" title="Plan the whole fortnight in one place">
+            <p>Rosters follow your pay period: 14 days, for every worker in the branch.</p>
+          </SectionIntro>
+          <ul className="mt-8 space-y-4 text-[15px] leading-relaxed">
+            <Point title="Default rosters">
+              Give each worker a default roster for the fortnight, then apply default rosters to fill a new pay period.
+            </Point>
+            <Point title="Copy a day">Copy a day to other days instead of typing the same shift again.</Point>
+            <Point title="Change what’s different">Adjust any single day by hand without touching the rest.</Point>
+            <Point title="Lock it when it’s final">
+              Each branch can lock its roster for the pay period. Locking asks for a password.
+            </Point>
+          </ul>
+        </div>
+        <DefaultRosterIllustration className="lg:col-span-7" />
+      </div>
+    </section>
+  );
+}
+
+function Timesheets() {
+  return (
+    <section aria-labelledby="timesheets-title" className="border-t border-[var(--border)]">
+      <div className={`${container} ${sectionPad} grid items-center gap-12 lg:grid-cols-12 lg:gap-16`}>
+        <div className="lg:order-2 lg:col-span-5">
+          <SectionIntro id="timesheets-title" eyebrow="Timesheets" title="Record what was actually worked">
+            <p>Hours worked sit right next to what was rostered, so differences are easy to see and fix.</p>
+          </SectionIntro>
+          <ul className="mt-8 space-y-4 text-[15px] leading-relaxed">
+            <Point title="Planned and worked, side by side">
+              Record each person’s real start and finish times against their roster.
+            </Point>
+            <Point title="Part-day leave">
+              A day can mix Normal Work with Sick Leave, Annual Leave, <abbr title="time in lieu">TIL</abbr>,{' '}
+              <abbr title="leave without pay">LWIP</abbr> or Other.
+            </Point>
+            <Point title="Breaks worked out for you">
+              The unpaid break is worked out automatically, once per day, from your break rule. It’s never taken from
+              leave.
+            </Point>
+            <Point title="Approve, or reopen">
+              Approve each worker’s timesheet when it’s right. Reopen it if something needs to change.
+            </Point>
+          </ul>
+        </div>
+        <TimesheetDayIllustration className="lg:order-1 lg:col-span-7" />
+      </div>
+    </section>
+  );
+}
+
+function RoleList({ icon: Icon, title, scope, items }: { icon: typeof UserRound; title: string; scope: string; items: string[] }) {
+  return (
+    <div className="border-t border-[var(--border)] pt-5">
+      <div className="flex items-center gap-3">
+        <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--primary-light)] text-[var(--primary)]">
+          <Icon className="h-4.5 w-4.5" />
+        </span>
+        <div>
+          <h3 className="text-base font-semibold text-[var(--text)]">{title}</h3>
+          <p className="text-sm text-[var(--text)]/70">{scope}</p>
+        </div>
+      </div>
+      <ul className="mt-4 list-disc space-y-1.5 pl-5 text-[15px] leading-relaxed text-[var(--text)]/75 marker:text-[var(--text)]/40">
+        {items.map(item => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Branches() {
+  return (
+    <section aria-labelledby="branches-title" className="border-t border-[var(--border)]">
+      <div className={`${container} ${sectionPad}`}>
+        <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-16">
+          <div className="lg:col-span-5">
+            <SectionIntro id="branches-title" eyebrow="Branches and access" title="Each branch run by the right people">
+              <p>
+                Two kinds of account, and nothing in between. Workers don’t sign in at all: they’re records your admins
+                look after, so there are no extra logins to manage.
+              </p>
+            </SectionIntro>
+          </div>
+          <BranchAccessIllustration className="lg:col-span-7" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-          {[
-            {
-              title: 'Set up your organisation',
-              body: 'The Organisation Owner signs up, creates the branches and invites a Branch Admin for each one. Each Branch Admin sees only the branches they’re given.',
-            },
-            {
-              title: 'Roster and record',
-              body: 'Branch Admins add their workers, build the fortnight roster and record the hours actually worked, including split shifts and leave.',
-            },
-            {
-              title: 'Approve, lock and export',
-              body: 'Approve each worker’s timesheet, lock the branch’s fortnight so it can’t drift, and export payroll hours as CSV or PDF.',
-            },
-          ].map((stepItem, idx) => (
-            <div key={stepItem.title} className="bg-[var(--panel)] p-6 rounded-xl border border-[var(--border)] space-y-3">
-              <div className="w-8 h-8 rounded-full bg-[var(--primary)] text-white font-bold text-sm flex items-center justify-center">{idx + 1}</div>
-              <h3 className="font-semibold text-sm text-[var(--text)]">{stepItem.title}</h3>
-              <p className="text-xs text-[var(--muted)] leading-relaxed">{stepItem.body}</p>
+        <div className="mt-14 grid gap-10 md:grid-cols-2 md:gap-12">
+          <RoleList
+            icon={Building2}
+            title="Organisation Owner"
+            scope="The whole organisation"
+            items={[
+              'Sets up the organisation and creates its branches',
+              'Invites Branch Admins and chooses their branches',
+              'Manages organisation settings and reviews the audit log',
+              'Sees every branch, and can do everything a Branch Admin can',
+            ]}
+          />
+          <RoleList
+            icon={UserRound}
+            title="Branch Admin"
+            scope="Only the branches they’re assigned to"
+            items={[
+              'Invited by the Organisation Owner to one or more branches',
+              'Manages the workers, roster and timesheets of those branches',
+              'Locks their branches’ pay periods and runs their reports',
+              'Can’t see other branches or organisation settings',
+            ]}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PayrollPreparation() {
+  return (
+    <section aria-labelledby="payroll-title" className="border-t border-[var(--border)]">
+      <div className={`${container} ${sectionPad}`}>
+        <div className="grid gap-10 lg:grid-cols-12 lg:gap-16">
+          <SectionIntro
+            id="payroll-title"
+            eyebrow="Payroll preparation"
+            title="Hours ready for whoever runs your payroll"
+            className="lg:col-span-6"
+          >
+            <p>
+              Each fortnight’s report splits every worker’s hours into ordinary, Saturday, Sunday and public holiday
+              hours, and each type of leave. Export it as CSV, or print it or save it as a PDF.
+            </p>
+          </SectionIntro>
+
+          <div className="space-y-6 lg:col-span-6 lg:pt-10">
+            <ul className="space-y-4 text-[15px] leading-relaxed">
+              <Point title="Approve first">The report shows whether each worker’s timesheet has been approved.</Point>
+              <Point title="Lock the pay period">
+                Each branch can lock its timesheets for the fortnight, so the numbers you export don’t change
+                afterwards. Locking asks for a password.
+              </Point>
+            </ul>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-4 text-[15px] leading-relaxed">
+              <p className="font-semibold text-[var(--text)]">SimpleHours prepares the hours. It doesn’t run payroll.</p>
+              <p className="mt-1 text-[var(--text)]/75">
+                It doesn’t pay anyone, calculate tax or super, or connect to payroll software. Your payroll person or
+                system takes it from the report.
+              </p>
             </div>
+          </div>
+        </div>
+
+        <PayrollReportIllustration className="mt-12" />
+      </div>
+    </section>
+  );
+}
+
+function Security() {
+  return (
+    <section aria-labelledby="security-title" className="border-t border-[var(--border)] bg-[var(--panel)]">
+      <div className={`${container} ${sectionPad} grid gap-12 lg:grid-cols-12 lg:gap-16`}>
+        <SectionIntro id="security-title" eyebrow="Security" title="Access kept to the right people" className="lg:col-span-4">
+          <p>Exactly what SimpleHours does to control who can see and change your rosters and timesheets.</p>
+        </SectionIntro>
+
+        <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:col-span-8">
+          {SECURITY.map(({ icon: Icon, title, body }) => (
+            <li key={title} className="flex gap-4">
+              <span
+                aria-hidden="true"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text)]"
+              >
+                <Icon className="h-4.5 w-4.5" />
+              </span>
+              <div>
+                <h3 className="text-base font-semibold text-[var(--text)]">{title}</h3>
+                <p className="mt-1 text-[15px] leading-relaxed text-[var(--text)]/75">{body}</p>
+              </div>
+            </li>
           ))}
-        </div>
-      </section>
+        </ul>
+      </div>
+    </section>
+  );
+}
 
-      {/* Two roles */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-12 space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-bold text-[var(--text)]">Two roles, no guesswork</h2>
-          <p className="text-xs sm:text-sm text-[var(--muted)]">
-            Only the people who manage rosters and timesheets sign in. Workers don't need an account.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <Card className="p-6 sm:p-8 space-y-5">
-            <div className="flex items-center gap-2.5 pb-3 border-b border-[var(--border)]">
-              <div className="w-8 h-8 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center">
-                <Building2 className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="font-bold text-base text-[var(--text)]">Organisation Owner</h3>
-                <p className="text-xs text-[var(--muted)]">The whole organisation</p>
-              </div>
-            </div>
-            <ul className="space-y-3 text-xs text-[var(--text)]">
-              {[
-                'Creates branches and invites Branch Admins',
-                'Sees every branch’s roster, timesheets and reports',
-                'Sets break rules, lock passwords and public holidays',
-                'Reviews the audit log of who changed what',
-              ].map(item => (
-                <li key={item} className="flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-[var(--primary)] shrink-0 mt-0.5" />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-
-          <Card className="p-6 sm:p-8 space-y-5">
-            <div className="flex items-center gap-2.5 pb-3 border-b border-[var(--border)]">
-              <div className="w-8 h-8 rounded-lg bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center">
-                <UserCog className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="font-bold text-base text-[var(--text)]">Branch Admin</h3>
-                <p className="text-xs text-[var(--muted)]">Only the branches they’re given</p>
-              </div>
-            </div>
-            <ul className="space-y-3 text-xs text-[var(--text)]">
-              {[
-                'Adds and updates the workers in their branches',
-                'Builds the fortnight roster, including split shifts and leave',
-                'Records worked hours, then approves or reopens timesheets',
-                'Locks their branch’s fortnight and runs payroll-hours reports',
-              ].map(item => (
-                <li key={item} className="flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-[var(--success)] shrink-0 mt-0.5" />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </div>
-      </section>
-
-      {/* Security */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl p-8 sm:p-10 space-y-6">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[var(--primary)]">
-            <ShieldCheck className="w-4 h-4" />
-            <span>Security</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-            <div className="space-y-2">
-              <h4 className="font-semibold text-sm text-[var(--text)]">Access by branch</h4>
-              <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Every request is checked on the server against the account's role and branches. Each organisation has its own private sign-in link.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <h4 className="font-semibold text-sm text-[var(--text)]">Audit log</h4>
-              <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Sign-ins, approvals, lock changes and other edits are recorded with who made them and when.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <h4 className="font-semibold text-sm text-[var(--text)]">Sign-in protection</h4>
-              <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Optional two-step verification by email, checks on sign-ins from new places and automatic sign-out after 15 minutes without activity.
-              </p>
-            </div>
+function Setup() {
+  return (
+    <section aria-labelledby="setup-title" className="border-t border-[var(--border)]">
+      <div className={`${container} ${sectionPad} grid gap-12 lg:grid-cols-12 lg:gap-16`}>
+        <div className="lg:col-span-5">
+          <SectionIntro id="setup-title" eyebrow="Getting set up" title="What your first ten minutes look like">
+            <p>No software to install and nothing for your workers to download. You need an email address and a list of the people you roster.</p>
+          </SectionIntro>
+          <div className="mt-8">
+            <CtaLink to="/signup" size="lg">
+              Get started
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </CtaLink>
           </div>
         </div>
-      </section>
 
-      {/* Call to action */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl p-8 sm:p-12 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-2 max-w-xl">
-            <h2 className="text-2xl font-bold text-[var(--text)]">Ready for an easier fortnight?</h2>
-            <p className="text-xs sm:text-sm text-[var(--muted)] leading-relaxed">
-              Set up your organisation in a few minutes: add your first branch, then invite your Branch Admins.
+        <div className="lg:col-span-7">
+        <ol>
+          {SETUP.map((step, i) => (
+            <li key={step.title} className="relative flex gap-5 pb-8 last:pb-0">
+              {i < SETUP.length - 1 && (
+                <span aria-hidden="true" className="absolute top-10 bottom-2 left-[1.1875rem] w-px bg-[var(--border-hover)]" />
+              )}
+              <span
+                aria-hidden="true"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--border-hover)] bg-[var(--panel)] font-mono text-sm font-semibold text-[var(--text)]"
+              >
+                {i + 1}
+              </span>
+              <div className="pt-1.5">
+                <h3 className="text-lg font-semibold text-[var(--text)]">{step.title}</h3>
+                <p className="mt-1 text-[15px] leading-relaxed text-[var(--text)]/75">{step.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-8 ml-15 border-t border-[var(--border)] pt-5 text-[15px] text-[var(--text)]/75">
+          Then roster your first fortnight.
+        </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FinalCta() {
+  return (
+    <section aria-labelledby="cta-title" className="border-t border-[var(--border)]">
+      <div className={`${container} ${sectionPad}`}>
+        <div className="flex flex-col gap-8 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-6 sm:p-10 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-2xl">
+            <h2 id="cta-title" className="text-3xl font-semibold tracking-tight text-[var(--text)] sm:text-4xl">
+              Ready to plan your next fortnight?
+            </h2>
+            <p className="mt-3 text-base leading-relaxed text-[var(--text)]/75 sm:text-lg">
+              Set up your organisation and first branch, then invite your Branch Admins.
             </p>
           </div>
-          <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-            <Link to="/signup" className="w-full sm:w-auto">
-              <Button variant="primary" size="lg" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                Get started
-              </Button>
-            </Link>
-            <Link to="/login" className="w-full sm:w-auto">
-              <Button variant="outline" size="lg" className="w-full">
-                Sign in
-              </Button>
-            </Link>
+          <div className="flex shrink-0 flex-col gap-3 sm:flex-row">
+            <CtaLink to="/signup" size="lg">
+              Get started
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </CtaLink>
+            <CtaLink to="/login" size="lg" variant="secondary">
+              Sign in
+            </CtaLink>
           </div>
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
+  );
+}
+
+export const Home: React.FC = () => {
+  return (
+    <>
+      <Hero />
+      <HowItWorks />
+      <Rosters />
+      <Timesheets />
+      <Branches />
+      <PayrollPreparation />
+      <Security />
+      <Setup />
+      <FinalCta />
+    </>
   );
 };

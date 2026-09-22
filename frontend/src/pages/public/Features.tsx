@@ -1,8 +1,8 @@
 import React from 'react';
-import { Calendar, Clock, Lock, Layers, Check, ArrowRight, Building2, KeyRound, FileSpreadsheet, MessageSquare, ScrollText, Plus } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Calendar, Clock, Clock3, Lock, Layers, Check, ArrowRight, Building2, KeyRound, FileSpreadsheet, ScrollText, Plus } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
-import { Button } from '../../components/ui/Button';
+import { CtaLink } from './ui';
+import { RosterIllustration } from './illustrations';
 
 function Point({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -27,10 +27,10 @@ export const Features: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-20">
       <div className="text-center max-w-3xl mx-auto space-y-4">
-        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">How SimpleHours works</h1>
+        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">What SimpleHours does</h1>
         <p className="text-base text-[var(--muted)] leading-relaxed">
-          Rosters, timesheets and payroll hours for organisations with one or many branches, run by an Organisation Owner and
-          the Branch Admins they invite.
+          Rosters, timesheets and payroll preparation for Australian organisations with one or more branches, run by an
+          Organisation Owner and the Branch Admins they invite. Workers don't sign in.
         </p>
       </div>
 
@@ -53,15 +53,7 @@ export const Features: React.FC = () => {
           </ul>
         </div>
         <div className="lg:col-span-7">
-          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden">
-            <div className="px-3.5 py-2 bg-[var(--panel-subtle)] border-b border-[var(--border)] flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
-              <span className="ml-2 text-[10px] font-medium text-[var(--muted)]">Roster · 14-day view</span>
-            </div>
-            <img src="/screenshots/roster_overview.jpg" alt="The SimpleHours fortnightly roster" className="w-full h-auto object-cover object-top" />
-          </div>
+          <RosterIllustration />
         </div>
       </div>
 
@@ -198,24 +190,25 @@ export const Features: React.FC = () => {
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
             <Point title="Categories">Normal, Saturday, Sunday and public holiday hours, Sick Leave, Annual Leave, TIL, LWIP, Other and unplanned hours.</Point>
             <Point title="Variance">Contracted, rostered and worked hours side by side, with the approval status of each timesheet.</Point>
-            <Point title="Export">Download as CSV for your payroll system, or as a PDF to print and file.</Point>
+            <Point title="Export">Download as CSV, or print it or save it as a PDF, for whoever runs your payroll.</Point>
+            <Point title="Preparation, not payroll">SimpleHours prepares the hours. It doesn't pay anyone, calculate tax or super, or connect to payroll software.</Point>
           </ul>
         </div>
       </div>
 
       {/* Roles & security */}
       <div className="border-t border-[var(--border)] pt-16">
-        <h3 className="text-xl font-bold text-center text-[var(--text)] mb-8">Built for the people who run the roster</h3>
+        <h2 className="text-2xl font-bold text-center text-[var(--text)] mb-8">Access and security</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { icon: <Building2 className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Owner and Branch Admins', text: 'Branch Admins only see their branches' },
-            { icon: <KeyRound className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Two-step verification', text: 'Email codes at sign-in' },
-            { icon: <ScrollText className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Audit log', text: 'Who changed what, and when' },
-            { icon: <MessageSquare className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Team Chat', text: 'Updates for your Branch Admins' },
+            { icon: <Building2 className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Owner and Branch Admins', text: 'Branch Admins only see their branches, checked on the server' },
+            { icon: <KeyRound className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Two-step verification', text: 'Optional email codes at sign-in' },
+            { icon: <Clock3 className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Automatic sign-out', text: 'After 15 minutes of inactivity' },
+            { icon: <ScrollText className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Audit log', text: 'Changes, for the Organisation Owner' },
           ].map(card => (
             <div key={card.title} className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
               {card.icon}
-              <h4 className="font-semibold text-xs text-[var(--text)]">{card.title}</h4>
+              <h3 className="font-semibold text-xs text-[var(--text)]">{card.title}</h3>
               <p className="text-[11px] text-[var(--muted)]">{card.text}</p>
             </div>
           ))}
@@ -223,14 +216,13 @@ export const Features: React.FC = () => {
       </div>
 
       <div className="text-center pt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-        <Link to="/signup">
-          <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            Get started
-          </Button>
-        </Link>
-        <Link to="/pricing">
-          <Button variant="secondary" size="lg">View pricing</Button>
-        </Link>
+        <CtaLink to="/signup" size="lg">
+          Get started
+          <ArrowRight aria-hidden="true" className="w-4 h-4" />
+        </CtaLink>
+        <CtaLink to="/login" size="lg" variant="secondary">
+          Sign in
+        </CtaLink>
       </div>
     </div>
   );

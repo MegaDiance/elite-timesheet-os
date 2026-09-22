@@ -1,120 +1,67 @@
 import React from 'react';
-import { Check, ArrowRight } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { Card } from '../../components/ui/Card';
-import { Button } from '../../components/ui/Button';
-import { Badge } from '../../components/ui/Badge';
+import { ArrowRight } from 'lucide-react';
+import { CtaLink, Point } from './ui';
 
-const tiers = [
-  {
-    name: 'Starter',
-    badge: 'One branch',
-    description: 'For a single site that wants its roster and timesheets out of spreadsheets.',
-    features: [
-      'One branch, up to 25 active workers',
-      'Fortnightly roster with multi-segment days',
-      'Timesheets with approve and reopen',
-      'Automatic unpaid break rule',
-      'Payroll-hours report with CSV export',
-    ],
-    popular: false,
-  },
-  {
-    name: 'Professional',
-    badge: 'Most popular',
-    description: 'For organisations with several branches, each run by its own Branch Admin.',
-    features: [
-      'Up to 10 branches and 150 active workers',
-      'Everything in Starter',
-      'Branch Admins with access to their branches only',
-      'Per-branch roster and timesheet locks',
-      'PDF reports and public holiday hours',
-      'Two-step verification and audit log',
-    ],
-    popular: true,
-  },
-  {
-    name: 'Enterprise',
-    badge: 'Larger organisations',
-    description: 'For organisations with many branches that need help getting set up.',
-    features: [
-      'Unlimited branches and workers',
-      'Everything in Professional',
-      'Help setting up branches and Branch Admins',
-      'Priority support',
-    ],
-    popular: false,
-  },
+/**
+ * No prices or plan limits are defined for SimpleHours yet, so this page lists what's included
+ * and says plainly that prices aren't published. Don't add figures here until they are real.
+ */
+
+const INCLUDED: Array<{ title: string; body: string }> = [
+  { title: 'Branches', body: 'One branch or many, each with its own roster, timesheets and locks.' },
+  { title: 'Two kinds of account', body: 'The Organisation Owner, and Branch Admins who see only the branches they’re assigned to.' },
+  { title: 'Fortnightly rosters', body: 'Default rosters per worker, copy a day to other days, apply default rosters.' },
+  { title: 'Timesheets', body: 'Worked hours beside rostered hours, part-day leave, the unpaid break worked out automatically, approve and reopen.' },
+  { title: 'Pay period locks', body: 'Lock a branch’s roster and timesheets for the fortnight, with password confirmation.' },
+  { title: 'Payroll preparation', body: 'A report per fortnight with ordinary, weekend, public holiday and leave hours, as CSV or PDF.' },
+  { title: 'Security', body: 'A private sign-in link, optional two-step verification by email, automatic sign-out and an audit log.' },
 ];
 
 export const Pricing: React.FC = () => {
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-16">
-      <div className="text-center max-w-3xl mx-auto space-y-4">
-        <Badge variant="purple" size="md">Plans</Badge>
-        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">Simple plans for every size of team</h1>
-        <p className="text-base text-[var(--muted)] leading-relaxed">
-          Every plan includes the fortnightly roster, timesheets and payroll-hours reports. Set up your organisation online
-          in a few minutes.
+    <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
+      <div className="max-w-3xl">
+        <h1 className="text-4xl font-semibold tracking-tight text-[var(--text)] sm:text-5xl">Pricing</h1>
+        <p className="mt-4 text-lg leading-relaxed text-[var(--text)]/75">
+          Every organisation gets all of SimpleHours. There are no feature tiers to choose between.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
-        {tiers.map(tier => (
-          <Card
-            key={tier.name}
-            className={`flex flex-col justify-between p-8 relative ${tier.popular ? 'border-[var(--primary)] shadow-lg ring-1 ring-[var(--primary)]/30' : ''}`}
-          >
-            {tier.popular && (
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                <span className="bg-[var(--primary)] text-white text-[11px] font-semibold px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
-                  Most popular
-                </span>
-              </div>
-            )}
+      <div className="mt-12 grid gap-8 lg:grid-cols-12 lg:gap-12">
+        <section aria-labelledby="included-title" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-6 sm:p-8 lg:col-span-8">
+          <h2 id="included-title" className="text-xl font-semibold text-[var(--text)]">What’s included</h2>
+          <ul className="mt-6 grid gap-x-8 gap-y-4 text-[15px] leading-relaxed md:grid-cols-2">
+            {INCLUDED.map(item => (
+              <Point key={item.title} title={item.title}>
+                {item.body}
+              </Point>
+            ))}
+          </ul>
+          <p className="mt-6 border-t border-[var(--border)] pt-4 text-sm text-[var(--text)]/70">
+            SimpleHours prepares hours for payroll. It doesn’t pay anyone, calculate tax or super, or connect to payroll
+            software.
+          </p>
+        </section>
 
-            <div className="space-y-6">
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-xl font-bold text-[var(--text)]">{tier.name}</h3>
-                  <Badge variant={tier.popular ? 'purple' : 'default'} size="sm">{tier.badge}</Badge>
-                </div>
-                <p className="text-xs text-[var(--muted)] mt-2 leading-relaxed">{tier.description}</p>
-              </div>
-
-              <div className="pt-4 border-t border-[var(--border)]">
-                <div className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-3">Included</div>
-                <ul className="space-y-2.5 text-xs text-[var(--text)]">
-                  {tier.features.map(feat => (
-                    <li key={feat} className="flex items-start gap-2.5">
-                      <Check className="w-4 h-4 text-[var(--success)] shrink-0 mt-0.5" />
-                      <span>{feat}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <div className="pt-8 mt-8 border-t border-[var(--border)]">
-              <Link to="/signup" className="block w-full">
-                <Button
-                  variant={tier.popular ? 'primary' : 'secondary'}
-                  size="md"
-                  className="w-full"
-                  rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
-                >
-                  Get started
-                </Button>
-              </Link>
-            </div>
-          </Card>
-        ))}
+        <section aria-labelledby="cost-title" className="flex flex-col rounded-xl border border-[var(--border)] bg-[var(--panel)] p-6 sm:p-8 lg:col-span-4">
+          <h2 id="cost-title" className="text-xl font-semibold text-[var(--text)]">What it costs</h2>
+          <p className="mt-4 text-[15px] leading-relaxed text-[var(--text)]/75">
+            Prices aren’t published on this site yet.
+          </p>
+          <p className="mt-3 text-[15px] leading-relaxed text-[var(--text)]/75">
+            Signing up only needs an email address. There are no payment details to enter.
+          </p>
+          <div className="mt-8 flex flex-col gap-3 lg:mt-auto lg:pt-8">
+            <CtaLink to="/signup" size="lg">
+              Get started
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </CtaLink>
+            <CtaLink to="/login" size="lg" variant="secondary">
+              Sign in
+            </CtaLink>
+          </div>
+        </section>
       </div>
-
-      <p className="text-center text-xs text-[var(--muted)]">
-        Already set up?{' '}
-        <Link to="/login" className="font-semibold text-[var(--primary)] hover:underline">Sign in</Link>
-      </p>
     </div>
   );
 };
