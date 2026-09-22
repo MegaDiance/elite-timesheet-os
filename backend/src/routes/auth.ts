@@ -4,7 +4,7 @@ import { query } from '../services/db';
 import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword } from '../services/auth';
 import { requireAuth, AuthRequest, sendError } from '../middleware/auth';
 import { ROLE_PERMISSIONS, listAccessibleOrganisations, resolveAccess, writeAudit, isUuid } from '../services/policy';
-import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate } from '../services/emailService';
+import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate, isEmailSendingEnabled } from '../services/emailService';
 import { createSession, touchSession, revokeSession, revokeAllUserSessions, getActiveUserSessions, recordLoginAttempt } from '../services/sessionService';
 import { ClientInfo, parseClientInfo, assessLoginRisk, createLoginChallenge } from '../services/securityService';
 import {
@@ -147,34 +147,45 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
             return fail(user.id);
         }
 
+        // The suspicious-login email challenge and 2FA codes both need working email. While email
+        // is off, neither can be completed, so both are skipped rather than locking the account
+        // out — the attempt is still written to the audit log so the Owner can review it.
         const risk = await assessLoginRisk(user.id, clientInfo, req);
         if (risk.isSuspicious) {
-            const challenge = await createLoginChallenge(user.id, orgId, clientInfo);
-            const template = buildSuspiciousLoginVerificationTemplate({
-                recipientEmail: user.email,
-                verifyLink: `${publicBaseUrl()}/verify-login?token=${challenge.token}`,
-                verificationCode: challenge.code,
-                approxLocation: clientInfo.approxLocation,
-                deviceInfo: clientInfo.deviceInfo
-            });
-            const emailResult = await sendTransactionalEmail({ to: user.email, subject: template.subject, html: template.html, text: template.text });
-            if (!emailResult.success) {
-                return res.status(503).json({ success: false, error: { code: 'EMAIL_DELIVERY_FAILED', message: 'We could not send your verification email. Please try again shortly.' } });
+            if (!isEmailSendingEnabled()) {
+                await writeAudit({ orgId, actorId: user.id, action: 'LOGIN_SUSPICIOUS_CHALLENGE_SKIPPED', entityType: 'auth', entityId: user.id, details: `Skipped, email is off: ${risk.reason}`, ip: clientInfo.ip });
+            } else {
+                const challenge = await createLoginChallenge(user.id, orgId, clientInfo);
+                const template = buildSuspiciousLoginVerificationTemplate({
+                    recipientEmail: user.email,
+                    verifyLink: `${publicBaseUrl()}/verify-login?token=${challenge.token}`,
+                    verificationCode: challenge.code,
+                    approxLocation: clientInfo.approxLocation,
+                    deviceInfo: clientInfo.deviceInfo
+                });
+                const emailResult = await sendTransactionalEmail({ to: user.email, subject: template.subject, html: template.html, text: template.text });
+                if (!emailResult.success) {
+                    return res.status(503).json({ success: false, error: { code: 'EMAIL_DELIVERY_FAILED', message: 'We could not send your verification email. Please try again shortly.' } });
+                }
+                await recordLoginAttempt({ userId: user.id, orgId, email: cleanEmail, status: 'CHALLENGE_REQUIRED', clientInfo, authMethod: 'password' });
+                await writeAudit({ orgId, actorId: user.id, action: 'LOGIN_SUSPICIOUS_CHALLENGE', entityType: 'auth', entityId: challenge.challengeId, details: risk.reason, ip: clientInfo.ip });
+                return res.json({
+                    success: true,
+                    require_login_verification: true,
+                    challenge_id: challenge.challengeId,
+                    masked_email: maskEmail(user.email),
+                    message: 'Sign-in from a new location requires confirmation. Please check your email inbox.'
+                });
             }
-            await recordLoginAttempt({ userId: user.id, orgId, email: cleanEmail, status: 'CHALLENGE_REQUIRED', clientInfo, authMethod: 'password' });
-            await writeAudit({ orgId, actorId: user.id, action: 'LOGIN_SUSPICIOUS_CHALLENGE', entityType: 'auth', entityId: challenge.challengeId, details: risk.reason, ip: clientInfo.ip });
-            return res.json({
-                success: true,
-                require_login_verification: true,
-                challenge_id: challenge.challengeId,
-                masked_email: maskEmail(user.email),
-                message: 'Sign-in from a new location requires confirmation. Please check your email inbox.'
-            });
         }
 
         if (user.two_factor_enabled === true) {
-            const step = await beginTwoFactorStep(user, orgId);
-            return res.status(step.status).json(step.body);
+            if (!isEmailSendingEnabled()) {
+                await writeAudit({ orgId, actorId: user.id, action: 'LOGIN_2FA_SKIPPED', entityType: 'auth', entityId: user.id, details: 'Two-step verification skipped, email is off', ip: clientInfo.ip });
+            } else {
+                const step = await beginTwoFactorStep(user, orgId);
+                return res.status(step.status).json(step.body);
+            }
         }
 
         const data = await completeLogin(user, orgId, clientInfo, 'password', 'SUCCESS');
@@ -266,10 +277,15 @@ router.post('/verify-login', checkRateLimit, async (req: RateLimitedRequest, res
         const user = userRes.rows[0];
         if (!user) return invalidChallenge();
 
-        // The suspicious-login check never replaces the second factor.
+        // The suspicious-login check never replaces the second factor — except while email is off,
+        // when neither can be completed by email, so 2FA is skipped the same way login does it.
         if (user.two_factor_enabled === true) {
-            const step = await beginTwoFactorStep(user, challenge.org_id);
-            return res.status(step.status).json(step.body);
+            if (!isEmailSendingEnabled()) {
+                await writeAudit({ orgId: challenge.org_id, actorId: user.id, action: 'LOGIN_2FA_SKIPPED', entityType: 'auth', entityId: user.id, details: 'Two-step verification skipped, email is off', ip: clientInfo.ip });
+            } else {
+                const step = await beginTwoFactorStep(user, challenge.org_id);
+                return res.status(step.status).json(step.body);
+            }
         }
 
         const data = await completeLogin(user, challenge.org_id, clientInfo, 'suspicious_verify', 'CHALLENGE_VERIFIED');
@@ -539,6 +555,11 @@ router.post('/forgot-password', throttle, async (req: RateLimitedRequest, res: R
     if (typeof email !== 'string' || !email.trim()) {
         return res.status(400).json({ success: false, error: { message: 'Email required' } });
     }
+    // Same message regardless of whether the account exists, so this never reveals that — but
+    // while email is off, no reset can be emailed to anyone, so that fact alone is safe to state.
+    if (!isEmailSendingEnabled()) {
+        return res.json({ success: true, message: 'Password reset by email is currently turned off. Ask your organisation owner to generate a reset link for you from Branch Admins.' });
+    }
     const generic = { success: true, message: 'If an account exists, a reset link was sent.' };
 
     try {
@@ -628,6 +649,9 @@ router.get('/2fa/status', requireAuth, async (req: AuthRequest, res: Response) =
 router.post('/2fa/send-setup-code', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const { userId, email } = req.auth!;
+        if (!isEmailSendingEnabled()) {
+            return res.status(503).json({ success: false, error: { code: 'EMAIL_DISABLED', message: 'Two-step verification needs email, which is currently turned off.' } });
+        }
         const { code, hash } = newSixDigitCode();
         await query('DELETE FROM two_factor_codes WHERE user_id = $1', [userId]);
         await query(

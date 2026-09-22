@@ -263,6 +263,7 @@ describe('C4: email is never rerouted and fails closed', () => {
 
     it('production with no provider, or with the mock provider, refuses to send', async () => {
         process.env.NODE_ENV = 'production';
+        process.env.EMAIL_ENABLED = 'true'; // isolates "no transport is configured" from the separate EMAIL_ENABLED switch
         delete process.env.EMAIL_PROVIDER;
         delete process.env.RESEND_API_KEY;
         delete process.env.POSTMARK_SERVER_TOKEN;

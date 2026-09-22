@@ -5,7 +5,7 @@ import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { AccessContext, HttpError, badRequest, isUuid, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
-import { sendTransactionalEmail, buildBranchAdminInviteEmailTemplate } from '../services/emailService';
+import { sendTransactionalEmail, buildBranchAdminInviteEmailTemplate, isEmailSendingEnabled } from '../services/emailService';
 import {
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
     isStrongPassword, isValidEmail, newSecretToken, publicBaseUrl, sha256Hex
@@ -19,9 +19,14 @@ import {
  * a Branch Admin (or Owner) in other organisations too.
  *
  * New people are added by invitation. The invitation token is random, stored hashed, expires
- * after 7 days, is single use, is only ever emailed, and never creates a session: after
- * accepting, the person signs in normally. An invitation for an email that already has an
- * account only attaches branch access after that account's password has been verified.
+ * after 7 days, is single use, and never creates a session: after accepting, the person signs in
+ * normally. An invitation for an email that already has an account only attaches branch access
+ * after that account's password has been verified.
+ *
+ * While email is turned off (EMAIL_ENABLED), the invitation link is handed straight back to the
+ * Owner who just created it — never emailed, never returned by any other endpoint — so they can
+ * copy and share it themselves. The link is exactly as secure either way: random, single-use,
+ * expiring, revocable, and a fresh invite or resend always invalidates the previous one.
  */
 const router = Router();
 
@@ -178,10 +183,29 @@ async function resolveOwnBranches(ctx: AccessContext, locationIds: unknown): Pro
     return res.rows;
 }
 
-async function sendInvitationEmail(ctx: AccessContext, invitationId: string, email: string, rawToken: string, branchNames: string[]) {
+interface InvitationDelivery {
+    /** True once the person has a way to get the link: either it was emailed, or it is being handed back for copying. */
+    delivered: boolean;
+    /** The raw link, present only when email is off and the caller (the Owner who made the request) must copy it themselves. */
+    link?: string;
+}
+
+/**
+ * Emails the invitation link, or — while email is off — reports it back to be copied instead.
+ * Either way `branch_admin_invitations.delivery_status` records what actually happened ('sent',
+ * 'link' or 'failed'), and the API response is worded to match: it never says "sent" unless an
+ * email really was sent.
+ */
+async function deliverInvitation(ctx: AccessContext, invitationId: string, email: string, rawToken: string, branchNames: string[]): Promise<InvitationDelivery> {
+    const link = `${publicBaseUrl()}/accept-invite?token=${rawToken}`;
+    if (!isEmailSendingEnabled()) {
+        await query('UPDATE branch_admin_invitations SET delivery_status = $1, last_error = NULL WHERE id = $2', ['link', invitationId]);
+        return { delivered: true, link };
+    }
+
     const orgRes = await query('SELECT name FROM organisations WHERE id = $1', [ctx.orgId]);
     const template = buildBranchAdminInviteEmailTemplate({
-        inviteLink: `${publicBaseUrl()}/accept-invite?token=${rawToken}`,
+        inviteLink: link,
         recipientEmail: email,
         organisationName: orgRes.rows[0].name,
         branchNames,
@@ -191,7 +215,7 @@ async function sendInvitationEmail(ctx: AccessContext, invitationId: string, ema
         'UPDATE branch_admin_invitations SET delivery_status = $1, last_error = $2 WHERE id = $3',
         [result.success ? 'sent' : 'failed', result.success ? null : result.error || 'UNKNOWN', invitationId]
     );
-    return result.success;
+    return { delivered: result.success };
 }
 
 router.get('/', async (req: AuthRequest, res: Response) => {
@@ -263,17 +287,25 @@ router.post('/invitations', async (req: AuthRequest, res: Response) => {
             }
         });
 
-        const delivered = await sendInvitationEmail(ctx, invitationId, cleanEmail, token.raw, branches.map(b => b.name));
+        const delivery = await deliverInvitation(ctx, invitationId, cleanEmail, token.raw, branches.map(b => b.name));
         await writeAudit({
             orgId: ctx.orgId, actorId: ctx.userId, action: 'BRANCH_ADMIN_INVITED', entityType: 'branch_admin_invitation', entityId: invitationId,
-            newValue: branches.map(b => b.name).join(', '), details: `Invited ${cleanEmail}`
+            newValue: branches.map(b => b.name).join(', '), details: delivery.link ? `Invited ${cleanEmail} (link copied, email is off)` : `Invited ${cleanEmail}`
         });
 
-        // The invitation link is never returned: it only ever travels by email.
         res.status(201).json({
             success: true,
-            data: { id: invitationId, email: cleanEmail, delivery_status: delivered ? 'sent' : 'failed' },
-            message: delivered ? `Invitation sent to ${cleanEmail}.` : 'The invitation was created but the email could not be delivered. Use Resend once email is working.'
+            data: {
+                id: invitationId, email: cleanEmail,
+                delivery_status: delivery.link ? 'link' : delivery.delivered ? 'sent' : 'failed',
+                // Only ever included when email is off: it is otherwise never returned by any endpoint, only emailed.
+                ...(delivery.link ? { invite_link: delivery.link } : {}),
+            },
+            message: delivery.link
+                ? `Invitation created for ${cleanEmail}. Email is currently turned off — copy the link below and share it with them.`
+                : delivery.delivered
+                    ? `Invitation sent to ${cleanEmail}.`
+                    : 'The invitation was created but the email could not be delivered. Use Resend once email is working.'
         });
     } catch (err) {
         sendError(res, err, 'BRANCH ADMIN INVITE ERROR');
@@ -295,8 +327,15 @@ router.post('/invitations/:id/resend', async (req: AuthRequest, res: Response) =
         if (updated.rows.length === 0) throw notFound('Invitation');
 
         const branches = await invitationBranches(updated.rows[0].id);
-        const delivered = await sendInvitationEmail(ctx, updated.rows[0].id, updated.rows[0].email, token.raw, branches.map(b => b.name));
-        res.json({ success: delivered, data: { delivery_status: delivered ? 'sent' : 'failed' }, message: delivered ? 'Invitation re-sent.' : 'The email could not be delivered.' });
+        const delivery = await deliverInvitation(ctx, updated.rows[0].id, updated.rows[0].email, token.raw, branches.map(b => b.name));
+        res.json({
+            success: delivery.delivered,
+            data: {
+                delivery_status: delivery.link ? 'link' : delivery.delivered ? 'sent' : 'failed',
+                ...(delivery.link ? { invite_link: delivery.link } : {}),
+            },
+            message: delivery.link ? 'The link was regenerated. Email is currently turned off — copy the new link below.' : delivery.delivered ? 'Invitation re-sent.' : 'The email could not be delivered.'
+        });
     } catch (err) {
         sendError(res, err, 'BRANCH ADMIN RESEND ERROR');
     }
@@ -316,6 +355,49 @@ router.delete('/invitations/:id', async (req: AuthRequest, res: Response) => {
         res.json({ success: true, message: 'Invitation revoked.' });
     } catch (err) {
         sendError(res, err, 'BRANCH ADMIN REVOKE ERROR');
+    }
+});
+
+/**
+ * POST /api/branch-admins/:userId/reset-password-link
+ *
+ * The no-email way for a locked-out Branch Admin to get back in: the Owner generates a secure,
+ * single-use, expiring link (the same link `POST /auth/forgot-password` would otherwise email)
+ * and copies it to the person themselves. Works whether or not email is on — it is a convenience
+ * either way — and is the one the Owner is pointed to while email is off.
+ */
+router.post('/:userId/reset-password-link', async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const targetUserId = req.params.userId;
+        if (!isUuid(targetUserId)) throw notFound('Branch Admin');
+
+        const admin = await query(
+            `SELECT DISTINCT u.id, u.email FROM branch_admins ba JOIN users u ON u.id = ba.user_id
+              WHERE ba.org_id = $1 AND ba.user_id = $2`,
+            [ctx.orgId, targetUserId]
+        );
+        if (admin.rows.length === 0) throw notFound('Branch Admin');
+
+        const token = newSecretToken();
+        await query('DELETE FROM reset_tokens WHERE user_id = $1', [targetUserId]);
+        await query(
+            'INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
+            [token.hash, targetUserId, new Date(Date.now() + 3600000).toISOString()]
+        );
+
+        await writeAudit({
+            orgId: ctx.orgId, actorId: ctx.userId, action: 'BRANCH_ADMIN_PASSWORD_RESET_LINK_CREATED',
+            entityType: 'branch_admin', entityId: targetUserId, targetUserId, details: `Generated a password reset link for ${admin.rows[0].email}`
+        });
+
+        res.json({
+            success: true,
+            data: { reset_link: `${publicBaseUrl()}/reset-password?token=${token.raw}` },
+            message: 'Copy this link and share it with them yourself. It works once and expires in 1 hour.'
+        });
+    } catch (err) {
+        sendError(res, err, 'BRANCH ADMIN RESET LINK ERROR');
     }
 });
 

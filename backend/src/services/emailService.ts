@@ -22,7 +22,7 @@ export interface EmailOptions {
     text?: string;
 }
 
-export type EmailFailureCode = 'NOT_CONFIGURED' | 'PROVIDER_REJECTED' | 'NETWORK_ERROR' | 'INVALID_RECIPIENT';
+export type EmailFailureCode = 'NOT_CONFIGURED' | 'PROVIDER_REJECTED' | 'NETWORK_ERROR' | 'INVALID_RECIPIENT' | 'EMAIL_DISABLED';
 
 export interface EmailDeliveryResult {
     success: boolean;
@@ -46,6 +46,22 @@ export function getTestOutbox(): CapturedEmail[] {
 
 export function clearTestOutbox(): void {
     testOutbox.length = 0;
+}
+
+/**
+ * Whether the app should attempt to send transactional email at all. This is the MVP on/off
+ * switch (`EMAIL_ENABLED`), separate from whether a transport is configured: while it is off,
+ * every flow that would normally email something (invitations, password resets, 2FA codes,
+ * login alerts) must fall back to its no-email alternative instead of trying to send, and must
+ * never say an email was sent. Unset defaults to on during automated tests (so existing email
+ * content/delivery coverage keeps running) and to off everywhere else, per "email is off for
+ * the MVP". Either state can be forced with `EMAIL_ENABLED=true` / `EMAIL_ENABLED=false`.
+ */
+export function isEmailSendingEnabled(): boolean {
+    const raw = (process.env.EMAIL_ENABLED || '').trim().toLowerCase();
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    return process.env.NODE_ENV === 'test';
 }
 
 type ProviderName = 'resend' | 'postmark' | 'mock' | 'none';
@@ -74,6 +90,7 @@ function resolveProvider(): ProviderName {
  * this and fail clearly instead of silently producing an undeliverable secret.
  */
 export function isEmailDeliveryConfigured(): boolean {
+    if (!isEmailSendingEnabled()) return false;
     const provider = resolveProvider();
     if (provider === 'resend') return Boolean(process.env.RESEND_API_KEY);
     if (provider === 'postmark') return Boolean(process.env.POSTMARK_SERVER_TOKEN);
@@ -94,6 +111,10 @@ function maskForLog(address: string): string {
  * Sends one transactional email to exactly `options.to`.
  */
 export async function sendTransactionalEmail(options: EmailOptions): Promise<EmailDeliveryResult> {
+    if (!isEmailSendingEnabled()) {
+        return { success: false, provider: 'none', error: 'EMAIL_DISABLED' };
+    }
+
     const provider = resolveProvider();
     const fromAddress = process.env.EMAIL_FROM || 'SimpleHours <onboarding@resend.dev>';
     const text = options.text || options.html.replace(/<[^>]*>?/gm, '');

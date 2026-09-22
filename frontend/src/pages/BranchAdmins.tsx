@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2,
+  Check,
+  Copy,
+  KeyRound,
+  Link2,
   Mail,
   RefreshCw,
   Send,
@@ -45,6 +49,53 @@ interface Invitation {
 }
 
 const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+
+/** A single-use secure link the Owner must copy and share themselves (email is off). */
+function CopyLinkModal({ link, onClose }: { link: { title: string; description: string; url: string } | null; onClose: () => void }) {
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (link) setCopied(false);
+  }, [link]);
+
+  const copy = async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link.url);
+      setCopied(true);
+      toast.success('Copied to clipboard.');
+    } catch {
+      toast.error('Could not copy automatically. Select the link and copy it manually.');
+    }
+  };
+
+  return (
+    <Modal isOpen={Boolean(link)} onClose={onClose} title={link?.title || ''} description={link?.description} maxWidth="md">
+      {link && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={link.url}
+              onFocus={e => e.currentTarget.select()}
+              className="flex-1 min-w-0 text-xs font-mono px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--panel-subtle)] text-[var(--text)]"
+            />
+            <Button type="button" variant="primary" size="sm" onClick={copy} leftIcon={copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}>
+              {copied ? 'Copied' : 'Copy'}
+            </Button>
+          </div>
+          <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+            This link is shown once and works only once. It isn't stored anywhere you can come back to, so copy it now — if it's lost, create a new one.
+          </p>
+          <div className="flex items-center justify-end pt-4 border-t border-[var(--border)]">
+            <Button type="button" variant="ghost" size="sm" onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -120,6 +171,8 @@ export default function BranchAdmins() {
   const [revoking, setRevoking] = useState<Invitation | null>(null);
   const [revokeBusy, setRevokeBusy] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [resetLinkBusyId, setResetLinkBusyId] = useState<string | null>(null);
+  const [copyLink, setCopyLink] = useState<{ title: string; description: string; url: string } | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -166,8 +219,14 @@ export default function BranchAdmins() {
         location_ids: inviteBranches,
       });
       const message = res.data?.message || `Invitation sent to ${inviteEmail.trim()}.`;
-      if (res.data?.data?.delivery_status === 'failed') toast.warning(message);
-      else toast.success(message);
+      const inviteLink = res.data?.data?.invite_link;
+      if (inviteLink) {
+        setCopyLink({ title: 'Invitation link', description: `Email is currently turned off. Copy this link and share it with ${inviteEmail.trim()} yourself.`, url: inviteLink });
+      } else if (res.data?.data?.delivery_status === 'failed') {
+        toast.warning(message);
+      } else {
+        toast.success(message);
+      }
       setShowInvite(false);
       fetchData();
     } catch (err: any) {
@@ -181,13 +240,35 @@ export default function BranchAdmins() {
     setResendingId(invitation.id);
     try {
       const res = await api.post(`/branch-admins/invitations/${invitation.id}/resend`);
-      if (res.data?.success) toast.success(res.data.message || 'Invitation re-sent.');
-      else toast.error(res.data?.message || 'The email could not be delivered.');
+      const inviteLink = res.data?.data?.invite_link;
+      if (inviteLink) {
+        setCopyLink({ title: 'Invitation link', description: `Email is currently turned off. Copy this new link and share it with ${invitation.email} yourself — the old link no longer works.`, url: inviteLink });
+      } else if (res.data?.success) {
+        toast.success(res.data.message || 'Invitation re-sent.');
+      } else {
+        toast.error(res.data?.message || 'The email could not be delivered.');
+      }
       fetchData();
     } catch (err: any) {
       toast.error(errorMessage(err, 'The invitation could not be re-sent.'));
     } finally {
       setResendingId(null);
+    }
+  };
+
+  const handleResetLink = async (admin: BranchAdmin) => {
+    setResetLinkBusyId(admin.id);
+    try {
+      const res = await api.post(`/branch-admins/${admin.id}/reset-password-link`);
+      setCopyLink({
+        title: 'Password reset link',
+        description: `Copy this link and share it with ${admin.full_name || admin.email} yourself, so they can set a new password.`,
+        url: res.data.data.reset_link,
+      });
+    } catch (err: any) {
+      toast.error(errorMessage(err, 'A reset link could not be created.'));
+    } finally {
+      setResetLinkBusyId(null);
     }
   };
 
@@ -364,6 +445,16 @@ export default function BranchAdmins() {
                           Change branches
                         </Button>
                         <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleResetLink(admin)}
+                          loading={resetLinkBusyId === admin.id}
+                          title="Generate a password reset link to share with them yourself"
+                          leftIcon={<KeyRound className="w-3.5 h-3.5" />}
+                        >
+                          Reset link
+                        </Button>
+                        <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => setRemoving(admin)}
@@ -390,7 +481,7 @@ export default function BranchAdmins() {
           </h2>
           {invitations.length === 0 ? (
             <Card className="p-4 text-xs text-[var(--muted)]">
-              No invitations waiting. Invitations are only sent by email and expire after 7 days.
+              No invitations waiting. Invitations expire after 7 days.
             </Card>
           ) : (
             <Table>
@@ -421,6 +512,10 @@ export default function BranchAdmins() {
                     <TableCell>
                       {invitation.delivery_status === 'sent' ? (
                         <Badge variant="success" size="sm"><Mail className="w-3 h-3" />Delivered</Badge>
+                      ) : invitation.delivery_status === 'link' ? (
+                        <Badge variant="outline" size="sm" title="Email is off. Resend to get a fresh link to copy.">
+                          <Link2 className="w-3 h-3" />Link only
+                        </Badge>
                       ) : invitation.delivery_status === 'failed' ? (
                         <Badge variant="danger" size="sm"><XCircle className="w-3 h-3" />Not delivered</Badge>
                       ) : (
@@ -462,7 +557,7 @@ export default function BranchAdmins() {
         isOpen={showInvite}
         onClose={() => setShowInvite(false)}
         title="Invite a Branch Admin"
-        description="We email them a private link to accept. The link expires after 7 days."
+        description="They get a private link to accept, valid for 7 days — emailed automatically, or shown to you to copy and share if email is currently off."
         maxWidth="md"
       >
         <form onSubmit={handleInvite} className="space-y-4">
@@ -550,11 +645,13 @@ export default function BranchAdmins() {
         onClose={() => setRevoking(null)}
         onConfirm={handleRevoke}
         title="Revoke this invitation?"
-        message={`The link emailed to ${revoking?.email ?? 'this person'} stops working straight away. You can send a new invitation later.`}
+        message={`The link sent to ${revoking?.email ?? 'this person'} stops working straight away. You can send a new invitation later.`}
         confirmLabel="Revoke invitation"
         variant="danger"
         loading={revokeBusy}
       />
+
+      <CopyLinkModal link={copyLink} onClose={() => setCopyLink(null)} />
     </div>
   );
 }
