@@ -357,8 +357,9 @@ export default function Employees() {
           branches={branches}
           defaultBranchId={defaultBranchId}
           onClose={() => setFormWorker(null)}
-          onSaved={message => {
+          onSaved={(message, warning) => {
             toast.success(message);
+            if (warning) toast.warning(warning);
             setFormWorker(null);
             reload();
           }}
@@ -394,7 +395,7 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
   branches: Branch[];
   defaultBranchId: string;
   onClose: () => void;
-  onSaved: (message: string) => void;
+  onSaved: (message: string, warning?: string) => void;
 }) {
   const [form, setForm] = useState({
     full_name: worker?.full_name || '',
@@ -436,8 +437,12 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
     };
     try {
       if (worker) {
-        await api.put(`/employees/${worker.id}`, body);
-        onSaved(`${body.full_name} has been updated.`);
+        const res = await api.put(`/employees/${worker.id}`, body);
+        const movedRecords = Number(res.data?.data?.historical_records_affected || 0);
+        const warning = moving && movedRecords > 0
+          ? `${body.full_name}’s ${movedRecords} past roster/timesheet day${movedRecords === 1 ? '' : 's'} will now show under the new branch, not where the work actually happened.`
+          : undefined;
+        onSaved(`${body.full_name} has been updated${moving ? ` and moved to ${branchOptions.find(b => b.id === form.location_id)?.name ?? 'the new branch'}` : ''}.`, warning);
       } else {
         await api.post('/employees', body);
         onSaved(`${body.full_name} has been added.`);

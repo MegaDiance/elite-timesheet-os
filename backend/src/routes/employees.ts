@@ -164,11 +164,20 @@ router.put('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: Aut
         }
 
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_UPDATED', entityType: 'worker', entityId: worker.id, branchId, previousValue: worker.full_name, newValue: fields.full_name, details: `Updated worker ${fields.full_name}` });
+
+        // Rosters and timesheets are not branch-stamped: they are shown by the worker's CURRENT
+        // branch, not the branch they were actually worked in. A move is never blocked or altered
+        // by this — the worker's own history is never touched — but the caller is told when the
+        // worker has past records, since those records will now be shown under the new branch too
+        // (and stop appearing under the old one) rather than staying with where the work happened.
+        let historicalRecordsAffected = 0;
         if (target) {
             const from = await query('SELECT name FROM locations WHERE id = $1 AND org_id = $2', [worker.location_id, ctx.orgId]);
             await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_MOVED', entityType: 'worker', entityId: worker.id, branchId: target.id, previousValue: from.rows[0]?.name ?? null, newValue: target.name, details: `Moved worker ${fields.full_name} to branch "${target.name}"` });
+            const past = await query('SELECT COUNT(*)::int AS n FROM daily_records WHERE employee_id = $1', [worker.id]);
+            historicalRecordsAffected = past.rows[0].n;
         }
-        res.json({ success: true, data: updated.rows[0] });
+        res.json({ success: true, data: { ...updated.rows[0], historical_records_affected: historicalRecordsAffected } });
     } catch (err) {
         sendError(res, err, 'WORKER UPDATE ERROR');
     }
