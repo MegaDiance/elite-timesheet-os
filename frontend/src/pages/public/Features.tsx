@@ -216,12 +216,9 @@ export const Features: React.FC = () => {
       </div>
 
       <div className="text-center pt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-        <CtaLink to="/signup" size="lg">
+        <CtaLink to="/pricing" size="lg">
           Get started
           <ArrowRight aria-hidden="true" className="w-4 h-4" />
-        </CtaLink>
-        <CtaLink to="/login" size="lg" variant="secondary">
-          Sign in
         </CtaLink>
       </div>
     </div>

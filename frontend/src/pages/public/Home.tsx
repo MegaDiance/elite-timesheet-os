@@ -112,12 +112,9 @@ function Hero() {
             whoever runs your payroll. Branch by branch, in one place.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <CtaLink to="/signup" size="lg">
+            <CtaLink to="/pricing" size="lg">
               Get started
               <ArrowRight aria-hidden="true" className="h-4 w-4" />
-            </CtaLink>
-            <CtaLink to="/login" size="lg" variant="secondary">
-              Sign in
             </CtaLink>
           </div>
         </div>
@@ -318,7 +315,7 @@ function PayrollPreparation() {
 
 function Security() {
   return (
-    <section aria-labelledby="security-title" className="border-t border-[var(--border)] bg-[var(--panel)]">
+    <section id="security" aria-labelledby="security-title" className="border-t border-[var(--border)] bg-[var(--panel)] scroll-mt-16">
       <div className={`${container} ${sectionPad} grid gap-12 lg:grid-cols-12 lg:gap-16`}>
         <SectionIntro id="security-title" eyebrow="Security" title="Access kept to the right people" className="lg:col-span-4">
           <p>Exactly what SimpleHours does to control who can see and change your rosters and timesheets.</p>
@@ -354,7 +351,7 @@ function Setup() {
             <p>No software to install and nothing for your workers to download. You need an email address and a list of the people you roster.</p>
           </SectionIntro>
           <div className="mt-8">
-            <CtaLink to="/signup" size="lg">
+            <CtaLink to="/pricing" size="lg">
               Get started
               <ArrowRight aria-hidden="true" className="h-4 w-4" />
             </CtaLink>
@@ -404,12 +401,9 @@ function FinalCta() {
             </p>
           </div>
           <div className="flex shrink-0 flex-col gap-3 sm:flex-row">
-            <CtaLink to="/signup" size="lg">
+            <CtaLink to="/pricing" size="lg">
               Get started
               <ArrowRight aria-hidden="true" className="h-4 w-4" />
-            </CtaLink>
-            <CtaLink to="/login" size="lg" variant="secondary">
-              Sign in
             </CtaLink>
           </div>
         </div>

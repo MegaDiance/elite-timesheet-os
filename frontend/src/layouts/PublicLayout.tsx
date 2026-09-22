@@ -17,6 +17,7 @@ const PAGE_TITLES: Record<string, string> = {
 const NAV = [
   { label: 'Features', to: '/features' },
   { label: 'Pricing', to: '/pricing' },
+  { label: 'Security', to: '/#security' },
 ];
 
 const focusRing =
@@ -46,6 +47,27 @@ function usePublicTheme() {
   }, []);
 }
 
+/** Scrolls to the element named by the URL's #hash whenever it changes, including a cross-page nav (client-side routing doesn't do this on its own). */
+function useHashScroll(pathname: string, hash: string) {
+  useEffect(() => {
+    if (!hash) return;
+    const id = hash.slice(1);
+    let cancelled = false;
+    // The target section may not be in the DOM yet on the first paint of a page we've just navigated to,
+    // so this tries for up to ~1s rather than a single attempt.
+    const tryScroll = (attempt: number) => {
+      if (cancelled) return;
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+      else if (attempt < 20) setTimeout(() => tryScroll(attempt + 1), 50);
+    };
+    tryScroll(0);
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, hash]);
+}
+
 function usePageTitle(pathname: string) {
   useEffect(() => {
     const previous = document.title;
@@ -69,13 +91,14 @@ function Logo() {
 }
 
 export const PublicLayout: React.FC = () => {
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   // The menu is open for the page it was opened on, so it closes by itself on navigation.
   const [menuOpenOn, setMenuOpenOn] = useState<string | null>(null);
   const menuOpen = menuOpenOn === pathname;
 
   usePublicTheme();
   usePageTitle(pathname);
+  useHashScroll(pathname, hash);
 
   // Close the mobile menu with Escape.
   useEffect(() => {
@@ -113,11 +136,7 @@ export const PublicLayout: React.FC = () => {
                 {item.label}
               </NavLink>
             ))}
-            <span aria-hidden="true" className="mx-2 h-5 w-px bg-[var(--border)]" />
-            <NavLink to="/login" className={navLinkClass}>
-              Sign in
-            </NavLink>
-            <CtaLink to="/signup" size="sm" className="ml-1">
+            <CtaLink to="/pricing" size="sm" className="ml-2">
               Get started
             </CtaLink>
           </nav>
@@ -145,11 +164,8 @@ export const PublicLayout: React.FC = () => {
                 </li>
               ))}
             </ul>
-            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-4">
-              <CtaLink to="/login" variant="secondary" onClick={closeMenu}>
-                Sign in
-              </CtaLink>
-              <CtaLink to="/signup" onClick={closeMenu}>
+            <div className="mt-3 border-t border-[var(--border)] pt-4">
+              <CtaLink to="/pricing" onClick={closeMenu} className="w-full justify-center">
                 Get started
               </CtaLink>
             </div>
@@ -174,10 +190,10 @@ export const PublicLayout: React.FC = () => {
               {[
                 { label: 'Features', to: '/features' },
                 { label: 'Pricing', to: '/pricing' },
-                { label: 'Sign in', to: '/login' },
-                { label: 'Get started', to: '/signup' },
+                { label: 'Security', to: '/#security' },
+                { label: 'Get started', to: '/pricing' },
               ].map(item => (
-                <li key={item.to}>
+                <li key={item.label}>
                   <Link
                     to={item.to}
                     className={`rounded-sm text-[var(--text)]/75 hover:text-[var(--text)] hover:underline hover:underline-offset-4 ${focusRing}`}
