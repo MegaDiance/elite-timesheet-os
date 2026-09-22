@@ -72,10 +72,17 @@ Notes:
 Email (organisation sign-up, Branch Admin invitations, password resets, 2FA codes):
 
 ```
-EMAIL_PROVIDER=resend
-RESEND_API_KEY=re_...
+EMAIL_PROVIDER=smtp
+SMTP_HOST=mail.yourdomain.com
+SMTP_PORT=587
+SMTP_SECURE=tls
+SMTP_USERNAME=noreply@yourdomain.com
+SMTP_PASSWORD=...
 EMAIL_FROM=SimpleHours <noreply@yourdomain.com>
 ```
+
+(`EMAIL_PROVIDER=resend` with `RESEND_API_KEY=re_...`, or `EMAIL_PROVIDER=postmark` with
+`POSTMARK_SERVER_TOKEN=...`, both still work if you'd rather use an HTTP API provider.)
 
 Without these, nothing that needs an emailed link works: sign-up is refused and
 invitations are created but not delivered. Links are never shown in the app or

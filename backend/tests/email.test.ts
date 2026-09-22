@@ -1,4 +1,7 @@
+import nodemailer from 'nodemailer';
 import { sendTransactionalEmail, buildOrganisationSetupEmailTemplate, buildBranchAdminInviteEmailTemplate } from '../src/services/emailService';
+
+jest.mock('nodemailer');
 
 describe('Transactional Email Service Tests', () => {
     it('builds the organisation set-up email with the link and recipient, escaped', () => {
@@ -93,6 +96,96 @@ describe('Transactional Email Service Tests', () => {
             process.env.EMAIL_PROVIDER = originalProvider;
             if (originalKey) process.env.RESEND_API_KEY = originalKey;
             global.fetch = originalFetch;
+        }
+    });
+
+    it('should return explicit failure if EMAIL_PROVIDER=smtp but SMTP_HOST/USERNAME/PASSWORD are missing', async () => {
+        const originalProvider = process.env.EMAIL_PROVIDER;
+        process.env.EMAIL_PROVIDER = 'smtp';
+        delete process.env.SMTP_HOST;
+        delete process.env.SMTP_USERNAME;
+        delete process.env.SMTP_PASSWORD;
+
+        try {
+            const result = await sendTransactionalEmail({
+                to: 'admin@acme.com',
+                subject: 'Test',
+                html: '<p>Test</p>'
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.provider).toBe('smtp');
+            expect(result.error).toBe('NOT_CONFIGURED');
+        } finally {
+            process.env.EMAIL_PROVIDER = originalProvider;
+        }
+    });
+
+    it('should send via SMTP (Nodemailer) when configured, without leaking the mailbox password', async () => {
+        const originalProvider = process.env.EMAIL_PROVIDER;
+        process.env.EMAIL_PROVIDER = 'smtp';
+        process.env.SMTP_HOST = 'smtp.example.com';
+        process.env.SMTP_PORT = '587';
+        process.env.SMTP_SECURE = 'tls';
+        process.env.SMTP_USERNAME = 'noreply@example.com';
+        process.env.SMTP_PASSWORD = 'super-secret';
+
+        const sendMail = jest.fn().mockResolvedValue({ messageId: 'smtp-message-id' });
+        const createTransport = nodemailer.createTransport as jest.Mock;
+        createTransport.mockReturnValue({ sendMail });
+
+        try {
+            const result = await sendTransactionalEmail({
+                to: 'admin@acme.com',
+                subject: 'Test',
+                html: '<p>Test</p>'
+            });
+
+            expect(createTransport).toHaveBeenCalledWith(expect.objectContaining({
+                host: 'smtp.example.com',
+                port: 587,
+                secure: false,
+                auth: { user: 'noreply@example.com', pass: 'super-secret' },
+            }));
+            expect(result.success).toBe(true);
+            expect(result.provider).toBe('smtp');
+            expect(result.messageId).toBe('smtp-message-id');
+        } finally {
+            process.env.EMAIL_PROVIDER = originalProvider;
+            delete process.env.SMTP_HOST;
+            delete process.env.SMTP_PORT;
+            delete process.env.SMTP_SECURE;
+            delete process.env.SMTP_USERNAME;
+            delete process.env.SMTP_PASSWORD;
+        }
+    });
+
+    it('should report a generic failure (and never reroute) when the SMTP server rejects the message', async () => {
+        const originalProvider = process.env.EMAIL_PROVIDER;
+        process.env.EMAIL_PROVIDER = 'smtp';
+        process.env.SMTP_HOST = 'smtp.example.com';
+        process.env.SMTP_USERNAME = 'noreply@example.com';
+        process.env.SMTP_PASSWORD = 'super-secret';
+
+        const sendMail = jest.fn().mockRejectedValue(new Error('554 relay denied'));
+        const createTransport = nodemailer.createTransport as jest.Mock;
+        createTransport.mockReturnValue({ sendMail });
+
+        try {
+            const result = await sendTransactionalEmail({
+                to: 'admin@acme.com',
+                subject: 'Test',
+                html: '<p>Test</p>'
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.provider).toBe('smtp');
+            expect(result.error).toBe('NETWORK_ERROR');
+        } finally {
+            process.env.EMAIL_PROVIDER = originalProvider;
+            delete process.env.SMTP_HOST;
+            delete process.env.SMTP_USERNAME;
+            delete process.env.SMTP_PASSWORD;
         }
     });
 });

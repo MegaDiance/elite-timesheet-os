@@ -1,3 +1,5 @@
+import nodemailer from 'nodemailer';
+
 /**
  * Transactional email delivery.
  *
@@ -64,7 +66,7 @@ export function isEmailSendingEnabled(): boolean {
     return process.env.NODE_ENV === 'test';
 }
 
-type ProviderName = 'resend' | 'postmark' | 'mock' | 'none';
+type ProviderName = 'resend' | 'postmark' | 'smtp' | 'mock' | 'none';
 
 function resolveProvider(): ProviderName {
     const configured = (process.env.EMAIL_PROVIDER || '').trim().toLowerCase();
@@ -72,6 +74,7 @@ function resolveProvider(): ProviderName {
 
     if (configured === 'resend') return 'resend';
     if (configured === 'postmark') return 'postmark';
+    if (configured === 'smtp') return 'smtp';
     if (configured === 'mock' || configured === 'dev-mock' || configured === 'test') {
         // The mock transport never delivers mail, so it is refused in production.
         return env === 'production' ? 'none' : 'mock';
@@ -80,6 +83,7 @@ function resolveProvider(): ProviderName {
     if (env === 'test') return 'mock';
     if (process.env.RESEND_API_KEY) return 'resend';
     if (process.env.POSTMARK_SERVER_TOKEN) return 'postmark';
+    if (process.env.SMTP_HOST) return 'smtp';
     if (env === 'development') return 'mock';
     return 'none';
 }
@@ -94,6 +98,7 @@ export function isEmailDeliveryConfigured(): boolean {
     const provider = resolveProvider();
     if (provider === 'resend') return Boolean(process.env.RESEND_API_KEY);
     if (provider === 'postmark') return Boolean(process.env.POSTMARK_SERVER_TOKEN);
+    if (provider === 'smtp') return Boolean(process.env.SMTP_HOST && process.env.SMTP_USERNAME && process.env.SMTP_PASSWORD);
     return provider === 'mock';
 }
 
@@ -172,6 +177,36 @@ export async function sendTransactionalEmail(options: EmailOptions): Promise<Ema
             return { success: false, provider, error: 'PROVIDER_REJECTED' };
         } catch {
             console.error(`[EMAIL] Network error contacting Postmark for ${maskForLog(options.to)}.`);
+            return { success: false, provider, error: 'NETWORK_ERROR' };
+        }
+    }
+
+    if (provider === 'smtp') {
+        if (!process.env.SMTP_HOST || !process.env.SMTP_USERNAME || !process.env.SMTP_PASSWORD) {
+            console.error('[EMAIL] SMTP selected but SMTP_HOST, SMTP_USERNAME or SMTP_PASSWORD is not set.');
+            return { success: false, provider, error: 'NOT_CONFIGURED' };
+        }
+        try {
+            const port = Number(process.env.SMTP_PORT) || 587;
+            // 'ssl' (typically port 465) connects with TLS from the start; anything else
+            // (typically port 587) connects plain and upgrades via STARTTLS.
+            const secure = (process.env.SMTP_SECURE || '').trim().toLowerCase() === 'ssl';
+            const transport = nodemailer.createTransport({
+                host: process.env.SMTP_HOST,
+                port,
+                secure,
+                auth: { user: process.env.SMTP_USERNAME, pass: process.env.SMTP_PASSWORD },
+            });
+            const info = await transport.sendMail({
+                from: fromAddress,
+                to: options.to,
+                subject: options.subject,
+                html: options.html,
+                text,
+            });
+            return { success: true, provider, messageId: info?.messageId };
+        } catch {
+            console.error(`[EMAIL] SMTP send failed for ${maskForLog(options.to)}.`);
             return { success: false, provider, error: 'NETWORK_ERROR' };
         }
     }

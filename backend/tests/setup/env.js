@@ -10,3 +10,6 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-only-jwt-secret-not-for
 process.env.EMAIL_PROVIDER = 'mock';
 delete process.env.RESEND_API_KEY;
 delete process.env.POSTMARK_SERVER_TOKEN;
+delete process.env.SMTP_HOST;
+delete process.env.SMTP_USERNAME;
+delete process.env.SMTP_PASSWORD;
