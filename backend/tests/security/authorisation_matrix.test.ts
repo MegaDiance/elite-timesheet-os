@@ -54,8 +54,6 @@ const rows: Row[] = [
     { name: 'GET /audit', method: 'get', path: () => '/api/audit', expect: OWNER_ONLY_OWN_ORG },
     { name: 'GET /organisation/holidays', method: 'get', path: () => '/api/organisation/holidays', expect: EVERYONE },
     { name: 'POST /organisation/holidays', method: 'post', path: () => '/api/organisation/holidays', body: () => ({ holiday_date: '2026-12-25', name: 'Christmas Day' }), expect: OWNER_ONLY_OWN_ORG },
-    { name: 'GET /xero/status', method: 'get', path: () => '/api/xero/status', expect: OWNER_ONLY_OWN_ORG },
-    { name: 'GET /xero/preview', method: 'get', path: () => `/api/xero/preview?start_date=${PERIOD}`, expect: OWNER_ONLY_OWN_ORG },
 
     // Branches
     { name: 'GET /locations', method: 'get', path: () => '/api/locations', expect: EVERYONE },

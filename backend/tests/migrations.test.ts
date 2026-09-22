@@ -95,14 +95,17 @@ describe('two-role migrations on legacy data', () => {
 
     it('legacy role structures are gone', async () => {
         const tables = (await q("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).map(r => r.tablename);
-        for (const t of ['organisation_members', 'location_memberships', 'location_invitations', 'invitation_tokens', 'org_invitation_tokens', 'leave_requests']) {
+        for (const t of ['organisation_members', 'location_memberships', 'location_invitations', 'invitation_tokens', 'org_invitation_tokens', 'leave_requests', 'xero_connections']) {
             expect(tables).not.toContain(t);
         }
         const columns = await q(`SELECT table_name || '.' || column_name AS c FROM information_schema.columns
                                   WHERE table_schema = 'public' AND (table_name, column_name) IN
                                   (('users','role'),('users','org_id'),('employees','user_id'),('sessions','location_id'),
                                    ('login_verification_challenges','role'),('organisations','slug'),('organisations','timesheet_entry_mode'),
-                                   ('audit_logs','scope'),('fortnight_locks','is_published'))`);
+                                   ('audit_logs','scope'),('fortnight_locks','is_published'),
+                                   ('organisations','display_name'),('organisations','logo_url'),('employees','deleted_at'),
+                                   ('audit_logs','timestamp'),('sessions','token_hash'),('organisation_announcements','is_system'),
+                                   ('organisation_announcements','announcement_type'))`);
         expect(columns).toEqual([]);
     });
 
@@ -139,6 +142,16 @@ describe('two-role migrations on legacy data', () => {
         expect(await q("SELECT 1 FROM legacy_archive WHERE row::text LIKE '%PLAINTEXT-SECRET%' OR row ? 'token' OR row ? 'token_hash'")).toEqual([]);
     });
 
+    it('redundant indexes are gone and the ones queries use remain', async () => {
+        const indexes = (await q("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")).map(r => r.indexname);
+        for (const gone of ['idx_organisations_portal_slug', 'idx_login_challenges_token_hash', 'idx_locations_org', 'idx_sessions_active', 'idx_audit_logs_target_user', 'idx_audit_logs_actor_org']) {
+            expect(indexes).not.toContain(gone);
+        }
+        for (const kept of ['organisations_portal_slug_key', 'idx_audit_logs_org_created', 'idx_daily_records_org_date', 'idx_branch_admins_user_org']) {
+            expect(indexes).toContain(kept);
+        }
+    });
+
     it('new constraints hold: foreign keys, CHECKs and unique keys', async () => {
         await expect(db.query("UPDATE shift_segments SET segment_type = 'LWOP'")).rejects.toThrow(/shift_segments_segment_type_check/);
         await expect(db.query("UPDATE timesheet_submissions SET status = 'Submitted'")).rejects.toThrow(/timesheet_submissions_status_check/);
@@ -159,13 +172,15 @@ describe('two-role migrations on legacy data', () => {
     it('rolls back with everyone’s access intact, and re-applies to exactly the same access', async () => {
         const accessBefore = await q('SELECT org_id, location_id, user_id FROM branch_admins ORDER BY 1, 2, 3');
         await db.end();
-        migrate('down', '2');
+        migrate('down', '3');
         db = new Client({ connectionString: urlForDatabase(DB) });
         await db.connect();
         // The original legacy rows are back…
         expect((await q("SELECT COUNT(*)::int AS n FROM organisation_members WHERE role IN ('Platform Admin', 'Employee')"))[0].n).toBe(2);
         expect((await q('SELECT COUNT(*)::int AS n FROM users WHERE role IS NOT NULL'))[0].n).toBe(7);
         expect(await q("SELECT role FROM location_memberships WHERE user_id = $1", [ids.employee])).toEqual([{ role: 'employee' }]);
+        expect(await q('SELECT leave_type, hours::float FROM leave_requests')).toEqual([{ leave_type: 'Annual', hours: 15 }]);
+        expect((await q("SELECT COUNT(*)::int AS n FROM information_schema.columns WHERE table_name = 'employees' AND column_name = 'deleted_at'"))[0].n).toBe(1);
         // …and every current Branch Admin can still work in the previous build.
         for (const a of accessBefore) {
             expect(await q('SELECT 1 FROM location_memberships WHERE location_id = $1 AND user_id = $2', [a.location_id, a.user_id])).toHaveLength(1);

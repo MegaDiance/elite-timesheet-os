@@ -17,7 +17,7 @@ import { loadBreakSettings, normaliseDaySegments } from '../services/segments';
 const router = Router();
 router.use(requireAuth);
 
-const WORKER_COLUMNS = 'e.id, e.org_id, e.location_id, e.full_name, e.department, e.email, e.phone, e.contracted_hours, e.is_active, e.deleted_at';
+const WORKER_COLUMNS = 'e.id, e.org_id, e.location_id, e.full_name, e.department, e.email, e.phone, e.contracted_hours, e.is_active';
 const PHONE_PATTERN = /^[0-9+()\-.\s]{3,40}$/;
 const MAX_FORTNIGHT_HOURS = 336;
 const MAX_TEMPLATE_ROWS = 100;
@@ -79,7 +79,7 @@ router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRe
                FROM employees e
                JOIN locations l ON l.id = e.location_id AND l.org_id = e.org_id
               WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[])
-                AND ($3::boolean OR (e.is_active = true AND e.deleted_at IS NULL))
+                AND ($3::boolean OR e.is_active = true)
               ORDER BY e.full_name ASC`,
             [ctx.orgId, branchIds, includeInactive]
         );
@@ -96,7 +96,7 @@ router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRe
         }
         for (const worker of workers) {
             worker.template = byWorker.get(worker.id) || [];
-            worker.status = worker.deleted_at ? 'Deleted' : (worker.is_active ? 'Active' : 'Inactive');
+            worker.status = worker.is_active ? 'Active' : 'Inactive';
         }
 
         res.json({ success: true, data: workers });
@@ -119,7 +119,7 @@ router.post('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthR
             created = await query(
                 `INSERT INTO employees (id, org_id, location_id, full_name, department, email, phone, contracted_hours)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active, deleted_at`,
+                 RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active`,
                 [crypto.randomUUID(), ctx.orgId, branch.id, fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours]
             );
         } catch (err) {
@@ -155,7 +155,7 @@ router.put('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: Aut
             updated = await query(
                 `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, location_id = $6
                   WHERE id = $7 AND org_id = $8
-                  RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active, deleted_at`,
+                  RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active`,
                 [fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours, branchId, worker.id, ctx.orgId]
             );
         } catch (err) {
@@ -179,7 +179,7 @@ router.post('/:id/deactivate', requirePermission(Permission.WORKERS_MANAGE), asy
     try {
         const ctx = req.auth!;
         const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
-        await query('UPDATE employees SET is_active = false, deleted_at = NOW() WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+        await query('UPDATE employees SET is_active = false WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_DEACTIVATED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Deactivated worker ${worker.full_name}` });
         res.json({ success: true });
     } catch (err) {
@@ -191,7 +191,7 @@ router.post('/:id/reactivate', requirePermission(Permission.WORKERS_MANAGE), asy
     try {
         const ctx = req.auth!;
         const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
-        await query('UPDATE employees SET is_active = true, deleted_at = NULL WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
+        await query('UPDATE employees SET is_active = true WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_REACTIVATED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Reactivated worker ${worker.full_name}` });
         res.json({ success: true });
     } catch (err) {

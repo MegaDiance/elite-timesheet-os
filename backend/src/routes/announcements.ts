@@ -87,7 +87,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
         const ctx = req.auth!;
 
         const posts = await query(
-            `SELECT id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type, created_at
+            `SELECT id, org_id, author_id, author_name, author_role, title, content, created_at
                FROM organisation_announcements
               WHERE org_id = $1
               ORDER BY created_at DESC
@@ -151,9 +151,9 @@ router.post('/', async (req: AuthRequest, res: Response) => {
         const content = readContent(req.body?.content, 'Announcement content is required.');
 
         const inserted = await query(
-            `INSERT INTO organisation_announcements (id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, false, 'general')
-             RETURNING id, org_id, author_id, author_name, author_role, title, content, is_system, announcement_type, created_at`,
+            `INSERT INTO organisation_announcements (id, org_id, author_id, author_name, author_role, title, content)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, org_id, author_id, author_name, author_role, title, content, created_at`,
             [crypto.randomUUID(), ctx.orgId, ctx.userId, authorName(ctx), ROLE_LABELS[ctx.role], title, content]
         );
 

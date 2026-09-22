@@ -31,7 +31,7 @@ const INVALID_INVITE = { success: false, error: { code: 'INVALID_INVITATION', me
 async function findOpenInvitation(rawToken: unknown) {
     if (typeof rawToken !== 'string' || !rawToken.trim()) return null;
     const res = await query(
-        `SELECT i.*, COALESCE(o.display_name, o.name) AS organisation_name, o.portal_slug
+        `SELECT i.*, o.name AS organisation_name, o.portal_slug
            FROM branch_admin_invitations i
            JOIN organisations o ON o.id = i.org_id AND o.is_active = true
           WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()`,
@@ -179,7 +179,7 @@ async function resolveOwnBranches(ctx: AccessContext, locationIds: unknown): Pro
 }
 
 async function sendInvitationEmail(ctx: AccessContext, invitationId: string, email: string, rawToken: string, branchNames: string[]) {
-    const orgRes = await query('SELECT COALESCE(display_name, name) AS name FROM organisations WHERE id = $1', [ctx.orgId]);
+    const orgRes = await query('SELECT name FROM organisations WHERE id = $1', [ctx.orgId]);
     const template = buildBranchAdminInviteEmailTemplate({
         inviteLink: `${publicBaseUrl()}/accept-invite?token=${rawToken}`,
         recipientEmail: email,

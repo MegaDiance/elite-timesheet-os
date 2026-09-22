@@ -85,7 +85,7 @@ describe('exports', () => {
 
     it('the printable report escapes every interpolated value', async () => {
         await sql("UPDATE employees SET full_name = '<script>alert(1)</script>', department = '<img src=x onerror=alert(2)>' WHERE id = $1", [w.workers.mel]);
-        await sql("UPDATE organisations SET display_name = '<b>ABC</b>' WHERE id = $1", [w.abc.id]);
+        await sql("UPDATE organisations SET name = '<b>ABC</b>' WHERE id = $1", [w.abc.id]);
         const res = await request(app).get(`/api/reports/export/pdf?start_date=${PERIOD}`).set(bearer(w.tokens.owner));
         expect(res.text).not.toMatch(/<script>alert|<img src=x|<b>ABC<\/b>/);
         expect(res.text).toContain('&lt;script&gt;');

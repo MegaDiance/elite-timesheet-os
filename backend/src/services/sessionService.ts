@@ -39,18 +39,16 @@ export async function createSession(
     clientInfo: ClientInfo
 ): Promise<{ sessionId: string }> {
     const sessionId = crypto.randomUUID();
-    const tokenHash = crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex');
     const expiresAt = new Date(Date.now() + SESSION_MAX_LIFETIME_MS).toISOString();
 
     await query(
         `INSERT INTO sessions
-            (id, user_id, org_id, token_hash, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, true, NOW())`,
+            (id, user_id, org_id, ip_address, approx_location, user_agent, device_info, last_active_at, expires_at, is_active, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, true, NOW())`,
         [
             sessionId,
             userId,
             orgId,
-            tokenHash,
             clientInfo.ip,
             clientInfo.approxLocation,
             clientInfo.userAgent,

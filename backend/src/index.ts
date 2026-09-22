@@ -13,7 +13,6 @@ import rosterRoutes from './routes/roster';
 import submissionsRoutes from './routes/submissions';
 import holidaysRoutes from './routes/holidays';
 import reportsRoutes from './routes/reports';
-import xeroRoutes from './routes/xero';
 import auditRoutes from './routes/audit';
 import announcementsRoutes from './routes/announcements';
 import dashboardRoutes from './routes/dashboard';
@@ -96,7 +95,6 @@ app.use('/api/locations', locationsRoutes);
 app.use('/api/roster', rosterRoutes);
 app.use('/api/submissions', submissionsRoutes);
 app.use('/api/reports', reportsRoutes);
-app.use('/api/xero', xeroRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/announcements', announcementsRoutes);
 

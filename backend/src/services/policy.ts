@@ -25,7 +25,6 @@ export const Permission = {
     BRANCHES_MANAGE: 'branches.manage',
     BRANCH_ADMINS_MANAGE: 'branch_admins.manage',
     HOLIDAYS_MANAGE: 'holidays.manage',
-    INTEGRATIONS_MANAGE: 'integrations.manage',
     AUDIT_VIEW: 'audit.view',
     ANNOUNCEMENTS_MODERATE: 'announcements.moderate',
     // Branch-scoped (OWNER in every branch, BRANCH_ADMIN in assigned branches)
@@ -103,7 +102,7 @@ export async function resolveAccess(userId: string, orgId: string): Promise<{ ro
 /** Organisations a user can sign in to, with the role they hold in each. */
 export async function listAccessibleOrganisations(userId: string): Promise<Array<{ id: string; name: string; portal_slug: string | null; role: Role }>> {
     const res = await query(
-        `SELECT o.id, COALESCE(o.display_name, o.name) AS name, o.portal_slug,
+        `SELECT o.id, o.name, o.portal_slug,
                 CASE WHEN o.owner_user_id = $1 THEN 'OWNER' ELSE 'BRANCH_ADMIN' END AS role
            FROM organisations o
           WHERE o.is_active = true
@@ -154,7 +153,6 @@ export interface WorkerRow {
     location_id: string;
     full_name: string;
     is_active: boolean;
-    deleted_at: string | null;
 }
 
 /**
@@ -165,7 +163,7 @@ export interface WorkerRow {
 export async function loadWorker(ctx: AccessContext, permission: Permission, workerId: unknown): Promise<WorkerRow> {
     if (!isUuid(workerId)) throw notFound('Worker');
     const res = await query(
-        'SELECT id, org_id, location_id, full_name, is_active, deleted_at FROM employees WHERE id = $1 AND org_id = $2',
+        'SELECT id, org_id, location_id, full_name, is_active FROM employees WHERE id = $1 AND org_id = $2',
         [workerId, ctx.orgId]
     );
     const worker: WorkerRow | undefined = res.rows[0];
@@ -205,8 +203,8 @@ export async function writeAudit(entry: {
     try {
         await query(
             `INSERT INTO audit_logs (id, org_id, location_id, actor_id, target_user_id, action, entity_type, entity_id,
-                                     previous_value, new_value, details, ip_address, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+                                     previous_value, new_value, details, ip_address)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
             [
                 crypto.randomUUID(),
                 entry.orgId,

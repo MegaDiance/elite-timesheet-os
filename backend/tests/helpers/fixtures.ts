@@ -33,7 +33,7 @@ export async function createUser(email: string, fullName?: string): Promise<{ id
 export async function createOrganisation(name: string, ownerId: string): Promise<{ id: string; portalSlug: string }> {
     const portalSlug = crypto.randomBytes(12).toString('hex');
     const res = await sql(
-        'INSERT INTO organisations (name, display_name, portal_slug, owner_user_id, is_active) VALUES ($1, $1, $2, $3, true) RETURNING id',
+        'INSERT INTO organisations (name, portal_slug, owner_user_id, is_active) VALUES ($1, $2, $3, true) RETURNING id',
         [name, portalSlug, ownerId]
     );
     return { id: res.rows[0].id, portalSlug };

@@ -11,13 +11,13 @@ const router = Router();
 /**
  * GET /api/organisation/lookup/:slug  (public)
  * Lets the private sign-in page show which organisation it belongs to. Resolves by the random
- * portal_slug only and returns display fields only — no ids, counts or settings.
+ * portal_slug only and returns the organisation's name only — no ids, counts or settings.
  */
 router.get('/lookup/:slug', checkRateLimit, async (req: RateLimitedRequest, res: Response) => {
     try {
         const slug = String(req.params.slug || '').trim().toLowerCase();
         const result = await query(
-            'SELECT name, display_name, logo_url FROM organisations WHERE is_active = true AND portal_slug = $1',
+            'SELECT name FROM organisations WHERE is_active = true AND portal_slug = $1',
             [slug]
         );
         const org = result.rows[0];
@@ -25,7 +25,7 @@ router.get('/lookup/:slug', checkRateLimit, async (req: RateLimitedRequest, res:
             recordFailedAttempt(req.rateLimitKey);
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'This sign-in link is not valid.' } });
         }
-        res.json({ success: true, data: { name: org.display_name || org.name, logo_url: org.logo_url || null } });
+        res.json({ success: true, data: { name: org.name } });
     } catch (err) {
         sendError(res, err, 'ORGANISATION LOOKUP ERROR');
     }
@@ -36,7 +36,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const result = await query(
-            `SELECT id, name, display_name, logo_url, portal_slug,
+            `SELECT id, name, portal_slug,
                     break_mins_weekday, break_mins_weekend, break_threshold_hours,
                     roster_lock_password_hash IS NOT NULL AS has_roster_lock_password,
                     timesheet_lock_password_hash IS NOT NULL AS has_timesheet_lock_password
@@ -51,8 +51,6 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
             data: {
                 id: org.id,
                 name: org.name,
-                display_name: org.display_name || org.name,
-                logo_url: org.logo_url || null,
                 is_owner: isOwner,
                 portal_slug: isOwner ? org.portal_slug : undefined,
                 portal_url: isOwner ? `${publicBaseUrl()}/login/${org.portal_slug}` : undefined,
@@ -89,11 +87,11 @@ router.put('/settings', requireAuth, requirePermission(Permission.ORGANISATION_M
             params.push(value);
             updates.push(`${field} = $${params.length}`);
         }
-        if (body.display_name !== undefined) {
-            const displayName = typeof body.display_name === 'string' ? body.display_name.trim() : '';
-            if (!displayName || displayName.length > 120) throw badRequest('VALIDATION_FAILED', 'Organisation name is required (120 characters at most).');
-            params.push(displayName);
-            updates.push(`display_name = $${params.length}`);
+        if (body.name !== undefined) {
+            const name = typeof body.name === 'string' ? body.name.trim() : '';
+            if (!name || name.length > 120) throw badRequest('VALIDATION_FAILED', 'Organisation name is required (120 characters at most).');
+            params.push(name);
+            updates.push(`name = $${params.length}`);
         }
 
         if (updates.length > 0) {

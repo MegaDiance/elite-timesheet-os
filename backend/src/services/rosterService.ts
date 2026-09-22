@@ -79,7 +79,7 @@ async function editableWorkers(scope: BulkScope, lockColumn: 'roster_locked' | '
     const res = await query(
         `SELECT e.id
            FROM employees e
-          WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true AND e.deleted_at IS NULL
+          WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
             AND NOT EXISTS (SELECT 1 FROM timesheet_submissions ts
                              WHERE ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3 AND ts.status = 'Approved')
             AND NOT EXISTS (SELECT 1 FROM fortnight_locks fl

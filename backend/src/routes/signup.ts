@@ -142,10 +142,10 @@ router.post('/complete', checkRateLimit, async (req: RateLimitedRequest, res: Re
             const orgId = crypto.randomUUID();
             const portalSlug = newPortalSlug();
             await tx(
-                `INSERT INTO organisations (id, name, display_name, portal_slug, owner_user_id, is_active,
+                `INSERT INTO organisations (id, name, portal_slug, owner_user_id, is_active,
                                             break_mins_weekday, break_mins_weekend, break_threshold_hours,
                                             roster_lock_password_hash, timesheet_lock_password_hash)
-                 VALUES ($1, $2, $2, $3, $4, true, $5, $6, $7, $8, $9)`,
+                 VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8, $9)`,
                 [orgId, orgName, portalSlug, userId,
                     readNumber(body.break_mins_weekday, 30, 0, 240), readNumber(body.break_mins_weekend, 0, 0, 240), readNumber(body.break_threshold_hours, 6, 0, 24),
                     rosterLockHash, timesheetLockHash]

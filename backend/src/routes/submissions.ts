@@ -44,7 +44,7 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
                             FROM daily_records dr JOIN shift_segments ss ON ss.record_id = dr.id
                            WHERE dr.org_id = $1 AND dr.record_date >= $3 AND dr.record_date <= $4
                            GROUP BY dr.employee_id) h ON h.employee_id = e.id
-              WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true AND e.deleted_at IS NULL
+              WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
               ORDER BY e.full_name ASC`,
             [ctx.orgId, branchIds, startDate, endDate]
         );

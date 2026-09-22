@@ -61,13 +61,13 @@ async function describeAccess(userId: string, orgId: string) {
     if (!access) return null;
     const [userRes, orgRes, branchRes] = await Promise.all([
         query('SELECT id, email, full_name, two_factor_enabled FROM users WHERE id = $1', [userId]),
-        query('SELECT id, name, display_name, portal_slug FROM organisations WHERE id = $1', [orgId]),
+        query('SELECT id, name, portal_slug FROM organisations WHERE id = $1', [orgId]),
         query('SELECT id, name, address, timezone, is_active FROM locations WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name ASC', [orgId, access.branchIds]),
     ]);
     const org = orgRes.rows[0];
     return {
         user: userRes.rows[0],
-        organisation: { id: org.id, name: org.display_name || org.name, portal_slug: org.portal_slug },
+        organisation: { id: org.id, name: org.name, portal_slug: org.portal_slug },
         role: access.role,
         permissions: Array.from(ROLE_PERMISSIONS[access.role]),
         branches: branchRes.rows,

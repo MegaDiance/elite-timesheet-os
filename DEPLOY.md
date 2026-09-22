@@ -55,7 +55,6 @@ Open the **app service → Variables** tab and add:
 | `NPM_CONFIG_INCLUDE` | `dev` |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (use Railway's variable reference) |
 | `JWT_SECRET` | 64 random hex chars — `openssl rand -hex 32` |
-| `ENCRYPTION_KEY` | another 64 random hex chars |
 | `PUBLIC_URL` | the app's public URL (used in every emailed link) |
 | `SEED_OWNER_EMAIL` | optional — your email, to create a first organisation on an empty database |
 | `SEED_OWNER_PASSWORD` | optional — 8+ chars, at least one letter and one digit |
@@ -139,7 +138,7 @@ The seven issues previously listed here were fixed in the two-role rebuild
 (`refactor/two-role-model`), each with a regression test. Still to do before
 real worker or payroll data:
 
-1. Rotate `JWT_SECRET` and `ENCRYPTION_KEY`, and configure email with a verified
+1. Rotate `JWT_SECRET`, and configure email with a verified
    sending domain and `EMAIL_FROM`.
 2. Confirm which of the two Railway Postgres services `DATABASE_URL` points at,
    and turn on backups with a tested restore.

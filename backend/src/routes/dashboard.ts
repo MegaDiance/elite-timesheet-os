@@ -88,7 +88,6 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
                     AND dr.record_date = $2
                     AND e.location_id = ANY($3::uuid[])
                     AND e.is_active = true
-                    AND e.deleted_at IS NULL
                   ORDER BY ss.roster_in ASC NULLS LAST, e.full_name ASC`,
                 [ctx.orgId, date, scope]
             ),
@@ -101,13 +100,12 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
                   WHERE e.org_id = $1
                     AND e.location_id = ANY($3::uuid[])
                     AND e.is_active = true
-                    AND e.deleted_at IS NULL
                   ORDER BY e.full_name ASC`,
                 [ctx.orgId, fortnightStartIso, scope]
             ),
             isOwnerView
                 ? query(
-                    `SELECT COALESCE(o.display_name, o.name) AS name, o.portal_slug,
+                    `SELECT o.name, o.portal_slug,
                             (SELECT COUNT(DISTINCT ba.user_id)::int FROM branch_admins ba WHERE ba.org_id = o.id) AS branch_admins
                        FROM organisations o
                       WHERE o.id = $1`,

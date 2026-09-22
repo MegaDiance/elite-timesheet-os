@@ -22,7 +22,6 @@ const PUBLIC_ROUTES = new Set([
     'branchAdmins GET /invitations/verify',
     'branchAdmins POST /invitations/accept',
     'organisation GET /lookup/:slug',
-    'xero GET /callback',
 ]);
 
 const hasPolicy = (fn: any) => typeof fn === 'function' && typeof fn.policy === 'string';

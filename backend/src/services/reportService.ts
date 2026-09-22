@@ -54,7 +54,7 @@ export interface PayrollReport {
  * is authorised for — resolved by the route from the database, never from the client).
  */
 export async function generatePayrollReport(orgId: string, startDate: string, branchIds: string[]): Promise<PayrollReport> {
-    const orgRes = await query('SELECT COALESCE(display_name, name) AS name FROM organisations WHERE id = $1', [orgId]);
+    const orgRes = await query('SELECT name FROM organisations WHERE id = $1', [orgId]);
     const orgName = orgRes.rows[0]?.name || 'Organisation';
 
     const fnStart = parseIsoDateUtc(startDate);
@@ -71,7 +71,7 @@ export async function generatePayrollReport(orgId: string, startDate: string, br
            JOIN locations l ON l.id = e.location_id
            LEFT JOIN timesheet_submissions ts ON ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3
            LEFT JOIN fortnight_locks fl ON fl.org_id = e.org_id AND fl.location_id = e.location_id AND fl.start_date = $3
-          WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true AND e.deleted_at IS NULL
+          WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
           ORDER BY e.full_name ASC`,
         [orgId, branchIds, startDate]
     );

@@ -230,6 +230,12 @@ exports.down = (pgm) => {
             rejection_reason TEXT,
             created_at TIMESTAMPTZ DEFAULT NOW()
         );
+        INSERT INTO leave_requests
+            SELECT (jsonb_populate_record(NULL::leave_requests, a.row)).*
+              FROM legacy_archive a
+             WHERE a.source = 'leave_requests'
+               AND EXISTS (SELECT 1 FROM employees e WHERE e.id = (a.row->>'employee_id')::uuid)
+        ON CONFLICT (id) DO NOTHING;
 
         CREATE TABLE IF NOT EXISTS org_invitation_tokens (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

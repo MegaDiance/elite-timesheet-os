@@ -157,7 +157,7 @@ describe('password reset', () => {
 describe('private sign-in link', () => {
     it('the public lookup returns display fields only, and a regenerated link stops working', async () => {
         const res = await request(app).get(`/api/organisation/lookup/${w.abc.portalSlug}`);
-        expect(res.body.data).toEqual({ name: 'ABC Health', logo_url: null });
+        expect(res.body.data).toEqual({ name: 'ABC Health' });
 
         const regen = await request(app).post('/api/organisation/regenerate-portal-url').set(bearer(w.tokens.owner));
         expect((await request(app).get(`/api/organisation/lookup/${w.abc.portalSlug}`)).status).toBe(404);

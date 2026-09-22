@@ -58,7 +58,7 @@ async function main() {
             [ownerEmail, passwordHash]
         );
         const orgRes = await tx(
-            'INSERT INTO organisations (name, display_name, portal_slug, owner_user_id, is_active) VALUES ($1, $1, $2, $3, true) RETURNING id',
+            'INSERT INTO organisations (name, portal_slug, owner_user_id, is_active) VALUES ($1, $2, $3, true) RETURNING id',
             [orgName, portalSlug, userRes.rows[0].id]
         );
         await tx('INSERT INTO locations (org_id, name) VALUES ($1, $2)', [orgRes.rows[0].id, 'Main Branch']);

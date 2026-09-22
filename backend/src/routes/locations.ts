@@ -29,7 +29,7 @@ router.get('/', requirePermission(Permission.BRANCH_VIEW), async (req: AuthReque
         const result = await query(
             `SELECT l.*,
                     (SELECT COUNT(*)::int FROM employees e
-                      WHERE e.location_id = l.id AND e.is_active = true AND e.deleted_at IS NULL) AS active_staff_count,
+                      WHERE e.location_id = l.id AND e.is_active = true) AS active_staff_count,
                     COALESCE((SELECT json_agg(json_build_object('id', u.id, 'email', u.email, 'full_name', u.full_name) ORDER BY u.email)
                                 FROM branch_admins ba JOIN users u ON u.id = ba.user_id
                                WHERE ba.location_id = l.id), '[]'::json) AS admins

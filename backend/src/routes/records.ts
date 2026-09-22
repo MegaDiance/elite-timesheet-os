@@ -107,8 +107,8 @@ router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthR
         if (!isIsoDate(record_date)) throw badRequest('VALIDATION_FAILED', 'record_date must be YYYY-MM-DD.');
 
         const worker = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
-        if (!worker.is_active || worker.deleted_at) {
-            throw badRequest('WORKER_INACTIVE', 'Cannot record shifts or hours for an inactive or deleted worker.');
+        if (!worker.is_active) {
+            throw badRequest('WORKER_INACTIVE', 'Cannot record shifts or hours for an inactive worker.');
         }
 
         const fortnightStart = getFortnightStartIso(record_date);
@@ -191,7 +191,7 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
             for (const date of target_dates as string[]) {
                 if (worker.id === source.id && date === source_date) continue;
                 const skip = (reason: string) => skipped.push({ employee_id: worker.id, date, reason });
-                if (!worker.is_active || worker.deleted_at) { skip('INACTIVE'); continue; }
+                if (!worker.is_active) { skip('INACTIVE'); continue; }
 
                 const fortnightStart = getFortnightStartIso(date);
                 if (await isTimesheetApproved(ctx.orgId, worker.id, fortnightStart)) { skip('APPROVED'); continue; }
