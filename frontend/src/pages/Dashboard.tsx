@@ -21,11 +21,10 @@ import {
   Users,
 } from 'lucide-react';
 import api from '../services/apiClient';
-import { useAccess } from '../hooks/useAccess';
+import { useActiveBranch } from '../hooks/useActiveBranch';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
-import { Select } from '../components/ui/Select';
 import { Skeleton, CardSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
@@ -158,19 +157,20 @@ function workerStatus(worker: ScheduledWorker) {
 
 export default function Dashboard() {
   const toast = useToast();
-  const { access } = useAccess();
-  const [branchId, setBranchId] = useState('');
+  const { activeBranchId, activeBranch } = useActiveBranch();
   const [reloadKey, setReloadKey] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Always scoped to the one active branch (switched in the sidebar) — never every branch at once.
   useEffect(() => {
+    if (!activeBranchId) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    api.get('/dashboard/today', { params: branchId ? { location_id: branchId } : {} })
+    api.get('/dashboard/today', { params: { location_id: activeBranchId } })
       .then(res => {
         if (!cancelled) setData(res.data.data);
       })
@@ -181,7 +181,7 @@ export default function Dashboard() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [branchId, reloadKey]);
+  }, [activeBranchId, reloadKey]);
 
   const handleCopyLink = async (link: string) => {
     try {
@@ -191,9 +191,6 @@ export default function Dashboard() {
       toast.error('The link could not be copied. Select it and copy it manually.');
     }
   };
-
-  const branches = access?.branches ?? [];
-  const showBranchColumn = !branchId && branches.length > 1;
 
   const todayLabel = data?.date
     ? new Date(`${data.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
@@ -212,7 +209,10 @@ export default function Dashboard() {
   const header = (
     <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-4 border-b border-[var(--border)]">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Dashboard</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)] flex items-center gap-2">
+          Dashboard
+          {activeBranch && <Badge variant="outline" size="sm"><Building2 className="w-3 h-3" />{activeBranch.name}</Badge>}
+        </h1>
         <p className="text-xs text-[var(--muted)] mt-1.5 flex flex-wrap items-center gap-2">
           <span className="font-medium text-[var(--text)]">{todayLabel}</span>
           {data?.active_fortnight && (
@@ -234,22 +234,6 @@ export default function Dashboard() {
       </div>
 
       <div className="flex items-end gap-2">
-        {branches.length > 1 && (
-          <div className="w-56">
-            <Select
-              aria-label="Branch"
-              value={branchId}
-              onChange={e => setBranchId(e.target.value)}
-              leftIcon={<Building2 className="w-3.5 h-3.5" />}
-              className="text-xs py-1.5"
-            >
-              <option value="">All my branches</option>
-              {branches.map(b => (
-                <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (deactivated)'}</option>
-              ))}
-            </Select>
-          </div>
-        )}
         <Button
           variant="ghost"
           size="sm"
@@ -476,9 +460,6 @@ export default function Dashboard() {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="font-semibold text-xs text-[var(--text)] truncate">{worker.full_name}</span>
                           {worker.department && <Badge size="sm">{worker.department}</Badge>}
-                          {showBranchColumn && worker.location_name && (
-                            <Badge variant="outline" size="sm"><Building2 className="w-3 h-3" />{worker.location_name}</Badge>
-                          )}
                         </div>
                         {worker.phone && (
                           <a href={`tel:${worker.phone}`} className="flex items-center gap-1 text-[11px] text-[var(--muted)] hover:text-[var(--text)] mt-0.5 w-fit">

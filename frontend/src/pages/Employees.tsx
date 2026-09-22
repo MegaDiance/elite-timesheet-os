@@ -14,6 +14,7 @@ import {
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
 import { useAccess, type Branch } from '../hooks/useAccess';
+import { useActiveBranch } from '../hooks/useActiveBranch';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Input } from '../components/ui/Input';
@@ -68,11 +69,16 @@ function csvCell(value: unknown): string {
 export default function Employees() {
   const toast = useToast();
   const { access, can } = useAccess();
+  const { activeBranchId } = useActiveBranch();
   const branches = access?.branches ?? [];
   const activeBranches = branches.filter(b => b.is_active);
   const canManageHolidays = can('holidays.manage');
 
-  const [branchFilter, setBranchFilter] = useState('');
+  // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
+  const [branchFilter, setBranchFilter] = useState(activeBranchId || '');
+  useEffect(() => {
+    if (activeBranchId) setBranchFilter(activeBranchId);
+  }, [activeBranchId]);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [workers, setWorkers] = useState<Worker[]>([]);

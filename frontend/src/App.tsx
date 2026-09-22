@@ -24,6 +24,7 @@ import Audit from './pages/Audit';
 import Announcements from './pages/Announcements';
 import Settings from './pages/Settings';
 import { useAccess, type Permission } from './hooks/useAccess';
+import { ActiveBranchProvider } from './hooks/useActiveBranch';
 
 function Loading() {
   return <div className="p-10 text-center text-sm text-[var(--muted)]">Loading…</div>;
@@ -55,7 +56,11 @@ function AppShell() {
   if (!localStorage.getItem('token')) return <Navigate to="/login" replace />;
   if (loading && !access) return <Loading />;
   if (!access) return <Navigate to="/login" replace />;
-  return <Layout />;
+  return (
+    <ActiveBranchProvider>
+      <Layout />
+    </ActiveBranchProvider>
+  );
 }
 
 export default function App() {

@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { OrgSwitchModal, type OrganisationChoice } from './modals/OrgSwitchModal';
+import { BranchSwitchModal } from './modals/BranchSwitchModal';
 import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
 import OnboardingTutorial from './OnboardingTutorial';
@@ -32,6 +33,7 @@ import ContextHelpModal from './ContextHelpModal';
 import HelpChatbot from './HelpChatbot';
 import { useToast } from './ui/Toast';
 import { ROLE_LABEL, signOut, storeSession, useAccess, type Permission } from '../hooks/useAccess';
+import { forgetActiveBranches, useActiveBranch } from '../hooks/useActiveBranch';
 
 interface NavItem {
   label: string;
@@ -51,12 +53,14 @@ export default function Layout() {
   const location = useLocation();
   const toast = useToast();
   const { access, isOwner, can } = useAccess();
+  const { activeBranch, branches: activeBranches, canSwitchBranch, setActiveBranch } = useActiveBranch();
 
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [organisations, setOrganisations] = useState<OrganisationChoice[]>([]);
   const [switching, setSwitching] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showOrgSwitchModal, setShowOrgSwitchModal] = useState(false);
+  const [showBranchSwitchModal, setShowBranchSwitchModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
   // Sidebar: pinned open on wide screens by default; otherwise expands on hover.
@@ -135,6 +139,7 @@ export default function Layout() {
 
   const handleSignOut = async () => {
     const path = await signOut();
+    forgetActiveBranches();
     navigate(path, { replace: true });
   };
 
@@ -194,9 +199,9 @@ export default function Layout() {
   const branches = access?.branches ?? [];
   const roleSummary = !access
     ? ''
-    : isOwner || branches.length === 0
-      ? ROLE_LABEL[access.role]
-      : `${ROLE_LABEL[access.role]} · ${branches[0].name}${branches.length > 1 ? ` (+${branches.length - 1})` : ''}`;
+    : isOwner
+      ? `${ROLE_LABEL[access.role]} · every branch`
+      : `${ROLE_LABEL[access.role]}${branches.length > 1 ? ` · ${branches.length} branches` : ''}`;
   const branchList = branches.map(b => b.name).join(', ');
   const canSwitchOrganisation = organisations.length > 1;
 
@@ -254,7 +259,7 @@ export default function Layout() {
           )}
         </div>
 
-        {/* Organisation and access summary */}
+        {/* Organisation, branch and role summary */}
         {isSidebarOpen && (
           <div className="px-3 pt-3 pb-1 shrink-0 animate-in fade-in duration-150 space-y-1.5">
             <div className="px-3 py-2 rounded-xl bg-white/5 border border-white/8 flex items-center justify-between gap-2 text-xs">
@@ -272,11 +277,28 @@ export default function Layout() {
                 </button>
               )}
             </div>
+            {activeBranch && (
+              <div className="px-3 py-2 rounded-xl bg-white/5 border border-white/8 flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="font-semibold text-white truncate" title={activeBranch.name}>{activeBranch.name}</span>
+                </div>
+                {canSwitchBranch && (
+                  <button
+                    onClick={() => setShowBranchSwitchModal(true)}
+                    className="text-[10px] text-[var(--primary)] hover:underline shrink-0 font-medium"
+                    title="Switch branch"
+                  >
+                    Switch
+                  </button>
+                )}
+              </div>
+            )}
             <div
               className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 flex items-center gap-1.5 min-w-0"
               title={isOwner ? 'Access to every branch' : branchList}
             >
-              <MapPin className="w-3 h-3 shrink-0 text-emerald-400" />
+              <UserCog className="w-3 h-3 shrink-0 text-[var(--sidebar-text)]" />
               <span className="truncate text-white font-medium text-[11px]">{roleSummary}</span>
             </div>
           </div>
@@ -388,7 +410,18 @@ export default function Layout() {
           </div>
 
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xs font-medium text-[var(--muted)] truncate max-w-[120px]">{orgName}</span>
+            {activeBranch && canSwitchBranch ? (
+              <button
+                onClick={() => setShowBranchSwitchModal(true)}
+                className="text-xs font-medium text-[var(--text)] truncate max-w-[140px] flex items-center gap-1 hover:text-[var(--primary)]"
+                title="Switch branch"
+              >
+                <MapPin className="w-3 h-3 shrink-0 text-emerald-500" />
+                {activeBranch.name}
+              </button>
+            ) : (
+              <span className="text-xs font-medium text-[var(--muted)] truncate max-w-[120px]">{activeBranch?.name || orgName}</span>
+            )}
             <button onClick={handleSignOut} className="p-1.5 rounded text-rose-400 hover:bg-rose-500/10" title="Sign out">
               <LogOut className="w-4 h-4" />
             </button>
@@ -428,8 +461,27 @@ export default function Layout() {
                     </button>
                   )}
                 </div>
+                {activeBranch && (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <MapPin className="w-3 h-3 shrink-0 text-emerald-400" />
+                      <span className="truncate text-[11px] text-white font-medium">{activeBranch.name}</span>
+                    </div>
+                    {canSwitchBranch && (
+                      <button
+                        onClick={() => {
+                          setMobileMenuOpen(false);
+                          setShowBranchSwitchModal(true);
+                        }}
+                        className="text-[11px] text-[var(--primary)] hover:underline shrink-0 font-medium"
+                      >
+                        Switch
+                      </button>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center gap-1.5 min-w-0" title={isOwner ? 'Access to every branch' : branchList}>
-                  <MapPin className="w-3 h-3 shrink-0 text-emerald-400" />
+                  <UserCog className="w-3 h-3 shrink-0 text-[var(--sidebar-text)]" />
                   <span className="truncate text-[11px] text-white font-medium">{roleSummary}</span>
                 </div>
               </div>
@@ -528,6 +580,14 @@ export default function Layout() {
         currentOrgId={access?.organisation.id}
         onSwitch={handleSwitchOrg}
         switching={switching}
+      />
+
+      <BranchSwitchModal
+        isOpen={showBranchSwitchModal}
+        onClose={() => setShowBranchSwitchModal(false)}
+        branches={activeBranches}
+        currentBranchId={activeBranch?.id ?? null}
+        onSwitch={setActiveBranch}
       />
 
       <SessionTimeoutModal

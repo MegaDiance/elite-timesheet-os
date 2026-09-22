@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Download, Printer, RefreshCw, Search, Users } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
+import { useActiveBranch } from '../hooks/useActiveBranch';
 import { useToast } from '../components/ui/Toast';
 import { Badge, Button, Card, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs } from '../components/ui';
 import { apiErrorMessage, downloadPayrollCsv, openPayrollPrint, signedHours } from '../components/roster/api';
@@ -77,10 +78,15 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function Reports() {
   const { access } = useAccess();
+  const { activeBranchId } = useActiveBranch();
   const toast = useToast();
   const branches = useMemo(() => access?.branches ?? [], [access]);
 
-  const [branchId, setBranchId] = useState<string>(() => (access?.branches.length === 1 ? access.branches[0].id : ''));
+  // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
+  const [branchId, setBranchId] = useState<string>(() => activeBranchId || (access?.branches.length === 1 ? access.branches[0].id : ''));
+  useEffect(() => {
+    if (activeBranchId) setBranchId(activeBranchId);
+  }, [activeBranchId]);
   const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const [report, setReport] = useState<PayrollReport | null>(null);
   const [loading, setLoading] = useState(true);

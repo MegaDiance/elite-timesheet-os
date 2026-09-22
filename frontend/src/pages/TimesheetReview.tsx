@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileCheck2, Lock, RotateCcw, Search, ShieldAlert } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
+import { useActiveBranch } from '../hooks/useActiveBranch';
 import { useToast } from '../components/ui/Toast';
 import { Badge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
@@ -28,10 +29,15 @@ const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'>
  */
 export default function TimesheetReview() {
   const { access } = useAccess();
+  const { activeBranchId } = useActiveBranch();
   const toast = useToast();
   const branches = useMemo(() => access?.branches ?? [], [access]);
 
-  const [branchId, setBranchId] = useState<string>(() => (access?.branches.length === 1 ? access.branches[0].id : ''));
+  // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
+  const [branchId, setBranchId] = useState<string>(() => activeBranchId || (access?.branches.length === 1 ? access.branches[0].id : ''));
+  useEffect(() => {
+    if (activeBranchId) setBranchId(activeBranchId);
+  }, [activeBranchId]);
   const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const [rows, setRows] = useState<TimesheetRow[]>([]);
   const [loading, setLoading] = useState(true);

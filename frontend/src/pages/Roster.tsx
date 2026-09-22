@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
+import { useActiveBranch } from '../hooks/useActiveBranch';
 import { useToast } from '../components/ui/Toast';
 import { Badge } from '../components/ui/Badge';
 import { getFortnightStartIso } from '../utils/fortnight';
@@ -48,6 +49,7 @@ function useNarrowScreen(): boolean {
 
 export default function Roster() {
   const { access, can } = useAccess();
+  const { activeBranchId } = useActiveBranch();
   const toast = useToast();
   const narrow = useNarrowScreen();
   const branches = useMemo(() => access?.branches ?? [], [access]);
@@ -55,7 +57,11 @@ export default function Roster() {
   const canLock = can('periods.lock');
   const canReports = can('reports.view');
 
-  const [branchId, setBranchId] = useState<string>(() => (access?.branches.length === 1 ? access.branches[0].id : ''));
+  // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
+  const [branchId, setBranchId] = useState<string>(() => activeBranchId || (access?.branches.length === 1 ? access.branches[0].id : ''));
+  useEffect(() => {
+    if (activeBranchId) setBranchId(activeBranchId);
+  }, [activeBranchId]);
   const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const days = useMemo(() => fortnightDays(startIso), [startIso]);
   const endIso = days[13];
