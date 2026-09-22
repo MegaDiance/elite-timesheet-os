@@ -42,7 +42,7 @@ describe('Branch and organisation isolation', () => {
         });
 
         it('timesheet list, payroll report, CSV and dashboard never include another branch', async () => {
-            await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.gee, record_date: '2026-03-30', segments: simpleDay(true) });
+            await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.gee, record_date: '2026-03-30', ...simpleDay(true) });
 
             const subs = await request(app).get(`/api/submissions?start_date=${PERIOD}`).set(bearer(w.tokens.sarah));
             expect(names(subs.body.data)).toEqual(['Mel Worker', 'Rich Worker']);
@@ -60,8 +60,8 @@ describe('Branch and organisation isolation', () => {
         });
 
         it('records list ignores other branches even without an employee filter', async () => {
-            await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.gee, record_date: '2026-03-30', segments: simpleDay() });
-            await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.mel, record_date: '2026-03-30', segments: simpleDay() });
+            await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.gee, record_date: '2026-03-30', ...simpleDay() });
+            await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.mel, record_date: '2026-03-30', ...simpleDay() });
             const res = await request(app).get(`/api/records?start_date=${PERIOD}`).set(bearer(w.tokens.sarah));
             expect(res.body.data.map((r: any) => r.employee_id)).toEqual([w.workers.mel]);
         });
@@ -81,7 +81,7 @@ describe('Branch and organisation isolation', () => {
 
         it('a body branch id cannot redirect a write to an out-of-scope worker', async () => {
             const res = await request(app).post('/api/records').set(bearer(w.tokens.greg))
-                .send({ employee_id: w.workers.mel, location_id: w.abc.geelong, branch_id: w.abc.geelong, record_date: '2026-03-30', segments: simpleDay() });
+                .send({ employee_id: w.workers.mel, location_id: w.abc.geelong, branch_id: w.abc.geelong, record_date: '2026-03-30', ...simpleDay() });
             expect(res.status).toBe(403);
             const rows = await sql('SELECT 1 FROM daily_records WHERE employee_id = $1', [w.workers.mel]);
             expect(rows.rows).toHaveLength(0);
@@ -109,7 +109,7 @@ describe('Branch and organisation isolation', () => {
         });
 
         it('copy-day authorises every target worker', async () => {
-            await request(app).post('/api/records').set(bearer(w.tokens.sarah)).send({ employee_id: w.workers.mel, record_date: '2026-03-30', segments: simpleDay() });
+            await request(app).post('/api/records').set(bearer(w.tokens.sarah)).send({ employee_id: w.workers.mel, record_date: '2026-03-30', ...simpleDay() });
             const res = await request(app).post('/api/records/copy-day').set(bearer(w.tokens.sarah))
                 .send({ employee_id: w.workers.mel, source_date: '2026-03-30', target_dates: ['2026-03-31'], target_employee_ids: [w.workers.rich, w.workers.gee] });
             expect(res.status).toBe(403);

@@ -61,12 +61,6 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   HAS_WORKED_HOURS: 'the day already has worked hours',
 };
 
-export const STATUS_LABEL: Record<TimesheetStatus, string> = {
-  Draft: 'Draft',
-  Approved: 'Approved',
-  Locked: 'Locked',
-};
-
 interface ErrorLike {
   response?: { status?: number; data?: { code?: string; message?: string; error?: { code?: string; message?: string } } };
 }
@@ -85,8 +79,6 @@ export function apiErrorCode(err: unknown): string | null {
   const e = err as ErrorLike;
   return e?.response?.data?.error?.code || e?.response?.data?.code || null;
 }
-
-export const hoursText = (n: number | string | null | undefined, digits = 2): string => `${(Number(n) || 0).toFixed(digits)}h`;
 
 export const signedHours = (n: number, digits = 2): string => `${n > 0 ? '+' : ''}${n.toFixed(digits)}h`;
 

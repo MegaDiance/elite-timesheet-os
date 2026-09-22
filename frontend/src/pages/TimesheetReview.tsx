@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileCheck2, Lock, RotateCcw, Search, ShieldAlert } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
@@ -8,20 +9,17 @@ import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Skeleton } from '../components/ui/Skeleton';
 import BulkResultDialog, { type BulkResult } from '../components/roster/BulkResultDialog';
-import { DayChips } from '../components/roster/DayChips';
+import { DayLines, PlannedWorkedKey } from '../components/roster/DayBox';
 import { Dialog, buttonClass } from '../components/roster/Dialog';
 import { apiErrorMessage, signedHours, type BulkApproveResult, type TimesheetRow, type TimesheetStatus } from '../components/roster/api';
-import { currentFortnightIso, dayLabel, fortnightDays, isWeekendIso, periodLabel, shiftIso } from '../components/roster/dates';
-import { apiHasRoster, apiHasWorked, formatHours, type DayRecord } from '../components/roster/segments';
+import { currentFortnightIso, dayLabel, fortnightDays, isWeekendIso, periodLabel, shiftIso, todayIso } from '../components/roster/dates';
+import { formatHours, readDay, type DayRecord } from '../components/roster/day';
 
 type Tab = 'waiting' | 'approved' | 'locked' | 'all';
 
 const TAB_STATUS: Record<Exclude<Tab, 'all'>, TimesheetStatus> = { waiting: 'Draft', approved: 'Approved', locked: 'Locked' };
 const TAB_LABEL: Record<Tab, string> = { waiting: 'Waiting', approved: 'Approved', locked: 'Locked', all: 'All' };
 const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'> = { Draft: 'outline', Approved: 'success', Locked: 'warning' };
-
-const sumHours = (record: DayRecord | undefined, key: 'roster_hours' | 'actual_hours') =>
-  (record?.segments ?? []).reduce((acc, s) => acc + (Number(s[key]) || 0), 0);
 
 /**
  * Timesheet approval for a pay period. Hours are entered by the Organisation Owner or a Branch
@@ -53,6 +51,7 @@ export default function TimesheetReview() {
 
   const days = useMemo(() => fortnightDays(startIso), [startIso]);
   const endIso = days[13];
+  const today = todayIso();
   const showBranch = !branchId && new Set(rows.map(r => r.location_id)).size > 1;
 
   const load = useCallback(async () => {
@@ -95,7 +94,7 @@ export default function TimesheetReview() {
     const key = detailKey(employeeId);
     try {
       const res = await api.get('/records', { params: { employee_id: employeeId, start_date: startIso, end_date: endIso } });
-      setDetails(d => ({ ...d, [key]: res.data?.data ?? [] }));
+      setDetails(d => ({ ...d, [key]: (res.data?.data ?? []).map(readDay) }));
     } catch {
       setDetails(d => ({ ...d, [key]: 'error' }));
     }
@@ -362,11 +361,11 @@ export default function TimesheetReview() {
                   <dl className="grid grid-cols-4 gap-4 text-xs sm:pl-7 lg:pl-0">
                     <div>
                       <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Rostered</dt>
-                      <dd className="font-bold font-mono text-[var(--text)]">{row.rostered_hours.toFixed(2)}h</dd>
+                      <dd className="font-bold font-mono text-[var(--text)]">{formatHours(row.rostered_hours)}</dd>
                     </div>
                     <div>
                       <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Worked</dt>
-                      <dd className="font-bold font-mono text-[var(--text)]">{row.actual_hours.toFixed(2)}h</dd>
+                      <dd className="font-bold font-mono text-[var(--text)]">{formatHours(row.actual_hours)}</dd>
                     </div>
                     <div>
                       <dt className="text-[10px] uppercase font-bold text-[var(--muted)]" title="Worked hours minus contracted hours">vs contract</dt>
@@ -424,45 +423,27 @@ export default function TimesheetReview() {
                         <button type="button" onClick={() => loadDetails(row.employee_id)} className="underline font-semibold cursor-pointer">Try again</button>
                       </p>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <caption className="sr-only">Rostered and worked segments for {row.full_name}, day by day</caption>
-                          <thead>
-                            <tr className="border-b border-[var(--border)] text-[var(--muted)] uppercase font-semibold text-[10px]">
-                              <th scope="col" className="py-1.5 pr-3">Day</th>
-                              <th scope="col" className="py-1.5 pr-3">Rostered</th>
-                              <th scope="col" className="py-1.5 pr-3">Worked</th>
-                              <th scope="col" className="py-1.5 pr-3 text-right">Rostered h</th>
-                              <th scope="col" className="py-1.5 pr-3 text-right">Worked h</th>
-                              <th scope="col" className="py-1.5">Notes</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--border)]">
-                            {days.map(iso => {
-                              const record = detail.find(r => r.record_date === iso);
-                              const segments = record?.segments ?? [];
-                              const notes = segments.map(s => s.notes).filter(Boolean).join(' · ');
-                              const empty = !segments.some(apiHasRoster) && !segments.some(apiHasWorked);
-                              return (
-                                <tr key={iso} className={isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : ''}>
-                                  <th scope="row" className="py-1.5 pr-3 font-semibold text-[var(--text)] whitespace-nowrap">{dayLabel(iso)}</th>
-                                  {empty ? (
-                                    <td colSpan={4} className="py-1.5 pr-3 text-[var(--muted)] italic">Nothing rostered or worked</td>
-                                  ) : (
-                                    <>
-                                      <td className="py-1.5 pr-3"><span className="flex flex-wrap gap-1"><DayChips segments={segments} side="roster" size="regular" /></span></td>
-                                      <td className="py-1.5 pr-3"><span className="flex flex-wrap gap-1"><DayChips segments={segments} side="actual" size="regular" /></span></td>
-                                      <td className="py-1.5 pr-3 text-right font-mono">{formatHours(sumHours(record, 'roster_hours'))}</td>
-                                      <td className="py-1.5 pr-3 text-right font-mono font-semibold text-[var(--text)]">{formatHours(sumHours(record, 'actual_hours'))}</td>
-                                    </>
-                                  )}
-                                  <td className="py-1.5 text-[var(--muted)] max-w-xs truncate" title={notes}>{notes || '—'}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                          <PlannedWorkedKey />
+                          <Link to="/roster" className="text-xs font-semibold text-[var(--primary)] hover:underline">Change days on the roster</Link>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-4">
+                          {[0, 1].map(week => (
+                            <ol key={week} aria-label={`Week ${week + 1}`} className="space-y-1.5">
+                              {days.slice(week * 7, week * 7 + 7).map(iso => {
+                                const record = detail.find(r => r.record_date === iso);
+                                return (
+                                  <li key={iso} className={`grid grid-cols-[5.25rem_minmax(0,1fr)] gap-2 rounded-lg border border-[var(--border)] p-2 ${isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : 'bg-[var(--panel-subtle)]'}`}>
+                                    <span className={`text-xs font-semibold leading-5 whitespace-nowrap ${iso === today ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>{dayLabel(iso)}</span>
+                                    <DayLines day={record ?? { roster: [], timesheet: [], note: null }} variant="regular" />
+                                  </li>
+                                );
+                              })}
+                            </ol>
+                          ))}
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
@@ -494,7 +475,7 @@ export default function TimesheetReview() {
           <ul className="text-xs text-[var(--text)] max-h-48 overflow-y-auto space-y-0.5">
             {confirmIds.map(id => {
               const row = rows.find(r => r.employee_id === id);
-              return <li key={id}>{row?.full_name ?? 'Worker'} <span className="text-[var(--muted)]">· {row ? `${row.actual_hours.toFixed(2)}h worked` : ''}</span></li>;
+              return <li key={id}>{row?.full_name ?? 'Worker'} <span className="text-[var(--muted)]">· {row ? `${formatHours(row.actual_hours)} worked` : ''}</span></li>;
             })}
           </ul>
         </Dialog>

@@ -6,7 +6,7 @@ import app from '../src/index';
 import { clearAllRateLimits } from '../src/services/authUtils';
 import { classifySegmentHours } from '../src/services/classificationService';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from './helpers/testDb';
-import { PERIOD, World, bearer, buildWorld } from './helpers/fixtures';
+import { PERIOD, World, bearer, buildWorld, entry } from './helpers/fixtures';
 
 let w: World;
 beforeAll(connectTestDb);
@@ -17,8 +17,10 @@ beforeEach(async () => {
     w = await buildWorld();
 });
 
-const save = (workerId: string, date: string, segments: object[]) =>
-    request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: workerId, record_date: date, segments });
+const save = (workerId: string, date: string, day: object) =>
+    request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: workerId, record_date: date, ...day });
+/** The same times rostered and worked. */
+const both = (...entries: object[]) => ({ roster: entries, timesheet: entries });
 
 const reportFor = async (name: string, token = w.tokens.owner) => {
     const res = await request(app).get(`/api/reports/payroll?start_date=${PERIOD}`).set(bearer(token));
@@ -27,14 +29,10 @@ const reportFor = async (name: string, token = w.tokens.owner) => {
 
 describe('payroll report', () => {
     it('classifies worked hours and every leave type, LWIP included, and the columns add up', async () => {
-        await save(w.workers.mel, '2026-03-30', [
-            { segment_type: 'Sick', roster_in: '09:00', roster_out: '13:00', actual_in: '09:00', actual_out: '13:00' },
-            { segment_type: 'Annual', roster_in: '13:00', roster_out: '15:00', actual_in: '13:00', actual_out: '15:00' },
-            { segment_type: 'WORK', roster_in: '15:00', roster_out: '17:00', actual_in: '15:00', actual_out: '17:00' },
-        ]);
-        await save(w.workers.mel, '2026-04-04', [{ roster_in: '10:00', roster_out: '14:00', actual_in: '10:00', actual_out: '14:00' }]); // Saturday
-        await save(w.workers.mel, '2026-03-31', [{ segment_type: 'LWIP', roster_hours: 7.6, actual_hours: 7.6 }]);
-        await save(w.workers.mel, '2026-04-01', [{ segment_type: 'TIL', roster_hours: 3, actual_hours: 3 }, { segment_type: 'Other', roster_hours: 1, actual_hours: 1 }]);
+        await save(w.workers.mel, '2026-03-30', both(entry('09:00', '13:00', 'Sick'), entry('13:00', '15:00', 'Annual'), entry('15:00', '17:00')));
+        await save(w.workers.mel, '2026-04-04', both(entry('10:00', '14:00'))); // Saturday
+        await save(w.workers.mel, '2026-03-31', both(entry(null, null, 'LWIP', 7.6)));
+        await save(w.workers.mel, '2026-04-01', both(entry(null, null, 'TIL', 3), entry(null, null, 'Other', 1)));
 
         const mel = await reportFor('Mel Worker');
         expect(mel).toMatchObject({
@@ -48,18 +46,18 @@ describe('payroll report', () => {
 
     it('public holidays are classified as public holiday hours', async () => {
         await sql("INSERT INTO public_holidays (org_id, holiday_date, name) VALUES ($1, '2026-04-06', 'Easter Monday')", [w.abc.id]);
-        await save(w.workers.rich, '2026-04-06', [{ roster_in: '09:00', roster_out: '17:00', actual_in: '09:00', actual_out: '17:00' }]);
+        await save(w.workers.rich, '2026-04-06', both(entry('09:00', '17:00')));
         expect((await reportFor('Rich Worker')).public_holiday_hours).toBe(7.5);
     });
 
     it('an overnight shift splits across the two calendar days', async () => {
-        await save(w.workers.mel, '2026-04-03', [{ roster_in: '22:00', roster_out: '06:00', actual_in: '22:00', actual_out: '06:00' }]); // Fri → Sat
+        await save(w.workers.mel, '2026-04-03', both(entry('22:00', '06:00'))); // Fri → Sat
         const mel = await reportFor('Mel Worker');
         expect([mel.normal_hours, mel.saturday_hours]).toEqual([2, 5.5]);
     });
 
     it('shows the roster until worked hours exist, and approved/locked status', async () => {
-        await save(w.workers.gee, '2026-03-30', [{ roster_in: '09:00', roster_out: '17:00' }]);
+        await save(w.workers.gee, '2026-03-30', { roster: [entry('09:00', '17:00')], timesheet: [] });
         expect((await reportFor('Gee Worker')).normal_hours).toBe(7.5);
         await request(app).post('/api/submissions/approve').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.gee, start_date: PERIOD });
         expect((await reportFor('Gee Worker')).submission_status).toBe('Approved');

@@ -5,11 +5,12 @@ import { requireAuth, requirePermission, Permission, AuthRequest, sendError } fr
 import { HttpError, badRequest, loadWorker, resolveBranchFilter } from '../services/policy';
 import { getFortnightStartIso, isFortnightStart, isIsoDate } from '../services/periodUtils';
 import { getPeriodLock, isTimesheetApproved, rosterLockedError, timesheetLockedError } from '../services/periodLocks';
-import { NormalisedSegment, breakRuleFor, loadBreakSettings, normaliseDaySegments } from '../services/segments';
+import { NormalisedSegment, breakRuleFor, loadBreakSettings, mergeDayWrite, normaliseDaySegments, rowsToDay } from '../services/segments';
 import { calculateRosterStats } from '../services/rosterService';
 
 /**
- * Daily records: one row per worker per day, holding that day's segments (rostered and worked).
+ * Daily records: one per worker per day. A day has a ROSTER (what was planned) and a TIMESHEET
+ * (what was worked); each is a list of times with a type (Normal Work or a leave type).
  * Every route authorises against the worker's own branch, loaded from the database.
  */
 const router = Router();
@@ -57,21 +58,24 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
         const records = (await query(sql, params)).rows;
         if (records.length === 0) return res.json({ success: true, data: [] });
 
-        // Single batch fetch for all shift segments (no N+1)
-        const segResult = await query(
-            `SELECT * FROM shift_segments WHERE record_id = ANY($1::uuid[])
-              ORDER BY COALESCE(roster_in, actual_in) ASC NULLS LAST, id ASC`,
-            [records.map((r: any) => r.id)]
-        );
-        const segmentsByRecord = new Map<string, any[]>();
+        // Single batch fetch for all rows of these days (no N+1)
+        const segResult = await query('SELECT * FROM shift_segments WHERE record_id = ANY($1::uuid[])', [records.map((r: any) => r.id)]);
+        const rowsByRecord = new Map<string, any[]>();
         for (const seg of segResult.rows) {
-            const list = segmentsByRecord.get(seg.record_id) || [];
+            const list = rowsByRecord.get(seg.record_id) || [];
             list.push(seg);
-            segmentsByRecord.set(seg.record_id, list);
+            rowsByRecord.set(seg.record_id, list);
         }
-        for (const rec of records) rec.segments = segmentsByRecord.get(rec.id) || [];
 
-        res.json({ success: true, data: records });
+        res.json({
+            success: true,
+            data: records.map((rec: any) => ({
+                id: rec.id,
+                employee_id: rec.employee_id,
+                record_date: rec.record_date,
+                ...rowsToDay(rowsByRecord.get(rec.id) || []),
+            })),
+        });
     } catch (err) {
         sendError(res, err, 'RECORDS GET ERROR');
     }
@@ -93,17 +97,21 @@ function sameSide(existing: any[], incoming: NormalisedSegment[], side: (s: any)
 }
 
 /**
- * POST /api/records  { employee_id, record_date, segments: [...] }
- * Replaces the day's segments. An empty list clears the day.
+ * POST /api/records
+ *   { employee_id, record_date, scope?: 'ROSTER' | 'TIMESHEET' | 'BOTH', roster?: Entry[], timesheet?: Entry[], note? }
+ *   Entry = { type, start?, finish?, hours? }
  *
- *   - roster locked     → the rostered side must be unchanged (worked hours can still be recorded)
- *   - timesheets locked → the worked side must be unchanged
+ * Replaces the day's roster, its timesheet, or both (the default). The side outside `scope` is kept
+ * exactly as stored. Empty lists clear that side.
+ *
+ *   - roster locked      → the roster must be unchanged (worked hours can still be recorded)
+ *   - timesheets locked  → the timesheet must be unchanged
  *   - timesheet approved → nothing may change
  */
 router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const { employee_id, record_date, segments } = req.body || {};
+        const { employee_id, record_date } = req.body || {};
         if (!isIsoDate(record_date)) throw badRequest('VALIDATION_FAILED', 'record_date must be YYYY-MM-DD.');
 
         const worker = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
@@ -117,23 +125,20 @@ router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthR
         }
 
         const rule = breakRuleFor(await loadBreakSettings(ctx.orgId), record_date);
-        const day = normaliseDaySegments(segments ?? [], rule);
-
         const lock = await getPeriodLock(ctx.orgId, worker.location_id, fortnightStart);
-        await withTransaction(async (tx) => {
+        const saved = await withTransaction(async (tx) => {
             const recRes = await tx(
-                `INSERT INTO daily_records (id, org_id, employee_id, record_date, has_actuals) VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (org_id, employee_id, record_date) DO UPDATE SET has_actuals = EXCLUDED.has_actuals
+                `INSERT INTO daily_records (id, org_id, employee_id, record_date) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (org_id, employee_id, record_date) DO UPDATE SET record_date = EXCLUDED.record_date
                  RETURNING id`,
-                [crypto.randomUUID(), ctx.orgId, worker.id, record_date, day.hasActuals]
+                [crypto.randomUUID(), ctx.orgId, worker.id, record_date]
             );
             const recordId = recRes.rows[0].id;
+            const existing = (await tx('SELECT * FROM shift_segments WHERE record_id = $1', [recordId])).rows;
 
-            if (lock.roster_locked || lock.timesheet_locked) {
-                const existing = (await tx('SELECT * FROM shift_segments WHERE record_id = $1', [recordId])).rows;
-                if (lock.roster_locked && !sameSide(existing, day.segments, rosterSide)) throw rosterLockedError();
-                if (lock.timesheet_locked && !sameSide(existing, day.segments, actualSide)) throw timesheetLockedError();
-            }
+            const day = normaliseDaySegments(mergeDayWrite(rowsToDay(existing), req.body || {}), rule);
+            if (lock.roster_locked && !sameSide(existing, day.segments, rosterSide)) throw rosterLockedError();
+            if (lock.timesheet_locked && !sameSide(existing, day.segments, actualSide)) throw timesheetLockedError();
 
             await tx('DELETE FROM shift_segments WHERE record_id = $1', [recordId]);
             for (const seg of day.segments) {
@@ -145,9 +150,11 @@ router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthR
                         seg.actual_in, seg.actual_out, seg.actual_hours, seg.actual_segment_type, seg.notes]
                 );
             }
+            await tx('UPDATE daily_records SET has_actuals = $1 WHERE id = $2', [day.hasActuals, recordId]);
+            return day.segments;
         });
 
-        res.json({ success: true, data: { segments: day.segments } });
+        res.json({ success: true, data: rowsToDay(saved) });
     } catch (err) {
         sendError(res, err, 'RECORDS SAVE ERROR');
     }

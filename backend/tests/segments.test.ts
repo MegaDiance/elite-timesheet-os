@@ -45,8 +45,22 @@ describe('segment hours', () => {
         expect(hours([{ roster_in: '09:00', roster_out: '11:00' }, { roster_in: '11:00', roster_out: '14:00' }])).toEqual([2, 3]);
     });
 
-    it('a full day of leave keeps the break, as before', () => {
-        expect(hours([{ segment_type: 'Annual', roster_in: '09:00', roster_out: '17:00' }])).toEqual([7.5]);
+    it('leave is never reduced by the break: a full day of Annual Leave is 8 h', () => {
+        expect(hours([{ segment_type: 'Annual', roster_in: '09:00', roster_out: '17:00' }])).toEqual([8]);
+    });
+
+    it('with several leave types and no work, nothing is deducted', () => {
+        expect(hours([
+            { segment_type: 'Sick', roster_in: '09:00', roster_out: '13:00' },
+            { segment_type: 'Annual', roster_in: '13:00', roster_out: '17:00' },
+        ])).toEqual([4, 4]);
+    });
+
+    it('work shorter than the break is not deducted either', () => {
+        expect(hours([
+            { segment_type: 'Annual', roster_in: '09:00', roster_out: '16:40' },
+            { segment_type: 'WORK', roster_in: '16:40', roster_out: '17:00' },
+        ])).toEqual([7.67, 0.33]);
     });
 
     it('the weekend break setting applies to weekend days', () => {

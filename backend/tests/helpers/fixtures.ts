@@ -110,9 +110,12 @@ export async function buildWorld(): Promise<World> {
     };
 }
 
-/** A simple one-segment day: rostered 09:00–17:00 and, optionally, worked the same. */
-export const simpleDay = (worked = false) => [{
-    segment_type: 'WORK',
-    roster_in: '09:00', roster_out: '17:00',
-    ...(worked ? { actual_in: '09:00', actual_out: '17:00' } : {}),
-}];
+/** One time entry of a day: start → finish of a type (Normal Work = WORK, or a leave type). */
+export const entry = (start: string | null, finish: string | null, type = 'WORK', hours?: number) =>
+    ({ type, start, finish, ...(hours !== undefined ? { hours } : {}) });
+
+/** A plain day: rostered 09:00–17:00 and, optionally, worked the same. Spread into a POST /records body. */
+export const simpleDay = (worked = false) => ({
+    roster: [entry('09:00', '17:00')],
+    timesheet: worked ? [entry('09:00', '17:00')] : [],
+});

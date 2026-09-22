@@ -32,13 +32,15 @@ interface DialogProps {
   closeDisabled?: boolean;
   /** When given, the body and footer are one form, so Enter in a field submits it. */
   onSubmit?: (e: FormEvent<HTMLFormElement>) => void;
+  /** Fill the whole screen on phones (below 768px) instead of floating as a card. */
+  sheet?: boolean;
 }
 
 /**
  * Accessible modal dialog: role="dialog", aria-modal, labelled by its title, Escape closes,
  * Tab stays inside, and focus returns to where it was when the dialog closes.
  */
-export function Dialog({ title, description, onClose, children, footer, size = 'md', closeDisabled = false, onSubmit }: DialogProps) {
+export function Dialog({ title, description, onClose, children, footer, size = 'md', closeDisabled = false, onSubmit, sheet = false }: DialogProps) {
   const titleId = useId();
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -105,12 +107,16 @@ export function Dialog({ title, description, onClose, children, footer, size = '
       <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-4">
         {children}
       </div>
-      {footer && <div className="px-4 sm:px-5 py-3 border-t border-[var(--border)] bg-[var(--panel)] rounded-b-2xl">{footer}</div>}
+      {footer && (
+        <div className={`px-4 sm:px-5 py-3 border-t border-[var(--border)] bg-[var(--panel)] rounded-b-2xl ${sheet ? 'max-md:rounded-none max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))]' : ''}`}>
+          {footer}
+        </div>
+      )}
     </>
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 ${sheet ? 'max-md:p-0' : ''}`}>
       <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" aria-hidden="true" onClick={closeDisabled ? undefined : onClose} />
       <div
         ref={panelRef}
@@ -119,7 +125,9 @@ export function Dialog({ title, description, onClose, children, footer, size = '
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
-        className={`relative z-10 w-full ${SIZES[size]} max-h-[calc(100vh-1rem)] sm:max-h-[92vh] flex flex-col bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] rounded-2xl shadow-2xl outline-none`}
+        className={`relative z-10 w-full ${SIZES[size]} max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] rounded-2xl shadow-2xl outline-none ${
+          sheet ? 'max-md:max-w-none max-md:h-dvh max-md:max-h-none max-md:rounded-none max-md:border-0' : ''
+        }`}
       >
         <div className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[var(--border)]">
           <div className="min-w-0">
@@ -131,7 +139,7 @@ export function Dialog({ title, description, onClose, children, footer, size = '
             onClick={onClose}
             disabled={closeDisabled}
             aria-label="Close"
-            className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-8)] transition-colors disabled:opacity-40 cursor-pointer"
+            className="shrink-0 w-11 h-11 -m-1.5 md:m-0 md:w-8 md:h-8 rounded-full flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-8)] transition-colors disabled:opacity-40 cursor-pointer"
           >
             <X className="w-4 h-4" aria-hidden="true" />
           </button>

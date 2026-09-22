@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type Ref } from 'react';
 
 interface SmartTimeInputProps {
+  /** "HH:MM" or ''. */
   value: string;
   onChange: (parsedVal: string) => void;
   disabled?: boolean;
   readOnly?: boolean;
   placeholder?: string;
   className?: string;
-  /** Accessible name for the field, e.g. "Rostered start, segment 1". */
+  /** Accessible name for the field, e.g. "Rostered start, line 1". */
   label?: string;
   id?: string;
   /**
@@ -20,11 +21,18 @@ interface SmartTimeInputProps {
   /** Select the whole value on focus, so typing replaces it. */
   selectOnFocus?: boolean;
   onFocus?: () => void;
+  /** How a saved "HH:MM" value is shown while the field is not being edited (default: as is). */
+  format?: (hhmm: string) => string;
+  /**
+   * The time this one follows, e.g. the start for a finish field. A bare hour that would make an
+   * impossible span is read the other side of noon: "5" after 9:00 am is 5:00 pm.
+   */
+  after?: string;
   /** Lets a parent focus the field programmatically. */
   ref?: Ref<HTMLInputElement>;
 }
 
-export const parseSmartTime = (raw: string): string => {
+const parseSmartTime = (raw: string): string => {
   if (!raw) return '';
   let str = raw.trim().toLowerCase().replace(/\s/g, '');
   if (!str) return '';
@@ -97,6 +105,26 @@ export const parseSmartTime = (raw: string): string => {
   return `${hStr}:${mStr}`;
 };
 
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const minutesOf = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+/** Minutes from `after` forward to `t`, overnight allowed (0 = the same time). */
+const gapAfter = (after: string, t: string) => (minutesOf(t) - minutesOf(after) + 1440) % 1440;
+
+/**
+ * Parses what was typed. With `after`, a bare hour without am/pm ("5", "3:30") is read as whichever
+ * of am or pm comes soonest after it: "5" after 9:00 am is 5:00 pm, "6" after 10:00 pm is 6:00 am.
+ * Explicit input ("5a", "0500", "05:00", "17:00") is taken as typed.
+ */
+function resolveTime(raw: string, after?: string): string {
+  const parsed = parseSmartTime(raw);
+  const typed = raw.trim();
+  const hour = Number(parsed.slice(0, 2));
+  if (!parsed || !after || !TIME_RE.test(after) || /[ap]/i.test(typed) || typed.startsWith('0') || hour < 1 || hour > 12) return parsed;
+  const am = `${String(hour % 12).padStart(2, '0')}:${parsed.slice(3, 5)}`;
+  const pm = `${String((hour % 12) + 12).padStart(2, '0')}:${parsed.slice(3, 5)}`;
+  return (gapAfter(after, pm) || 1440) < (gapAfter(after, am) || 1440) ? pm : am;
+}
+
 /**
  * A forgiving time field: "9", "9a", "5p", "1730", "9.30" and "17:30" all become HH:MM
  * when the user leaves the field or presses Enter.
@@ -115,21 +143,24 @@ export default function SmartTimeInput({
   describedBy,
   selectOnFocus = false,
   onFocus,
+  format,
+  after,
   ref,
 }: SmartTimeInputProps) {
-  const [val, setVal] = useState(value || '');
+  const show = (v: string) => (v && format ? format(v) : v || '');
+  const [text, setText] = useState(() => show(value));
   const focused = useRef(false);
 
   useEffect(() => {
     // In live mode the parent holds the parsed value while the user is still typing; keep their text.
     if (live && focused.current) return;
-    setVal(value || '');
-  }, [value, live]);
+    setText(value && format ? format(value) : value || '');
+  }, [value, live, format]);
 
   const commit = () => {
     if (disabled || readOnly) return;
-    const parsed = parseSmartTime(val);
-    setVal(parsed);
+    const parsed = resolveTime(text, after);
+    setText(show(parsed));
     onChange(parsed);
   };
 
@@ -151,10 +182,10 @@ export default function SmartTimeInput({
       disabled={disabled}
       readOnly={readOnly}
       placeholder={placeholder}
-      value={val}
+      value={text}
       onChange={e => {
-        setVal(e.target.value);
-        if (live) onChange(parseSmartTime(e.target.value));
+        setText(e.target.value);
+        if (live) onChange(resolveTime(e.target.value, after));
       }}
       onFocus={e => {
         focused.current = true;

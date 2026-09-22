@@ -90,7 +90,7 @@ const rows: Row[] = [
     // Roster and timesheets
     { name: 'GET /records?employee_id=mel', method: 'get', path: (w) => `/api/records?start_date=${PERIOD}&employee_id=${w.workers.mel}`, expect: MEL_BRANCH_SCOPED },
     { name: 'GET /records/stats?employee_id=mel', method: 'get', path: (w) => `/api/records/stats?start_date=${PERIOD}&employee_id=${w.workers.mel}`, expect: MEL_BRANCH_SCOPED },
-    { name: 'POST /records (mel)', method: 'post', path: () => '/api/records', body: (w) => ({ employee_id: w.workers.mel, record_date: '2026-03-30', segments: simpleDay() }), expect: MEL_BRANCH_SCOPED },
+    { name: 'POST /records (mel)', method: 'post', path: () => '/api/records', body: (w) => ({ employee_id: w.workers.mel, record_date: '2026-03-30', ...simpleDay() }), expect: MEL_BRANCH_SCOPED },
     {
         name: 'POST /records/copy-day (mel)', method: 'post', path: () => '/api/records/copy-day',
         body: (w) => ({ employee_id: w.workers.mel, source_date: '2026-03-30', target_dates: ['2026-03-31'] }),

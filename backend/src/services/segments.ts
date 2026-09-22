@@ -109,11 +109,11 @@ function assertNoOverlap(spans: TimedSpan[], side: string) {
  *
  * The organisation's unpaid break is a property of the DAY, not of each segment: it is deducted
  * once when the day's timed segments add up to the threshold — unless the segments already leave
- * a gap at least as long as the break (the break was taken between them). It comes off the
- * longest Normal Work segment, so leave hours are not reduced by a break taken while working; a
- * day with no work time takes it from its longest segment, as a full leave day always has.
- * A single-segment day therefore calculates exactly as before, a split day is no longer
- * under-deducted, and two long segments are no longer deducted twice.
+ * a gap at least as long as the break (the break was taken between them). It only ever comes off
+ * Normal Work: the longest Normal Work segment that is at least as long as the break. Leave
+ * (Sick, Annual, TIL, LWIP, Other) is never reduced, so a day with no such work has no deduction.
+ * A single Normal Work day calculates exactly as before, a split day is not under-deducted, and
+ * two long segments are not deducted twice.
  */
 export function computeDayHours(spans: TimedSpan[], rule: BreakRule): Map<number, number> {
     const hours = new Map<number, number>();
@@ -124,10 +124,9 @@ export function computeDayHours(spans: TimedSpan[], rule: BreakRule): Map<number
     let gapMinutes = 0;
     for (let i = 1; i < sorted.length; i++) gapMinutes += Math.max(0, sorted[i].start - sorted[i - 1].end);
 
-    const deduct = rule.breakMins > 0 && totalMinutes >= rule.thresholdHours * 60 && gapMinutes < rule.breakMins;
-    const longestOf = (list: TimedSpan[]) => list.reduce((best, s) => (s.end - s.start > best.end - best.start ? s : best), list[0]);
     const work = sorted.filter(s => s.type === 'WORK' && s.end - s.start >= rule.breakMins);
-    const longest = longestOf(work.length > 0 ? work : sorted);
+    const deduct = rule.breakMins > 0 && work.length > 0 && totalMinutes >= rule.thresholdHours * 60 && gapMinutes < rule.breakMins;
+    const longest = work.reduce((best, s) => (s.end - s.start > best.end - best.start ? s : best), work[0]);
 
     for (const span of spans) {
         let minutes = span.end - span.start;
@@ -238,4 +237,101 @@ export function breakRuleFor(settings: OrgBreakSettings, dateIso: string): Break
         breakMins: isWeekendDate(dateIso) ? settings.break_mins_weekend : settings.break_mins_weekday,
         thresholdHours: settings.break_threshold_hours,
     };
+}
+
+/**
+ * The day as users see it: what was ROSTERED (planned) and what was WORKED (the timesheet), each a
+ * simple list of times. Storage pairs the two lists into rows; nobody outside this module needs to
+ * know how.
+ */
+export type DayScope = 'ROSTER' | 'TIMESHEET' | 'BOTH';
+
+export interface DayEntry {
+    type: SegmentType;
+    start: string | null;
+    finish: string | null;
+    hours: number;
+}
+
+export interface DayView {
+    roster: DayEntry[];
+    timesheet: DayEntry[];
+    note: string | null;
+}
+
+const hhmm = (t: unknown) => (t ? String(t).slice(0, 5) : null);
+const byStart = <T extends { start: string | null }>(list: T[]) =>
+    [...list].sort((a, b) => (a.start && b.start ? a.start.localeCompare(b.start) : a.start ? -1 : b.start ? 1 : 0));
+
+/** Stored rows → the day's two lists. */
+export function rowsToDay(rows: any[]): DayView {
+    const roster: DayEntry[] = [];
+    const timesheet: DayEntry[] = [];
+    const notes: string[] = [];
+    for (const row of rows) {
+        if (row.roster_in || Number(row.roster_hours) > 0) {
+            roster.push({ type: row.segment_type, start: hhmm(row.roster_in), finish: hhmm(row.roster_out), hours: Number(row.roster_hours) || 0 });
+        }
+        if (row.actual_in || Number(row.actual_hours) > 0) {
+            timesheet.push({ type: row.actual_segment_type || row.segment_type, start: hhmm(row.actual_in), finish: hhmm(row.actual_out), hours: Number(row.actual_hours) || 0 });
+        }
+        if (row.notes) notes.push(row.notes);
+    }
+    return { roster: byStart(roster), timesheet: byStart(timesheet), note: notes.length ? notes.join(' · ') : null };
+}
+
+function readEntries(value: unknown, label: string): Array<Record<string, unknown>> {
+    if (!Array.isArray(value)) throw badRequest('VALIDATION_FAILED', `${label} must be a list.`);
+    return value.map(v => (v && typeof v === 'object' ? v as Record<string, unknown> : {}));
+}
+
+/**
+ * The day's two lists → row inputs for normaliseDaySegments. Entries are paired in start-time order;
+ * worked time with no rostered counterpart is flagged unplanned.
+ */
+export function dayToRows(roster: Array<Record<string, unknown>>, timesheet: Array<Record<string, unknown>>, note: string | null): SegmentInput[] {
+    const sortEntries = (list: Array<Record<string, unknown>>) =>
+        [...list].sort((a, b) => {
+            const sa = typeof a.start === 'string' ? parseSmartTime(a.start) : '';
+            const sb = typeof b.start === 'string' ? parseSmartTime(b.start) : '';
+            return sa && sb ? sa.localeCompare(sb) : sa ? -1 : sb ? 1 : 0;
+        });
+    const r = sortEntries(roster);
+    const t = sortEntries(timesheet);
+    const rows: SegmentInput[] = [];
+    for (let i = 0; i < Math.max(r.length, t.length); i++) {
+        const planned = r[i];
+        const worked = t[i];
+        rows.push({
+            segment_type: planned ? (planned.type ?? 'WORK') : (worked!.type ?? 'WORK'),
+            roster_in: planned?.start, roster_out: planned?.finish, roster_hours: planned?.hours,
+            actual_segment_type: worked ? (worked.type ?? 'WORK') : null,
+            actual_in: worked?.start, actual_out: worked?.finish, actual_hours: worked?.hours,
+            is_unplanned: !planned && Boolean(worked),
+            notes: i === 0 ? note : null,
+        });
+    }
+    return rows;
+}
+
+/**
+ * Builds the rows to store for a write of `scope`. The side that is not in scope is taken from the
+ * stored day, so a roster-only change can never alter worked hours and a timesheet-only change can
+ * never alter the roster.
+ */
+export function mergeDayWrite(existing: DayView, body: Record<string, unknown>): SegmentInput[] {
+    const scope = (body.scope ?? 'BOTH') as DayScope;
+    if (!['ROSTER', 'TIMESHEET', 'BOTH'].includes(scope)) throw badRequest('VALIDATION_FAILED', 'scope must be ROSTER, TIMESHEET or BOTH.');
+    if (scope === 'ROSTER' && body.timesheet !== undefined) throw badRequest('SCOPE_VIOLATION', 'A roster-only change cannot include worked hours.');
+    if (scope === 'TIMESHEET' && body.roster !== undefined) throw badRequest('SCOPE_VIOLATION', 'A timesheet-only change cannot include rostered hours.');
+
+    const keep = (list: DayEntry[]) => list.map(e => ({ ...e }));
+    const roster = scope === 'TIMESHEET' ? keep(existing.roster) : readEntries(body.roster ?? [], 'roster');
+    const timesheet = scope === 'ROSTER' ? keep(existing.timesheet) : readEntries(body.timesheet ?? [], 'timesheet');
+    const rawNote = body.note === undefined ? existing.note : body.note;
+    const note = typeof rawNote === 'string' && rawNote.trim() ? rawNote.trim().slice(0, 500) : null;
+    for (const entry of [...roster, ...timesheet]) {
+        if (entry.type !== undefined && !isSegmentType(entry.type)) throw badRequest('INVALID_TYPE', 'Unknown time type.');
+    }
+    return dayToRows(roster as any, timesheet as any, note);
 }

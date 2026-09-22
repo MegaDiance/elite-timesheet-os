@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy } from 'lucide-react';
 import api from '../../services/apiClient';
 import { ResultSummary } from './BulkResultDialog';
@@ -24,14 +24,14 @@ interface CopyDayPanelProps {
 }
 
 /**
- * "Copy this day to…": copies the rostered side of this day onto other days of the pay period
- * and, optionally, onto other workers in the same branch (POST /records/copy-day). Days that
- * already have worked hours, approved timesheets and locked rosters are skipped by the server.
+ * "Copy this day's roster to…": copies what is rostered on this day onto other days of the pay
+ * period and, optionally, onto other workers in the same branch (POST /records/copy-day). Only the
+ * roster is copied; days that already have worked hours, approved timesheets and locked rosters are
+ * skipped by the server and listed with the reason.
  */
 export default function CopyDayPanel({
   worker, sourceDate, days, branchWorkers, hasRoster, needsSave, saveBlockedReason, onSaveFirst, onCopied,
 }: CopyDayPanelProps) {
-  const headingId = useId();
   const [targetDays, setTargetDays] = useState<Set<string>>(() => new Set());
   const [targetWorkers, setTargetWorkers] = useState<Set<string>>(() => new Set([worker.id]));
   const [busy, setBusy] = useState(false);
@@ -91,7 +91,7 @@ export default function CopyDayPanel({
       onCopied();
     } catch (err) {
       setError(apiErrorCode(err) === 'NOTHING_TO_COPY'
-        ? 'This day has nothing rostered to copy. Save rostered times first.'
+        ? 'This day has nothing rostered to copy. Save the roster first.'
         : apiErrorMessage(err, 'The day could not be copied.'));
     } finally {
       setBusy(false);
@@ -99,25 +99,22 @@ export default function CopyDayPanel({
   };
 
   const chipClass =
-    'flex flex-col items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-1 py-1.5 text-[11px] cursor-pointer select-none has-[:checked]:border-[var(--primary)] has-[:checked]:bg-[var(--primary-light)] has-[:checked]:text-[var(--primary)] has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]';
+    'flex flex-col items-center justify-center gap-0.5 min-h-11 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-1 py-1.5 text-[11px] cursor-pointer select-none has-[:checked]:border-[var(--primary)] has-[:checked]:bg-[var(--primary-light)] has-[:checked]:text-[var(--primary)] has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]';
 
   return (
-    <section aria-labelledby={headingId} className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)] p-3 space-y-3">
-      <div>
-        <h3 id={headingId} className="text-sm font-bold text-[var(--text)]">Copy this day to…</h3>
-        <p className="text-[11px] text-[var(--muted)] mt-0.5">
-          Copies the rostered times of {dayLabel(sourceDate)}. Worked hours are never overwritten: days that already have worked
-          hours, approved timesheets or a locked roster are skipped and listed.
-        </p>
-      </div>
+    <section aria-label="Copy this day’s roster" className="mt-2 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)] p-3 space-y-3">
+      <p className="text-xs text-[var(--muted)]">
+        Copies what is rostered on {dayLabel(sourceDate)} to the days you choose. Worked hours are never copied or overwritten:
+        days that already have worked hours, an approved timesheet or a locked roster are skipped and listed.
+      </p>
 
       <fieldset>
         <legend className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted)] mb-1.5 flex flex-wrap items-center gap-2 w-full">
           <span>Days</span>
           <span className="flex gap-1 normal-case tracking-normal font-medium">
-            <button type="button" className={buttonClass.quiet} onClick={() => pickDays('others')}>All other days</button>
-            <button type="button" className={buttonClass.quiet} onClick={() => pickDays('weekdays')}>Weekdays</button>
-            <button type="button" className={buttonClass.quiet} onClick={() => pickDays('none')}>None</button>
+            <button type="button" className={`${buttonClass.quiet} max-md:h-11`} onClick={() => pickDays('others')}>All other days</button>
+            <button type="button" className={`${buttonClass.quiet} max-md:h-11`} onClick={() => pickDays('weekdays')}>Weekdays</button>
+            <button type="button" className={`${buttonClass.quiet} max-md:h-11`} onClick={() => pickDays('none')}>None</button>
           </span>
         </legend>
         <div className="grid grid-cols-7 gap-1">
@@ -144,12 +141,12 @@ export default function CopyDayPanel({
 
       {branchWorkers.length > 0 && (
         <details className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-2">
-          <summary className="text-xs font-semibold text-[var(--text)] cursor-pointer">
-            Workers ({targetWorkers.size} chosen) — optionally copy to others in this branch
+          <summary className="text-xs font-semibold text-[var(--text)] cursor-pointer max-md:py-2.5">
+            Workers ({targetWorkers.size} chosen) — also copy to others in this branch
           </summary>
           <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-40 overflow-y-auto">
             {[worker, ...branchWorkers].map(w => (
-              <label key={w.id} className="flex items-center gap-2 text-xs text-[var(--text)] py-0.5">
+              <label key={w.id} className="flex items-center gap-2 text-xs text-[var(--text)] min-h-11 md:min-h-0 py-0.5 cursor-pointer">
                 <input
                   type="checkbox"
                   className="accent-[var(--primary)]"
@@ -167,7 +164,7 @@ export default function CopyDayPanel({
         <p className="text-[11px] text-[var(--muted)]" aria-live="polite">
           {blocked ?? (needsSave ? 'Your changes to this day will be saved first.' : `Ready to copy to ${chosenDays.length} day${chosenDays.length === 1 ? '' : 's'}${othersChosen ? ` for ${targetWorkers.size} workers` : ''}.`)}
         </p>
-        <button type="button" onClick={run} disabled={Boolean(blocked) || busy} className={buttonClass.primary}>
+        <button type="button" onClick={run} disabled={Boolean(blocked) || busy} className={`${buttonClass.primary} max-md:h-11`}>
           <Copy className="w-3.5 h-3.5" aria-hidden="true" />
           {busy ? 'Copying…' : needsSave ? 'Save and copy' : 'Copy'}
         </button>
@@ -176,15 +173,15 @@ export default function CopyDayPanel({
       {error && <p role="alert" className="text-xs font-semibold text-[var(--danger)]">{error}</p>}
       {result && (
         <div ref={resultRef} tabIndex={-1} className="outline-none">
-        <ResultSummary
-          summary={result.copied.length > 0 ? `Copied to ${result.copied.length} day${result.copied.length === 1 ? '' : 's'}.` : 'Nothing was copied.'}
-          problemHeading="Skipped"
-          anyDone={result.copied.length > 0}
-          problems={result.skipped.map(s => ({
-            label: `${names.get(s.employee_id) ?? 'Worker'} · ${dayLabel(s.date)}`,
-            detail: SKIP_REASON_LABEL[s.reason] ?? s.reason,
-          }))}
-        />
+          <ResultSummary
+            summary={result.copied.length > 0 ? `Copied to ${result.copied.length} day${result.copied.length === 1 ? '' : 's'}.` : 'Nothing was copied.'}
+            problemHeading="Skipped"
+            anyDone={result.copied.length > 0}
+            problems={result.skipped.map(s => ({
+              label: `${names.get(s.employee_id) ?? 'Worker'} · ${dayLabel(s.date)}`,
+              detail: SKIP_REASON_LABEL[s.reason] ?? s.reason,
+            }))}
+          />
         </div>
       )}
     </section>

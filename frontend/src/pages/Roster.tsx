@@ -1,76 +1,55 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Lock, LockOpen,
-  MousePointerClick, Printer, RotateCcw, Wand2,
+  CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Lock, LockOpen,
+  MousePointerClick, Plus, Printer, RotateCcw, Wand2,
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
 import { useToast } from '../components/ui/Toast';
 import { Badge } from '../components/ui/Badge';
 import { getFortnightStartIso } from '../utils/fortnight';
-import SegmentEditor from '../components/roster/SegmentEditor';
+import DayEditor from '../components/roster/DayEditor';
 import LockDialog, { type LockFlag } from '../components/roster/LockDialog';
 import DayPickerDialog, { type BulkFillMode } from '../components/roster/DayPickerDialog';
-import ApplyFromDialog from '../components/roster/ApplyFromDialog';
 import BulkResultDialog, { type BulkResult, type ResultProblem } from '../components/roster/BulkResultDialog';
 import { Dialog, buttonClass } from '../components/roster/Dialog';
-import { DayChips, SegmentLegend } from '../components/roster/DayChips';
+import { DayLines, PART_STYLE, PlannedWorkedKey, describeDay, type DayContent } from '../components/roster/DayBox';
 import {
-  SKIP_REASON_LABEL, apiErrorCode, apiErrorMessage, downloadPayrollCsv, openPayrollPrint, signedHours,
+  SKIP_REASON_LABEL, apiErrorCode, apiErrorMessage, downloadPayrollCsv, openPayrollPrint,
   type BulkApproveResult, type CopyDayRequest, type CopyDayResult, type LockRow, type TimesheetRow, type TimesheetStatus, type Worker,
 } from '../components/roster/api';
 import {
-  currentFortnightIso, dayLabel, dayOfMonth, fortnightDays, isWeekendIso, periodLabel, shiftIso, weekdayShort,
+  currentFortnightIso, dayLabel, dayOfMonth, fortnightDays, isWeekendIso, periodLabel, shiftIso, todayIso, weekdayShort,
 } from '../components/roster/dates';
 import {
-  DEFAULT_BREAK_SETTINGS, apiHasWorked, apiWorkedType, asSegmentType, describeSide, textStyle,
-  type ApiSegment, type BreakSettings, type DayRecord, type SegmentType,
-} from '../components/roster/segments';
+  DEFAULT_BREAK_SETTINGS, dayIsEmpty, formatHours, partTotal, readDay, type BreakSettings, type DayRecord,
+} from '../components/roster/day';
 
 const cellKey = (workerId: string, dateIso: string) => `${workerId}|${dateIso}`;
-const DAY_COLUMN_WIDTH = 84;
-
-type Bucket = 'Weekdays' | 'Weekends' | Exclude<SegmentType, 'WORK'> | 'Unplanned';
-const BUCKETS: Bucket[] = ['Weekdays', 'Weekends', 'Sick', 'Annual', 'TIL', 'LWIP', 'Other', 'Unplanned'];
-const BUCKET_STYLE_TYPE: Record<Bucket, SegmentType> = {
-  Weekdays: 'WORK', Weekends: 'WORK', Sick: 'Sick', Annual: 'Annual', TIL: 'TIL', LWIP: 'LWIP', Other: 'Other', Unplanned: 'WORK',
-};
-const emptyBuckets = (): Record<Bucket, number> => ({ Weekdays: 0, Weekends: 0, Sick: 0, Annual: 0, TIL: 0, LWIP: 0, Other: 0, Unplanned: 0 });
-const bucketOf = (type: SegmentType, weekend: boolean): Bucket => (type === 'WORK' ? (weekend ? 'Weekends' : 'Weekdays') : type);
-
-interface WorkerTotals {
-  roster: number;
-  worked: number;
-  rosterBy: Record<Bucket, number>;
-  workedBy: Record<Bucket, number>;
-}
-
-function summarise(days: string[], segmentsOf: (dateIso: string) => ApiSegment[]): WorkerTotals {
-  const totals: WorkerTotals = { roster: 0, worked: 0, rosterBy: emptyBuckets(), workedBy: emptyBuckets() };
-  for (const iso of days) {
-    const weekend = isWeekendIso(iso);
-    for (const s of segmentsOf(iso)) {
-      const rostered = Number(s.roster_hours) || 0;
-      if (rostered > 0) {
-        totals.roster += rostered;
-        if (!s.is_unplanned) totals.rosterBy[bucketOf(asSegmentType(s.segment_type), weekend)] += rostered;
-      }
-      const worked = Number(s.actual_hours) || 0;
-      if (worked > 0) {
-        totals.worked += worked;
-        totals.workedBy[s.is_unplanned ? 'Unplanned' : bucketOf(apiWorkedType(s), weekend)] += worked;
-      }
-    }
-  }
-  return totals;
-}
-
+const EMPTY_DAY: DayContent = { roster: [], timesheet: [], note: null };
 const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'> = { Draft: 'outline', Approved: 'success', Locked: 'warning' };
+const DAY_WIDTH = 116;
+const NAME_WIDTH = 184;
+const TOTAL_WIDTH = 128;
+
+/** Phones and small tablets get a list of day boxes instead of the fortnight grid. */
+const NARROW_QUERY = '(max-width: 767px)';
+function useNarrowScreen(): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
+  useEffect(() => {
+    const query = window.matchMedia(NARROW_QUERY);
+    const onChange = () => setNarrow(query.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  return narrow;
+}
 
 export default function Roster() {
   const { access, can } = useAccess();
   const toast = useToast();
+  const narrow = useNarrowScreen();
   const branches = useMemo(() => access?.branches ?? [], [access]);
   const canTimesheets = can('timesheets.manage');
   const canLock = can('periods.lock');
@@ -80,6 +59,7 @@ export default function Roster() {
   const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const days = useMemo(() => fortnightDays(startIso), [startIso]);
   const endIso = days[13];
+  const today = todayIso();
 
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [records, setRecords] = useState<DayRecord[]>([]);
@@ -95,11 +75,11 @@ export default function Roster() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [fillMode, setFillMode] = useState<BulkFillMode | null>(null);
   const [lockFlag, setLockFlag] = useState<LockFlag | null>(null);
-  const [applyOpen, setApplyOpen] = useState(false);
   const [approveAllOpen, setApproveAllOpen] = useState(false);
   const [result, setResult] = useState<BulkResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [mobileDayChoice, setMobileDay] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const loadSeq = useRef(0);
 
@@ -120,7 +100,7 @@ export default function Roster() {
     const partial = [l, t].find((x): x is PromiseRejectedResult => x.status === 'rejected');
     setPartialError(partial ? `Lock and approval status could not be loaded: ${apiErrorMessage(partial.reason, 'please refresh.')}` : null);
     setWorkers(w.status === 'fulfilled' ? w.value.data?.data ?? [] : []);
-    setRecords(r.status === 'fulfilled' ? r.value.data?.data ?? [] : []);
+    setRecords(r.status === 'fulfilled' ? (r.value.data?.data ?? []).map(readDay) : []);
     setLocks(l.status === 'fulfilled' ? l.value.data?.data ?? [] : []);
     setTimesheets(t.status === 'fulfilled' ? t.value.data?.data ?? [] : []);
     setLoading(false);
@@ -143,7 +123,7 @@ export default function Roster() {
         });
       })
       .catch(() => {
-        // The preview falls back to the default break rule; saved hours always come from the server.
+        // The live preview falls back to the default break rule; saved hours always come from the server.
       });
     return () => {
       cancelled = true;
@@ -155,9 +135,21 @@ export default function Roster() {
   const lockByBranch = useMemo(() => new Map(locks.map(l => [l.location_id, l])), [locks]);
   const timesheetByWorker = useMemo(() => new Map(timesheets.map(t => [t.employee_id, t])), [timesheets]);
   const workerById = useMemo(() => new Map(workers.map(w => [w.id, w])), [workers]);
-  const segmentsFor = useCallback((workerId: string, dateIso: string) => recordByCell.get(cellKey(workerId, dateIso))?.segments ?? [], [recordByCell]);
+  const dayOf = (workerId: string, dateIso: string): DayContent => recordByCell.get(cellKey(workerId, dateIso)) ?? EMPTY_DAY;
   const nameOf = (id: string) => workerById.get(id)?.full_name ?? 'Worker';
-  const branchNameOf = (id: string) => branches.find(b => b.id === id)?.name ?? workers.find(w => w.location_id === id)?.location_name ?? 'Branch';
+  const branchNameOf = (id: string) => branches.find(b => b.id === id)?.name ?? workers.find(w => w.location_id === id)?.location_name ?? 'this branch';
+  const statusOf = (workerId: string): TimesheetStatus => timesheetByWorker.get(workerId)?.status ?? 'Draft';
+
+  const totals = useMemo(() => {
+    const map = new Map<string, { roster: number; worked: number }>();
+    for (const r of records) {
+      const t = map.get(r.employee_id) ?? { roster: 0, worked: 0 };
+      t.roster += partTotal(r.roster);
+      t.worked += partTotal(r.timesheet);
+      map.set(r.employee_id, t);
+    }
+    return map;
+  }, [records]);
 
   const groups = useMemo(() => {
     const multiBranch = new Set(workers.map(w => w.location_id)).size > 1;
@@ -165,20 +157,20 @@ export default function Roster() {
       (multiBranch ? (a.location_name ?? '').localeCompare(b.location_name ?? '') : 0)
       || (a.department ?? '').localeCompare(b.department ?? '')
       || a.full_name.localeCompare(b.full_name));
-    const list: { key: string; branchId: string; department: string; workers: Worker[] }[] = [];
+    const list: { branchId: string; workers: Worker[] }[] = [];
     for (const w of sorted) {
-      const department = w.department?.trim() || 'No department';
-      const key = `${multiBranch ? w.location_id : ''}|${department}`;
       const last = list[list.length - 1];
-      if (last && last.key === key) last.workers.push(w);
-      else list.push({ key, branchId: w.location_id, department, workers: [w] });
+      if (last && last.branchId === w.location_id) last.workers.push(w);
+      else list.push({ branchId: w.location_id, workers: [w] });
     }
     return { multiBranch, list };
   }, [workers]);
 
   const selectedBranchLock = branchId ? lockByBranch.get(branchId) : undefined;
   const approvable = timesheets.filter(t => t.status === 'Draft' && !t.timesheet_locked);
-  const scopeText = branchId ? branchNameOf(branchId) : 'all your branches';
+  const filterName = branchId ? branchNameOf(branchId) : branches.length === 1 ? branches[0].name : null;
+  const scopeText = filterName ? `all workers in ${filterName}` : 'all workers in all your branches';
+  const mobileDay = mobileDayChoice && days.includes(mobileDayChoice) ? mobileDayChoice : days.includes(today) ? today : days[0];
 
   const changePeriod = (iso: string) => {
     setStartIso(iso);
@@ -189,7 +181,7 @@ export default function Roster() {
     setSelected(new Set());
   };
 
-  // ── Selection ────────────────────────────────────────────────────────────────────────────────
+  // ── Selecting days (for "Copy roster from the day before") ───────────────────────────────────
   const toggleCell = (workerId: string, dateIso: string) =>
     setSelected(set => {
       const next = new Set(set);
@@ -221,7 +213,7 @@ export default function Roster() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectMode, exitSelectMode]);
 
-  const onCellClick = (e: ReactMouseEvent, workerId: string, dateIso: string) => {
+  const openDay = (e: ReactMouseEvent, workerId: string, dateIso: string) => {
     if (selectMode || e.shiftKey) {
       if (!selectMode) setSelectMode(true);
       toggleCell(workerId, dateIso);
@@ -238,16 +230,25 @@ export default function Roster() {
     [selected, workerById],
   );
 
-  const datesByWorker = () => {
-    const map = new Map<string, string[]>();
-    for (const c of selectedCells) map.set(c.workerId, [...(map.get(c.workerId) ?? []), c.dateIso]);
-    for (const list of map.values()) list.sort();
-    return map;
-  };
-
-  // ── Copy tools ───────────────────────────────────────────────────────────────────────────────
-  const runCopyJobs = async (title: string, jobs: CopyDayRequest[]) => {
+  /** Each run of consecutive selected days gets the roster of the day before the run. */
+  const copyDayBefore = async () => {
+    const byWorker = new Map<string, string[]>();
+    for (const c of selectedCells) byWorker.set(c.workerId, [...(byWorker.get(c.workerId) ?? []), c.dateIso]);
+    const jobs: CopyDayRequest[] = [];
+    for (const [workerId, dates] of byWorker) {
+      let run: string[] = [];
+      const flush = () => {
+        if (run.length > 0) jobs.push({ employee_id: workerId, source_date: shiftIso(run[0], -1), target_dates: run });
+        run = [];
+      };
+      for (const d of dates.sort()) {
+        if (run.length > 0 && shiftIso(run[run.length - 1], 1) !== d) flush();
+        run.push(d);
+      }
+      flush();
+    }
     if (jobs.length === 0) return;
+
     setBusy('Copying…');
     let copied = 0;
     const problems: ResultProblem[] = [];
@@ -256,14 +257,10 @@ export default function Roster() {
         const res = await api.post('/records/copy-day', job);
         const data = res.data.data as CopyDayResult;
         copied += data.copied.length;
-        problems.push(...data.skipped.map(s => ({
-          label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`,
-          detail: SKIP_REASON_LABEL[s.reason] ?? s.reason,
-        })));
+        problems.push(...data.skipped.map(s => ({ label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`, detail: SKIP_REASON_LABEL[s.reason] ?? s.reason })));
       } catch (err) {
-        const targets = job.target_employee_ids ?? [job.employee_id];
         problems.push({
-          label: `${targets.map(nameOf).join(', ')} · ${job.target_dates.map(d => dayLabel(d)).join(', ')}`,
+          label: `${nameOf(job.employee_id)} · ${job.target_dates.map(d => dayLabel(d)).join(', ')}`,
           detail: apiErrorCode(err) === 'NOTHING_TO_COPY'
             ? `nothing is rostered on ${dayLabel(job.source_date)} to copy`
             : apiErrorMessage(err, 'could not be copied'),
@@ -272,50 +269,19 @@ export default function Roster() {
     }
     setBusy(null);
     setSelected(new Set());
-    setResult({ title, summary: copied > 0 ? `Copied to ${copied} day${copied === 1 ? '' : 's'}.` : 'Nothing was copied.', problemHeading: 'Skipped', problems, anyDone: copied > 0 });
+    setResult({
+      title: 'Copy roster from the day before',
+      summary: copied > 0 ? `Copied to ${copied} day${copied === 1 ? '' : 's'}.` : 'Nothing was copied.',
+      problemHeading: 'Skipped',
+      problems,
+      anyDone: copied > 0,
+    });
     await load();
   };
 
-  /** Each run of consecutive selected days gets the roster of the day before the run. */
-  const copyPreviousDay = () => {
-    const jobs: CopyDayRequest[] = [];
-    for (const [workerId, dates] of datesByWorker()) {
-      let run: string[] = [];
-      const flush = () => {
-        if (run.length > 0) jobs.push({ employee_id: workerId, source_date: shiftIso(run[0], -1), target_dates: run });
-        run = [];
-      };
-      for (const d of dates) {
-        if (run.length > 0 && shiftIso(run[run.length - 1], 1) !== d) flush();
-        run.push(d);
-      }
-      flush();
-    }
-    runCopyJobs('Copy previous day', jobs);
-  };
-
-  /** One request per set of workers that share the same selected days. */
-  const applyFrom = (sourceWorkerId: string, sourceDate: string) => {
-    const byDates = new Map<string, { dates: string[]; workers: string[] }>();
-    for (const [workerId, dates] of datesByWorker()) {
-      const signature = dates.join(',');
-      const group = byDates.get(signature) ?? { dates, workers: [] };
-      group.workers.push(workerId);
-      byDates.set(signature, group);
-    }
-    const jobs = [...byDates.values()].map(g => ({
-      employee_id: sourceWorkerId,
-      source_date: sourceDate,
-      target_dates: g.dates,
-      target_employee_ids: g.workers,
-    }));
-    setApplyOpen(false);
-    runCopyJobs(`Apply segments from ${nameOf(sourceWorkerId)}, ${dayLabel(sourceDate)}`, jobs);
-  };
-
-  // ── Bulk fill, approval, exports ─────────────────────────────────────────────────────────────
+  // ── Whole-branch tools, approval, exports ────────────────────────────────────────────────────
   const runFill = async (mode: BulkFillMode, dayIndexes: number[]) => {
-    setBusy(mode === 'roster' ? 'Applying roster templates…' : 'Copying the roster to worked hours…');
+    setBusy(mode === 'roster' ? 'Applying default rosters…' : 'Copying the roster to worked hours…');
     try {
       const res = await api.post(mode === 'roster' ? '/roster/auto-roster' : '/roster/auto-log', {
         start_date: startIso,
@@ -323,14 +289,12 @@ export default function Roster() {
         location_id: branchId || undefined,
       });
       const count = Number(res.data?.data?.workers ?? 0);
-      const dayText = `${dayIndexes.length} day${dayIndexes.length === 1 ? '' : 's'}`;
-      toast.success(mode === 'roster'
-        ? `Roster templates applied for ${count} worker${count === 1 ? '' : 's'} on ${dayText}.`
-        : `Worked hours filled from the roster for ${count} worker${count === 1 ? '' : 's'} on ${dayText}.`);
+      const who = `${count} worker${count === 1 ? '' : 's'}`;
+      toast.success(mode === 'roster' ? `Default rosters applied for ${who}.` : `Worked hours filled from the roster for ${who}.`);
       setFillMode(null);
       await load();
     } catch (err) {
-      toast.error(apiErrorMessage(err, mode === 'roster' ? 'Auto-Roster did not run.' : 'Auto-Log did not run.'));
+      toast.error(apiErrorMessage(err, mode === 'roster' ? 'The default rosters were not applied.' : 'The roster was not copied to worked hours.'));
     } finally {
       setBusy(null);
     }
@@ -387,12 +351,11 @@ export default function Roster() {
     }
   };
 
-  const onSaved = (workerId: string, dateIso: string, saved: ApiSegment[]) => {
+  const onSaved = (workerId: string, dateIso: string, saved: DayContent) => {
     setRecords(rs => {
-      const hasActuals = saved.some(apiHasWorked);
       const index = rs.findIndex(r => r.employee_id === workerId && r.record_date === dateIso);
-      if (index >= 0) return rs.map((r, i) => (i === index ? { ...r, segments: saved, has_actuals: hasActuals } : r));
-      return [...rs, { id: `local-${cellKey(workerId, dateIso)}`, employee_id: workerId, record_date: dateIso, has_actuals: hasActuals, segments: saved }];
+      if (index >= 0) return rs.map((r, i) => (i === index ? { ...r, ...saved } : r));
+      return [...rs, { id: `local-${cellKey(workerId, dateIso)}`, employee_id: workerId, record_date: dateIso, ...saved }];
     });
     load();
   };
@@ -407,12 +370,14 @@ export default function Roster() {
     }
   };
 
-  // ── Rendering helpers ────────────────────────────────────────────────────────────────────────
+  // ── Pieces ───────────────────────────────────────────────────────────────────────────────────
+  const tool = `${buttonClass.secondary} max-md:h-11`;
+
   const lockButton = (flag: LockFlag) => {
     const name = flag === 'roster' ? 'Roster' : 'Timesheets';
     if (!branchId) {
       return (
-        <button type="button" onClick={() => setLockFlag(flag)} className={buttonClass.secondary} title={`Lock or unlock the ${name.toLowerCase()} of one branch`}>
+        <button type="button" onClick={() => setLockFlag(flag)} className={tool} title={`Lock or unlock the ${name.toLowerCase()} of one branch`}>
           <Lock className="w-3.5 h-3.5" aria-hidden="true" /> {name} lock…
         </button>
       );
@@ -422,362 +387,429 @@ export default function Roster() {
       <button
         type="button"
         onClick={() => setLockFlag(flag)}
-        className={`${buttonClass.secondary} ${locked ? '!text-[var(--warn)] !border-[var(--warn)]/40 !bg-[var(--warn-light)]' : ''}`}
-        title={locked ? `${name} locked. Click to unlock.` : `${name} open. Click to lock.`}
+        className={`${tool} ${locked ? '!text-[var(--warn)] !border-[var(--warn)]/40 !bg-[var(--warn-light)]' : ''}`}
+        title={locked ? `${name} locked for ${filterName}. Select to unlock.` : `${name} open for ${filterName}. Select to lock.`}
       >
         {locked ? <Lock className="w-3.5 h-3.5" aria-hidden="true" /> : <LockOpen className="w-3.5 h-3.5" aria-hidden="true" />}
-        {name}: {locked ? 'locked' : 'open'}
+        {name} {locked ? 'locked' : 'open'}
       </button>
     );
   };
 
-  const lockBadges = () => {
-    const shown = branchId ? branches.filter(b => b.id === branchId) : branches.filter(b => b.is_active);
-    return shown.map(b => {
-      const row = lockByBranch.get(b.id);
-      const rosterLocked = Boolean(row?.roster_locked);
-      const timesheetLocked = Boolean(row?.timesheet_locked);
-      return (
-        <Badge key={b.id} variant={rosterLocked || timesheetLocked ? 'warning' : 'outline'} size="sm">
-          {rosterLocked || timesheetLocked ? <Lock className="w-2.5 h-2.5" aria-hidden="true" /> : null}
-          {branchId ? '' : `${b.name}: `}Roster {rosterLocked ? 'locked' : 'open'} · Timesheets {timesheetLocked ? 'locked' : 'open'}
-        </Badge>
-      );
-    });
+  const branchLockBadges = (id: string) => {
+    const lock = lockByBranch.get(id);
+    return (
+      <>
+        {lock?.roster_locked && <Badge variant="warning" size="sm"><Lock className="w-2.5 h-2.5" aria-hidden="true" />Roster locked</Badge>}
+        {lock?.timesheet_locked && <Badge variant="warning" size="sm"><Lock className="w-2.5 h-2.5" aria-hidden="true" />Timesheets locked</Badge>}
+      </>
+    );
   };
+
+  const statusControls = (w: Worker, large: boolean) => {
+    const ts = timesheetByWorker.get(w.id);
+    const status = statusOf(w.id);
+    const small = `text-[11px] font-semibold rounded-md border px-2 ${large ? 'h-11' : 'py-0.5'} disabled:opacity-50 cursor-pointer`;
+    return (
+      <span className={`flex items-center gap-1.5 ${large ? 'shrink-0' : 'flex-wrap'}`}>
+        <Badge
+          variant={STATUS_VARIANT[status]}
+          size="sm"
+          title={status === 'Locked' ? 'Approved, and timesheets are locked for this branch' : ts?.timesheet_locked ? 'Timesheets are locked for this branch' : undefined}
+        >
+          {status === 'Approved' && <Check className="w-2.5 h-2.5" aria-hidden="true" />}
+          {status === 'Locked' && <Lock className="w-2.5 h-2.5" aria-hidden="true" />}
+          {status}
+        </Badge>
+        {canTimesheets && ts && status === 'Draft' && !ts.timesheet_locked && (
+          <button
+            type="button"
+            onClick={() => changeTimesheet(ts, 'approve')}
+            disabled={rowBusy === w.id}
+            className={`${small} bg-[var(--success-light)] text-[var(--success)] border-[var(--success)]/30 hover:opacity-80`}
+            aria-label={`Approve timesheet for ${w.full_name}`}
+          >
+            Approve
+          </button>
+        )}
+        {canTimesheets && ts && status === 'Approved' && (
+          <button
+            type="button"
+            onClick={() => changeTimesheet(ts, 'reopen')}
+            disabled={rowBusy === w.id}
+            className={`${small} bg-[var(--panel-subtle)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--text)]`}
+            aria-label={`Reopen timesheet for ${w.full_name}`}
+          >
+            Reopen
+          </button>
+        )}
+      </span>
+    );
+  };
+
+  const cellLabel = (w: Worker, iso: string, day: DayContent) => {
+    const empty = dayIsEmpty(day);
+    const what = empty ? 'nothing rostered or worked' : describeDay(day);
+    const action = selectMode ? (selected.has(cellKey(w.id, iso)) ? 'Selected.' : 'Not selected.') : empty ? 'Add times.' : 'Open the day.';
+    return `${w.full_name}, ${dayLabel(iso)}: ${what}. ${action}`;
+  };
+
+  const selectedMark = (
+    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[var(--primary)] text-white flex items-center justify-center" aria-hidden="true">
+      <Check className="w-2.5 h-2.5" strokeWidth={3} />
+    </span>
+  );
+
+  // ── Desktop: workers × 14 days ───────────────────────────────────────────────────────────────
+  const renderGrid = () => (
+    <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]" role="region" aria-label="Roster for the pay period" tabIndex={0}>
+      <table className="table-fixed border-separate border-spacing-0 text-left" style={{ width: NAME_WIDTH + days.length * DAY_WIDTH + TOTAL_WIDTH }}>
+        <thead>
+          <tr>
+            <th scope="col" style={{ width: NAME_WIDTH }} className="sticky top-0 left-0 z-30 bg-[var(--table-header)] border-b-2 border-r-2 border-[var(--border)] px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-[var(--muted)]">
+              Workers
+            </th>
+            {days.map((iso, i) => {
+              const isToday = iso === today;
+              const heading = (
+                <span className="flex flex-col items-center leading-tight">
+                  <span className="text-[10px] font-bold uppercase">{weekdayShort(iso)}</span>
+                  <span className={`text-sm font-bold ${isToday ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>{dayOfMonth(iso)}</span>
+                  {isToday && <span className="text-[9px] font-semibold text-[var(--primary)]">Today</span>}
+                </span>
+              );
+              return (
+                <th
+                  key={iso}
+                  scope="col"
+                  style={{ width: DAY_WIDTH }}
+                  className={`sticky top-0 z-20 border-b-2 border-r border-[var(--border)] py-1.5 text-center text-[var(--muted)] ${i === 7 ? 'border-l-2 border-l-[var(--divider-split)]' : ''} ${isWeekendIso(iso) ? 'bg-[var(--panel-subtle)]' : 'bg-[var(--table-header)]'}`}
+                >
+                  {selectMode ? (
+                    <button type="button" onClick={() => toggleDayForEveryone(iso)} className="w-full rounded-md py-0.5 hover:bg-[var(--glass-8)] cursor-pointer" aria-label={`Select ${dayLabel(iso)} for every worker`}>
+                      {heading}
+                    </button>
+                  ) : (
+                    <span aria-label={dayLabel(iso, 'long')}>{heading}</span>
+                  )}
+                </th>
+              );
+            })}
+            <th scope="col" style={{ width: TOTAL_WIDTH }} className="sticky top-0 z-20 bg-[var(--table-header)] border-b-2 border-[var(--border)] px-2 py-2 text-[11px] font-bold uppercase tracking-wider text-[var(--muted)]">
+              Fortnight
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.list.map(group => (
+            <Fragment key={group.branchId}>
+              {groups.multiBranch && (
+                <tr>
+                  <th scope="rowgroup" colSpan={days.length + 2} className="bg-[var(--panel-subtle)] border-b border-[var(--border)] px-3 py-2 text-left">
+                    <span className="sticky left-3 inline-flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text)]">
+                      {branchNameOf(group.branchId)}
+                      {branchLockBadges(group.branchId)}
+                    </span>
+                  </th>
+                </tr>
+              )}
+              {group.workers.map(w => {
+                const t = totals.get(w.id) ?? { roster: 0, worked: 0 };
+                return (
+                  <tr key={w.id}>
+                    <th scope="row" className="sticky left-0 z-10 bg-[var(--panel)] border-b border-r-2 border-[var(--border)] px-3 py-2 align-top text-left font-normal">
+                      <span className="block font-semibold text-sm text-[var(--text)] truncate" title={w.full_name}>{w.full_name}</span>
+                      <span className="block text-[11px] text-[var(--muted)] truncate mb-1">
+                        {[w.department, `${Number(w.contracted_hours ?? 76)} h contract`].filter(Boolean).join(' · ')}
+                      </span>
+                      {statusControls(w, false)}
+                    </th>
+                    {days.map((iso, i) => {
+                      const day = dayOf(w.id, iso);
+                      const empty = dayIsEmpty(day);
+                      const isSelected = selected.has(cellKey(w.id, iso));
+                      return (
+                        <td key={iso} className={`border-b border-r border-[var(--border)] p-1 align-top ${i === 7 ? 'border-l-2 border-l-[var(--divider-split)]' : ''} ${isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : ''}`}>
+                          <button
+                            type="button"
+                            onClick={e => openDay(e, w.id, iso)}
+                            aria-pressed={selectMode ? isSelected : undefined}
+                            aria-label={cellLabel(w, iso, day)}
+                            title={empty ? undefined : describeDay(day)}
+                            className={`group relative w-full min-h-[3.25rem] rounded-lg p-1.5 text-left cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--primary)] ${
+                              empty ? 'border border-dashed border-transparent hover:border-[var(--border-hover)]' : 'border border-[var(--border)] bg-[var(--panel-subtle)] hover:border-[var(--border-hover)]'
+                            } ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''}`}
+                          >
+                            {empty
+                              ? <Plus className="w-4 h-4 mx-auto mt-2.5 text-[var(--muted)] opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70" aria-hidden="true" />
+                              : <DayLines day={day} variant="compact" />}
+                            {isSelected && selectedMark}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td className="border-b border-[var(--border)] px-2 py-2 align-top">
+                      <span className={`block pl-1.5 text-[11px] leading-4 tabular-nums ${PART_STYLE.roster}`}>Rostered {formatHours(t.roster)}</span>
+                      <span className={`block pl-1.5 mt-1 text-[11px] leading-4 font-semibold tabular-nums ${PART_STYLE.timesheet}`}>Worked {formatHours(t.worked)}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  // ── Phones: one day at a time, a day box per worker ──────────────────────────────────────────
+  const renderList = () => (
+    <div className="space-y-3">
+      <nav aria-label="Days of the pay period" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 space-y-1">
+        {[0, 1].map(week => (
+          <div key={week} className="grid grid-cols-7 gap-1">
+            {days.slice(week * 7, week * 7 + 7).map(iso => {
+              const active = iso === mobileDay;
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => setMobileDay(iso)}
+                  aria-pressed={active}
+                  aria-label={`${dayLabel(iso, 'long')}${iso === today ? ' (today)' : ''}`}
+                  className={`min-h-11 rounded-lg flex flex-col items-center justify-center leading-tight cursor-pointer border ${
+                    active ? 'bg-[var(--primary)] border-[var(--primary)] text-white' : `border-transparent ${isWeekendIso(iso) ? 'bg-[var(--panel-subtle)]' : ''} text-[var(--text)]`
+                  }`}
+                >
+                  <span className={`text-[10px] font-semibold uppercase ${active ? '' : 'text-[var(--muted)]'}`}>{weekdayShort(iso)}</span>
+                  <span className={`text-sm font-bold ${!active && iso === today ? 'text-[var(--primary)] underline underline-offset-2' : ''}`}>{dayOfMonth(iso)}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+
+      <h2 className="text-base font-bold text-[var(--text)]">{dayLabel(mobileDay, 'long')}</h2>
+
+      {groups.list.map(group => (
+        <section key={group.branchId} aria-label={branchNameOf(group.branchId)} className="space-y-2">
+          {groups.multiBranch && (
+            <h3 className="flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text)] pt-1">
+              {branchNameOf(group.branchId)}
+              {branchLockBadges(group.branchId)}
+            </h3>
+          )}
+          <ul className="space-y-2">
+            {group.workers.map(w => {
+              const day = dayOf(w.id, mobileDay);
+              const t = totals.get(w.id) ?? { roster: 0, worked: 0 };
+              const isSelected = selected.has(cellKey(w.id, mobileDay));
+              return (
+                <li key={w.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm text-[var(--text)] truncate">{w.full_name}</p>
+                      <p className="text-[11px] text-[var(--muted)]">Fortnight: {formatHours(t.roster)} rostered · {formatHours(t.worked)} worked</p>
+                    </div>
+                    {statusControls(w, true)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={e => openDay(e, w.id, mobileDay)}
+                    aria-pressed={selectMode ? isSelected : undefined}
+                    aria-label={cellLabel(w, mobileDay, day)}
+                    className={`relative w-full min-h-11 rounded-lg border p-3 text-left cursor-pointer bg-[var(--panel-subtle)] border-[var(--border)] focus-visible:outline-2 focus-visible:outline-[var(--primary)] ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''}`}
+                  >
+                    <DayLines day={day} variant="regular" />
+                    {isSelected && selectedMark}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+
+  let content: ReactNode;
+  if (loadError) {
+    content = (
+      <div className="p-10 text-center space-y-3 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+        <p className="text-sm font-semibold text-[var(--danger)]" role="alert">{loadError}</p>
+        <button type="button" onClick={() => load()} className={buttonClass.secondary}>
+          <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Try again
+        </button>
+      </div>
+    );
+  } else if (loading && workers.length === 0) {
+    content = <p className="p-10 text-center text-sm text-[var(--muted)] rounded-xl border border-[var(--border)] bg-[var(--panel)]">Loading the roster…</p>;
+  } else if (workers.length === 0) {
+    content = (
+      <div className="p-10 text-center space-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+        <p className="text-sm font-semibold text-[var(--text)]">No workers in {filterName ?? 'your branches'} yet.</p>
+        <p className="text-xs text-[var(--muted)]">
+          Add workers on the <Link to="/workers" className="text-[var(--primary)] font-semibold hover:underline">Workers</Link> page to start rostering.
+        </p>
+      </div>
+    );
+  } else {
+    content = narrow ? renderList() : renderGrid();
+  }
+
+  const busyText = busy ?? (loading && workers.length > 0 ? 'Refreshing…' : null);
+  const tools = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => setFillMode('roster')}
+        disabled={Boolean(busy) || Boolean(selectedBranchLock?.roster_locked)}
+        className={tool}
+        title={selectedBranchLock?.roster_locked ? `The roster is locked for ${filterName}` : `Give ${scopeText} their default roster on days you choose`}
+      >
+        <Wand2 className="w-3.5 h-3.5" aria-hidden="true" /> Apply default rosters…
+      </button>
+      {canTimesheets && (
+        <button
+          type="button"
+          onClick={() => setFillMode('log')}
+          disabled={Boolean(busy) || Boolean(selectedBranchLock?.timesheet_locked)}
+          className={tool}
+          title={selectedBranchLock?.timesheet_locked ? `Timesheets are locked for ${filterName}` : `Record rostered times as worked for ${scopeText} on days you choose`}
+        >
+          <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" /> Copy roster to worked hours…
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+        aria-pressed={selectMode}
+        className={`${tool} ${selectMode ? '!bg-[var(--primary-light)] !text-[var(--primary)] !border-[var(--primary)]/40' : ''}`}
+        title="Select days to copy the roster from the day before (tip: shift-click a day)"
+      >
+        <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Select days
+      </button>
+
+      <span className="hidden md:block w-px h-6 bg-[var(--border)] mx-1" aria-hidden="true" />
+
+      {canTimesheets && (
+        <button
+          type="button"
+          onClick={() => setApproveAllOpen(true)}
+          disabled={Boolean(busy) || approvable.length === 0}
+          className={tool}
+          title={approvable.length === 0 ? 'No draft timesheets to approve' : 'Approve every draft timesheet shown'}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all waiting ({approvable.length})
+        </button>
+      )}
+      {canLock && lockButton('roster')}
+      {canLock && lockButton('timesheet')}
+      {canReports && (
+        <>
+          <button type="button" onClick={exportCsv} className={tool} title="Download the payroll CSV for this pay period and branch filter">
+            <Download className="w-3.5 h-3.5" aria-hidden="true" /> CSV
+          </button>
+          <button type="button" onClick={printReport} className={tool} title="Open a printable report (save it as a PDF from the print dialog)">
+            <Printer className="w-3.5 h-3.5" aria-hidden="true" /> PDF
+          </button>
+        </>
+      )}
+    </div>
+  );
 
   const editingWorker = editing ? workerById.get(editing.workerId) : undefined;
   const editingLock = editingWorker ? lockByBranch.get(editingWorker.location_id) : undefined;
-  const editingStatus = editingWorker ? timesheetByWorker.get(editingWorker.id)?.status : undefined;
+  const editingStatus = editingWorker ? statusOf(editingWorker.id) : undefined;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-82px)] sm:h-[calc(100vh-86px)] overflow-hidden relative w-full">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--panel)] p-3 rounded-t-xl border border-[var(--border)] border-b-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor="roster-branch" className="sr-only">Branch</label>
-          <select
-            id="roster-branch"
-            value={branchId}
-            onChange={e => changeBranch(e.target.value)}
-            className="bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-2.5 py-2 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
-          >
-            <option value="">All my branches</option>
-            {branches.map(b => (
-              <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>
-            ))}
-          </select>
+    <div className={`flex flex-col gap-2 w-full ${narrow ? '' : 'h-[calc(100dvh-3.5rem)] min-h-[30rem]'}`}>
+      {/* Header: filter, pay period and tools */}
+      <header className="shrink-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-[var(--text)] leading-tight">Roster</h1>
+            <p className="mt-1"><PlannedWorkedKey /></p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="roster-branch" className="sr-only">Branch</label>
+            <select
+              id="roster-branch"
+              value={branchId}
+              onChange={e => changeBranch(e.target.value)}
+              className="h-9 max-md:h-11 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-2.5 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
+            >
+              <option value="">All my branches</option>
+              {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
+            </select>
 
-          <div className="flex items-center gap-0.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5">
-            <button type="button" onClick={() => changePeriod(shiftIso(startIso, -14))} className={buttonClass.quiet} aria-label="Previous pay period">
-              <ChevronLeft className="w-4 h-4" aria-hidden="true" />
-            </button>
-            <div className="relative">
-              <button type="button" onClick={openDatePicker} className={`${buttonClass.quiet} !text-[var(--text)] font-semibold`} aria-label={`Pay period ${periodLabel(startIso)}. Choose a date to jump to its pay period`}>
-                <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" />
-                {periodLabel(startIso)}
+            <div className="flex items-center gap-0.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5">
+              <button type="button" onClick={() => changePeriod(shiftIso(startIso, -14))} className={`${buttonClass.quiet} max-md:h-10 max-md:w-10`} aria-label="Previous pay period">
+                <ChevronLeft className="w-4 h-4" aria-hidden="true" />
               </button>
-              <input
-                ref={dateInputRef}
-                type="date"
-                tabIndex={-1}
-                aria-hidden="true"
-                value={startIso}
-                onChange={e => { if (e.target.value) changePeriod(getFortnightStartIso(e.target.value)); }}
-                className="absolute inset-0 opacity-0 pointer-events-none"
-              />
+              <div className="relative">
+                <button type="button" onClick={openDatePicker} className={`${buttonClass.quiet} max-md:h-10 !text-[var(--text)] font-semibold whitespace-nowrap`} aria-label={`Pay period ${periodLabel(startIso)}. Choose a date to jump to its pay period`}>
+                  <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" />
+                  {periodLabel(startIso)}
+                </button>
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  value={startIso}
+                  onChange={e => { if (e.target.value) changePeriod(getFortnightStartIso(e.target.value)); }}
+                  className="absolute inset-0 opacity-0 pointer-events-none"
+                />
+              </div>
+              <button type="button" onClick={() => changePeriod(shiftIso(startIso, 14))} className={`${buttonClass.quiet} max-md:h-10 max-md:w-10`} aria-label="Next pay period">
+                <ChevronRight className="w-4 h-4" aria-hidden="true" />
+              </button>
+              <button type="button" onClick={() => changePeriod(currentFortnightIso())} className={`${buttonClass.quiet} max-md:h-10`}>Today</button>
             </div>
-            <button type="button" onClick={() => changePeriod(shiftIso(startIso, 14))} className={buttonClass.quiet} aria-label="Next pay period">
-              <ChevronRight className="w-4 h-4" aria-hidden="true" />
-            </button>
-            <button type="button" onClick={() => changePeriod(currentFortnightIso())} className={buttonClass.quiet}>Today</button>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            aria-pressed={selectMode}
-            className={`${buttonClass.secondary} ${selectMode ? '!bg-[var(--primary-light)] !text-[var(--primary)] !border-[var(--primary)]/40' : ''}`}
-            title="Select days on the grid to copy them (tip: shift-click a cell)"
-          >
-            <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Select days
-          </button>
-          <button
-            type="button"
-            onClick={() => setFillMode('roster')}
-            disabled={Boolean(busy) || Boolean(selectedBranchLock?.roster_locked)}
-            className={buttonClass.secondary}
-            title={selectedBranchLock?.roster_locked ? 'The roster is locked for this branch' : 'Apply default roster templates to chosen days'}
-          >
-            <Wand2 className="w-3.5 h-3.5" aria-hidden="true" /> Auto-Roster
-          </button>
-          <button
-            type="button"
-            onClick={() => setFillMode('log')}
-            disabled={Boolean(busy) || !canTimesheets || Boolean(selectedBranchLock?.timesheet_locked)}
-            className={buttonClass.secondary}
-            title={selectedBranchLock?.timesheet_locked ? 'Timesheets are locked for this branch' : 'Copy rostered times into worked hours on chosen days'}
-          >
-            <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" /> Auto-Log
-          </button>
-          {canTimesheets && (
-            <button
-              type="button"
-              onClick={() => setApproveAllOpen(true)}
-              disabled={Boolean(busy) || approvable.length === 0}
-              className={buttonClass.secondary}
-              title={approvable.length === 0 ? 'No draft timesheets to approve' : 'Approve every draft timesheet shown'}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all ({approvable.length})
-            </button>
-          )}
-          {canReports && (
-            <>
-              <button type="button" onClick={exportCsv} className={buttonClass.secondary} title="Download the payroll CSV for this pay period">
-                <Download className="w-3.5 h-3.5" aria-hidden="true" /> CSV
-              </button>
-              <button type="button" onClick={printReport} className={buttonClass.secondary} title="Open a printable report (save as PDF from the print dialog)">
-                <Printer className="w-3.5 h-3.5" aria-hidden="true" /> Print / PDF
-              </button>
-            </>
-          )}
-          {canLock && lockButton('roster')}
-          {canLock && lockButton('timesheet')}
-        </div>
-      </div>
-
-      {/* Status bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[var(--panel-subtle)] border border-[var(--border)] border-t-0 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[var(--muted)]">Pay period</span>
-          <span className="font-semibold text-[var(--text)]">{periodLabel(startIso)}</span>
-          <span className="text-[var(--muted)] font-mono text-[11px]">({startIso} to {endIso})</span>
-          <span role="status" className="text-[var(--primary)] font-semibold">{busy ?? (loading && workers.length > 0 ? 'Refreshing…' : '')}</span>
-        </div>
-        <div className="hidden md:block"><SegmentLegend /></div>
-        <div className="flex flex-wrap items-center gap-1.5">{lockBadges()}</div>
-      </div>
+        {narrow ? (
+          <details className="group rounded-lg border border-[var(--border)] bg-[var(--panel-subtle)]">
+            <summary className="min-h-11 px-3 flex items-center justify-between gap-2 text-xs font-semibold text-[var(--text)] cursor-pointer list-none">
+              Tools, approval and exports
+              <ChevronDown className="w-4 h-4 text-[var(--muted)] transition-transform group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="p-2 pt-0">{tools}</div>
+          </details>
+        ) : tools}
+        <p role="status" className="text-xs font-semibold text-[var(--primary)] empty:hidden">{busyText}</p>
+      </header>
 
       {selectMode && (
-        <div role="region" aria-label="Selected days" className="flex flex-wrap items-center gap-2 px-3 py-2 bg-[var(--primary-light)] border border-[var(--primary)]/30 border-t-0 text-xs">
+        <div role="region" aria-label="Selected days" className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl bg-[var(--primary-light)] border border-[var(--primary)]/30 text-xs">
           <MousePointerClick className="w-4 h-4 text-[var(--primary)]" aria-hidden="true" />
           <span className="font-semibold text-[var(--text)]" aria-live="polite">{selectedCells.length} day{selectedCells.length === 1 ? '' : 's'} selected</span>
-          <span className="text-[var(--muted)] hidden lg:inline">Click cells to select them, or click a date to select that day for every worker.</span>
+          <span className="text-[var(--muted)] hidden lg:inline">Select days, or a date heading to select that day for everyone.</span>
           <span className="flex-1" />
-          <button type="button" onClick={copyPreviousDay} disabled={selectedCells.length === 0 || Boolean(busy)} className={buttonClass.secondary} title="Fill each selected day with the roster of the day before it">
-            <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copy previous day
+          <button type="button" onClick={copyDayBefore} disabled={selectedCells.length === 0 || Boolean(busy)} className={tool} title="Give each selected day the roster of the day before it">
+            <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copy roster from the day before
           </button>
-          <button type="button" onClick={() => setApplyOpen(true)} disabled={selectedCells.length === 0 || Boolean(busy)} className={buttonClass.secondary}>
-            <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Apply segments from…
-          </button>
-          <button type="button" onClick={() => setSelected(new Set())} disabled={selectedCells.length === 0} className={buttonClass.quiet}>Clear selection</button>
-          <button type="button" onClick={exitSelectMode} className={buttonClass.primary}>Done</button>
+          <button type="button" onClick={() => setSelected(new Set())} disabled={selectedCells.length === 0} className={`${buttonClass.quiet} max-md:h-11`}>Clear selection</button>
+          <button type="button" onClick={exitSelectMode} className={`${buttonClass.primary} max-md:h-11`}>Done</button>
         </div>
       )}
 
       {partialError && (
-        <p role="alert" className="px-3 py-1.5 text-xs text-[var(--warn)] bg-[var(--warn-light)] border border-[var(--border)] border-t-0">{partialError}</p>
+        <p role="alert" className="shrink-0 px-3 py-1.5 rounded-lg text-xs text-[var(--warn)] bg-[var(--warn-light)] border border-[var(--warn)]/30">{partialError}</p>
       )}
 
-      {/* Grid */}
-      <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-b-xl border border-[var(--border)] relative">
-        {loadError ? (
-          <div className="p-10 text-center space-y-3">
-            <p className="text-sm font-semibold text-[var(--danger)]" role="alert">{loadError}</p>
-            <button type="button" onClick={() => load()} className={buttonClass.secondary}>
-              <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Try again
-            </button>
-          </div>
-        ) : loading && workers.length === 0 ? (
-          <p className="p-10 text-center text-sm text-[var(--muted)]">Loading the roster…</p>
-        ) : workers.length === 0 ? (
-          <div className="p-10 text-center space-y-2">
-            <p className="text-sm font-semibold text-[var(--text)]">No workers in {scopeText} yet.</p>
-            <p className="text-xs text-[var(--muted)]">
-              Add workers on the <Link to="/workers" className="text-[var(--primary)] font-semibold hover:underline">Workers</Link> page to start rostering.
-            </p>
-          </div>
-        ) : (
-          <table className="ag-table border-none select-none" style={{ minWidth: 200 + 14 * DAY_COLUMN_WIDTH + 140 + 72 }}>
-            <thead>
-              <tr>
-                <th className="name-col max-sm:!w-[8.5rem] py-3 text-[var(--muted)] font-bold text-xs uppercase tracking-wider">Workers</th>
-                {days.map((iso, i) => {
-                  const heading = (
-                    <span className="flex flex-col items-center gap-0.5">
-                      <span className="text-[0.65rem] uppercase font-bold">{weekdayShort(iso)}</span>
-                      <span className="text-xs font-bold text-[var(--text)]">{dayOfMonth(iso)}</span>
-                    </span>
-                  );
-                  return (
-                    <th
-                      key={iso}
-                      scope="col"
-                      style={{ width: DAY_COLUMN_WIDTH }}
-                      className={`py-2 text-center ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''} ${isWeekendIso(iso) ? '!bg-[var(--panel-subtle)]' : ''}`}
-                    >
-                      {selectMode ? (
-                        <button
-                          type="button"
-                          onClick={() => toggleDayForEveryone(iso)}
-                          className="w-full rounded-md py-0.5 hover:bg-[var(--glass-8)] cursor-pointer"
-                          aria-label={`Select ${dayLabel(iso)} for every worker`}
-                        >
-                          {heading}
-                        </button>
-                      ) : (
-                        <span aria-label={dayLabel(iso)}>{heading}</span>
-                      )}
-                    </th>
-                  );
-                })}
-                <th className="w-[140px] text-center py-1.5 px-2">
-                  <span className="flex flex-col items-center text-[0.68rem] uppercase font-black tracking-wider">
-                    <span className="text-[var(--primary)]">Rostered</span>
-                    <span className="w-full border-t-2 border-[var(--divider-split)] my-1" aria-hidden="true" />
-                    <span className="text-[var(--success)]">Worked</span>
-                  </span>
-                </th>
-                <th className="w-[72px] text-center text-[var(--muted)] text-xs font-bold py-2" title="Worked minus rostered hours">Variance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.list.map((group, gi) => {
-                const newBranch = groups.multiBranch && (gi === 0 || groups.list[gi - 1].branchId !== group.branchId);
-                const branchLock = lockByBranch.get(group.branchId);
-                return (
-                  <Fragment key={group.key}>
-                    {newBranch && (
-                      <tr>
-                        <td colSpan={17} className="bg-[var(--panel)] text-[var(--text)] font-bold text-sm !px-3 !py-2 border-t-2 border-[var(--border)]">
-                          <span className="sticky left-3 inline-flex flex-wrap items-center gap-2">
-                            {branchNameOf(group.branchId)}
-                            <Badge variant={branchLock?.roster_locked ? 'warning' : 'outline'} size="sm">Roster {branchLock?.roster_locked ? 'locked' : 'open'}</Badge>
-                            <Badge variant={branchLock?.timesheet_locked ? 'warning' : 'outline'} size="sm">Timesheets {branchLock?.timesheet_locked ? 'locked' : 'open'}</Badge>
-                          </span>
-                        </td>
-                      </tr>
-                    )}
-                    <tr>
-                      <td colSpan={17} className="bg-[var(--panel-subtle)] text-[var(--primary)] font-bold text-xs !px-4 !py-1.5 uppercase tracking-widest border-t border-[var(--border)]">
-                        <span className="sticky left-4">{group.department}</span>
-                      </td>
-                    </tr>
-                    {group.workers.map(w => {
-                      const totals = summarise(days, iso => segmentsFor(w.id, iso));
-                      const variance = Math.round((totals.worked - totals.roster) * 100) / 100;
-                      const ts = timesheetByWorker.get(w.id);
-                      const status: TimesheetStatus = ts?.status ?? 'Draft';
-                      const contracted = Number(w.contracted_hours ?? 76);
-                      return (
-                        <tr key={w.id} className="hover:bg-[var(--hover-row)] border-b border-[var(--border)]">
-                          <td className="name-col align-top p-2">
-                            <span className="block font-bold text-sm text-[var(--text)] truncate" title={w.full_name}>{w.full_name}</span>
-                            <span className="block text-[11px] font-semibold text-[var(--muted)]">{contracted}h contract</span>
-                            <span className="flex flex-wrap items-center gap-1 mt-1">
-                              <Badge
-                                variant={STATUS_VARIANT[status]}
-                                size="sm"
-                                title={status === 'Locked' ? 'Approved, and timesheets are locked for this branch' : ts?.timesheet_locked ? 'Timesheets are locked for this branch' : undefined}
-                              >
-                                {status === 'Approved' && <Check className="w-2.5 h-2.5" aria-hidden="true" />}
-                                {status === 'Locked' && <Lock className="w-2.5 h-2.5" aria-hidden="true" />}
-                                {status}
-                              </Badge>
-                              {canTimesheets && ts && status === 'Draft' && !ts.timesheet_locked && (
-                                <button
-                                  type="button"
-                                  onClick={() => changeTimesheet(ts, 'approve')}
-                                  disabled={rowBusy === w.id}
-                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/30 hover:opacity-80 disabled:opacity-50 cursor-pointer"
-                                  aria-label={`Approve timesheet for ${w.full_name}`}
-                                >
-                                  Approve
-                                </button>
-                              )}
-                              {canTimesheets && ts && status === 'Approved' && (
-                                <button
-                                  type="button"
-                                  onClick={() => changeTimesheet(ts, 'reopen')}
-                                  disabled={rowBusy === w.id}
-                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--panel-subtle)] text-[var(--muted)] border border-[var(--border)] hover:text-[var(--text)] disabled:opacity-50 cursor-pointer"
-                                  aria-label={`Reopen timesheet for ${w.full_name}`}
-                                >
-                                  Reopen
-                                </button>
-                              )}
-                            </span>
-                          </td>
-                          {days.map((iso, i) => {
-                            const segs = segmentsFor(w.id, iso);
-                            const isSelected = selected.has(cellKey(w.id, iso));
-                            return (
-                              <td key={iso} className={`!p-0.5 align-middle ${i === 6 ? '!border-r-2 !border-r-[var(--primary)]' : ''} ${isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : ''}`}>
-                                <button
-                                  type="button"
-                                  onClick={e => onCellClick(e, w.id, iso)}
-                                  aria-pressed={selectMode ? isSelected : undefined}
-                                  aria-label={`${w.full_name}, ${dayLabel(iso)}: ${describeSide(segs, 'roster')}; ${describeSide(segs, 'actual')}.${selectMode ? '' : ' Edit day.'}`}
-                                  className={`relative w-full min-h-[58px] flex flex-col justify-between gap-0.5 rounded-md p-0.5 cursor-pointer transition-colors hover:bg-[var(--glass-8)] focus-visible:outline-2 focus-visible:outline-[var(--primary)] ${
-                                    isSelected ? 'ring-2 ring-[var(--primary)] bg-[var(--primary-light)]' : ''
-                                  }`}
-                                >
-                                  <span className="flex flex-col items-center justify-center gap-0.5 w-full min-h-[20px]">
-                                    <DayChips segments={segs} side="roster" />
-                                  </span>
-                                  <span className="w-full border-t border-[var(--divider-split)]" aria-hidden="true" />
-                                  <span className="flex flex-col items-center justify-center gap-0.5 w-full min-h-[20px]">
-                                    <DayChips segments={segs} side="actual" />
-                                  </span>
-                                  {isSelected && (
-                                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-[var(--primary)] text-white flex items-center justify-center" aria-hidden="true">
-                                      <Check className="w-2.5 h-2.5" strokeWidth={3} />
-                                    </span>
-                                  )}
-                                </button>
-                              </td>
-                            );
-                          })}
-                          <td className="text-center bg-[var(--panel)] p-2 align-middle">
-                            <div className="flex flex-col min-h-[52px] justify-between text-[0.6rem] font-bold">
-                              <div className="flex flex-col items-center gap-0.5">
-                                <span className="text-[var(--primary)] text-xs">{totals.roster.toFixed(2)}h</span>
-                                {BUCKETS.filter(b => totals.rosterBy[b] > 0).map(b => (
-                                  <span key={b} style={textStyle(BUCKET_STYLE_TYPE[b], 'roster')}>{b}: {totals.rosterBy[b].toFixed(2)}h</span>
-                                ))}
-                              </div>
-                              <span className="w-full border-t-2 border-[var(--divider-split)] my-1.5" aria-hidden="true" />
-                              <div className="flex flex-col items-center gap-0.5">
-                                <span className="text-[var(--success)] text-xs">{totals.worked.toFixed(2)}h</span>
-                                {BUCKETS.filter(b => totals.workedBy[b] > 0).map(b => (
-                                  <span key={b} style={textStyle(BUCKET_STYLE_TYPE[b], 'actual', b === 'Unplanned')}>{b}: {totals.workedBy[b].toFixed(2)}h</span>
-                                ))}
-                              </div>
-                            </div>
-                          </td>
-                          <td className={`text-center font-bold text-xs bg-[var(--panel)] align-middle ${variance > 0 ? 'text-[var(--success)]' : variance < 0 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
-                            {signedHours(variance)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+      {content}
 
       {/* Dialogs */}
       {editing && editingWorker && (
-        <SegmentEditor
+        <DayEditor
           key={cellKey(editing.workerId, editing.dateIso)}
-          worker={{ id: editingWorker.id, full_name: editingWorker.full_name, location_id: editingWorker.location_id, location_name: editingWorker.location_name }}
+          worker={{ id: editingWorker.id, full_name: editingWorker.full_name, location_name: editingWorker.location_name ?? branchNameOf(editingWorker.location_id) }}
           dateIso={editing.dateIso}
-          segments={segmentsFor(editing.workerId, editing.dateIso)}
+          day={recordByCell.get(cellKey(editing.workerId, editing.dateIso))}
           breakSettings={breakSettings}
           rosterLocked={Boolean(editingLock?.roster_locked)}
           timesheetLocked={Boolean(editingLock?.timesheet_locked)}
@@ -820,41 +852,28 @@ export default function Roster() {
         />
       )}
 
-      {applyOpen && (
-        <ApplyFromDialog
-          workers={workers.map(w => ({ id: w.id, full_name: w.full_name }))}
-          days={days}
-          defaultWorkerId={selectedCells[0]?.workerId ?? workers[0]?.id ?? ''}
-          segmentsFor={segmentsFor}
-          targetCount={selectedCells.length}
-          busy={Boolean(busy)}
-          onApply={applyFrom}
-          onClose={() => setApplyOpen(false)}
-        />
-      )}
-
       {approveAllOpen && (
         <Dialog
-          title="Approve all draft timesheets?"
-          description={`Pay period ${periodLabel(startIso)} · ${scopeText}`}
+          title="Approve all waiting timesheets?"
+          description={`Pay period ${periodLabel(startIso)} · ${filterName ?? 'all your branches'}`}
           onClose={() => setApproveAllOpen(false)}
           closeDisabled={Boolean(busy)}
           size="sm"
           footer={
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setApproveAllOpen(false)} disabled={Boolean(busy)} className={buttonClass.secondary}>Cancel</button>
-              <button type="button" onClick={approveAll} disabled={Boolean(busy) || approvable.length === 0} className={buttonClass.primary}>
+              <button type="button" onClick={() => setApproveAllOpen(false)} disabled={Boolean(busy)} className={`${buttonClass.secondary} max-md:h-11`}>Cancel</button>
+              <button type="button" onClick={approveAll} disabled={Boolean(busy) || approvable.length === 0} className={`${buttonClass.primary} max-md:h-11`}>
                 {busy ? 'Approving…' : `Approve ${approvable.length}`}
               </button>
             </div>
           }
         >
           <p className="text-xs text-[var(--muted)] mb-2">
-            Approved timesheets can’t be edited until they are reopened. Each one is checked on its own; any that can’t be approved are listed afterwards.
+            Approved timesheets can’t be changed until they are reopened. Each one is checked on its own; any that can’t be approved are listed afterwards.
           </p>
           <ul className="text-xs text-[var(--text)] max-h-48 overflow-y-auto space-y-0.5">
             {approvable.map(t => (
-              <li key={t.employee_id}>{t.full_name} <span className="text-[var(--muted)]">· {t.actual_hours.toFixed(2)}h worked</span></li>
+              <li key={t.employee_id}>{t.full_name} <span className="text-[var(--muted)]">· {formatHours(t.actual_hours)} worked</span></li>
             ))}
           </ul>
         </Dialog>

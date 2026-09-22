@@ -5,7 +5,7 @@ import { addDays, fmtISO, getFortnightStartIso } from '../../utils/fortnight';
  * UTC, so a day never shifts with the browser's timezone.
  */
 
-export function parseIsoUtc(iso: string): Date {
+function parseIsoUtc(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d));
 }
@@ -28,12 +28,23 @@ export const isWeekendIso = (iso: string): boolean => {
   return day === 0 || day === 6;
 };
 
-/** "Tue 7 Apr" (short) or "Tuesday 7 April 2026" (long). */
+/** "Tue 7 Apr" (short) or "Tuesday 7 April" (long). */
 export function dayLabel(iso: string, style: 'short' | 'long' = 'short'): string {
   const options: Intl.DateTimeFormatOptions = style === 'long'
-    ? { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }
+    ? { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }
     : { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' };
   return parseIsoUtc(iso).toLocaleDateString('en-AU', options).replace(',', '');
+}
+
+/** "Mon 30 Mar – Fri 3 Apr" for a run of days, a short list, or "5 days". */
+export function describeDays(chosen: string[]): string {
+  const sorted = [...chosen].sort();
+  if (sorted.length === 0) return 'no days';
+  if (sorted.length === 1) return dayLabel(sorted[0]);
+  const run = sorted.every((d, i) => i === 0 || shiftIso(sorted[i - 1], 1) === d);
+  if (run) return `${dayLabel(sorted[0])} – ${dayLabel(sorted[sorted.length - 1])}`;
+  if (sorted.length <= 3) return sorted.map(d => dayLabel(d)).join(', ');
+  return `${sorted.length} days`;
 }
 
 export const weekdayShort = (iso: string): string =>
