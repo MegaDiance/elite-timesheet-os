@@ -35,6 +35,7 @@ export default function EmployeeTimesheet() {
   const [days, setDays] = useState<Map<string, TimesheetDay>>(new Map());
   const [readOnly, setReadOnly] = useState({ approved: false, timesheet_locked: false });
   const [breakSettings, setBreakSettings] = useState<BreakSettings>(DEFAULT_BREAK_SETTINGS);
+  const [mergeLeave, setMergeLeave] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingDate, setEditingDate] = useState<string | null>(null);
@@ -63,11 +64,14 @@ export default function EmployeeTimesheet() {
   }, [startDate]);
 
   useEffect(() => {
-    api.get('/organisation/me').then(res => setBreakSettings({
-      break_mins_weekday: Number(res.data.data.break_mins_weekday ?? DEFAULT_BREAK_SETTINGS.break_mins_weekday),
-      break_mins_weekend: Number(res.data.data.break_mins_weekend ?? DEFAULT_BREAK_SETTINGS.break_mins_weekend),
-      break_threshold_hours: Number(res.data.data.break_threshold_hours ?? DEFAULT_BREAK_SETTINGS.break_threshold_hours),
-    })).catch(() => { /* preview keeps using the default rule if this fails */ });
+    api.get('/organisation/me').then(res => {
+      setBreakSettings({
+        break_mins_weekday: Number(res.data.data.break_mins_weekday ?? DEFAULT_BREAK_SETTINGS.break_mins_weekday),
+        break_mins_weekend: Number(res.data.data.break_mins_weekend ?? DEFAULT_BREAK_SETTINGS.break_mins_weekend),
+        break_threshold_hours: Number(res.data.data.break_threshold_hours ?? DEFAULT_BREAK_SETTINGS.break_threshold_hours),
+      });
+      setMergeLeave(Boolean(res.data.data.automatically_merge_leave_with_roster));
+    }).catch(() => { /* preview keeps using the default rule if this fails */ });
   }, []);
 
   const total = partTotal(Array.from(days.values()).flatMap(d => d.timesheet));
@@ -120,6 +124,7 @@ export default function EmployeeTimesheet() {
                   dateIso={iso}
                   entries={day?.timesheet ?? []}
                   breakSettings={breakSettings}
+                  mergeLeave={mergeLeave}
                   onCancel={() => setEditingDate(null)}
                   onSaved={() => { setEditingDate(null); load(); }}
                 />
@@ -161,10 +166,11 @@ export default function EmployeeTimesheet() {
   );
 }
 
-function DayRow({ dateIso, entries, breakSettings, onCancel, onSaved }: {
+function DayRow({ dateIso, entries, breakSettings, mergeLeave, onCancel, onSaved }: {
   dateIso: string;
   entries: Entry[];
   breakSettings: BreakSettings;
+  mergeLeave: boolean;
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -172,8 +178,8 @@ function DayRow({ dateIso, entries, breakSettings, onCancel, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const rule = useMemo(() => breakRuleFor(breakSettings, dateIso), [breakSettings, dateIso]);
-  const check = checkLines(lines);
-  const preview = previewDayHours(lines.map(lineToEntry), rule);
+  const check = checkLines(lines, mergeLeave);
+  const preview = previewDayHours(lines.map(lineToEntry), rule, mergeLeave);
 
   const save = async () => {
     if (check.first || saving) return;

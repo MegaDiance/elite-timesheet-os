@@ -203,12 +203,45 @@ function computeDayHours(spans: Span[], rule: BreakRule): { hours: Map<number, n
   const deduct = rule.breakMins > 0 && work.length > 0 && totalMinutes >= rule.thresholdHours * 60 && gapMinutes < rule.breakMins;
   const longest = work.reduce((best, s) => (s.end - s.start > best.end - best.start ? s : best), work[0]);
 
+  // Summed rather than overwritten: mergeLeaveSpans can hand back several sub-spans that share the
+  // original line's index (a WORK line split around a leave line), and their hours add up onto it.
   for (const span of spans) {
     let minutes = span.end - span.start;
     if (deduct && span === longest) minutes = Math.max(0, minutes - rule.breakMins);
-    hours.set(span.index, round2(minutes / 60));
+    hours.set(span.index, round2((hours.get(span.index) ?? 0) + minutes / 60));
   }
   return { hours, breakAt: deduct ? longest.index : null };
+}
+
+/**
+ * Frontend mirror of the server's mergeLeaveIntoRoster (backend/src/services/segments.ts): splits
+ * each WORK span around any leave span (Sick/Annual/TIL/LWIP/Other) it overlaps, into the gaps
+ * before/between/after the leave. Only used when the organisation's automatically_merge_leave_with_roster
+ * setting is on — otherwise a WORK/leave overlap is always rejected, unchanged from before. A split
+ * sub-span keeps its original line's `index` so hours and validation issues still attribute to it.
+ */
+function mergeLeaveSpans(spans: Span[]): Span[] {
+  const leaveSpans = spans.filter(s => s.type !== 'WORK');
+  const workSpans = spans.filter(s => s.type === 'WORK');
+  if (leaveSpans.length === 0 || workSpans.length === 0) return spans;
+
+  const result: Span[] = [...leaveSpans];
+  for (const w of workSpans) {
+    const overlapping = leaveSpans
+      .filter(l => l.start < w.end && l.end > w.start)
+      .sort((a, b) => a.start - b.start);
+    if (overlapping.length === 0) {
+      result.push(w);
+      continue;
+    }
+    let cursor = w.start;
+    for (const l of overlapping) {
+      if (l.start > cursor) result.push({ ...w, start: cursor, end: Math.min(l.start, w.end) });
+      cursor = Math.max(cursor, l.end);
+    }
+    if (cursor < w.end) result.push({ ...w, start: cursor, end: w.end });
+  }
+  return result;
 }
 
 export interface HoursPreview {
@@ -219,16 +252,27 @@ export interface HoursPreview {
   breakMins: number;
 }
 
-/** Hours for one part of a day as the server will compute them. */
-export function previewDayHours(entries: Entry[], rule: BreakRule): HoursPreview {
+/**
+ * Hours for one part of a day as the server will compute them. When `mergeLeave` is on (the
+ * organisation's automatically_merge_leave_with_roster setting), a WORK entry that overlaps a leave
+ * entry is previewed as the server will actually save it — split around the leave — instead of
+ * being flagged as an overlap; a WORK entry entirely covered by leave previews as 0 h rather than
+ * the incomplete/invalid `null`.
+ */
+export function previewDayHours(entries: Entry[], rule: BreakRule, mergeLeave = false): HoursPreview {
   const spans: Span[] = [];
+  const hadSpan = new Set<number>();
   entries.forEach((e, index) => {
     const span = e.start && e.finish ? spanOf(e.start, e.finish) : null;
-    if (span && typeof span === 'object') spans.push({ index, ...span, type: e.type, hasBreak: e.has_break });
+    if (span && typeof span === 'object') {
+      spans.push({ index, ...span, type: e.type, hasBreak: e.has_break });
+      hadSpan.add(index);
+    }
   });
-  const { hours, breakAt } = computeDayHours(spans, rule);
+  const { hours, breakAt } = computeDayHours(mergeLeave ? mergeLeaveSpans(spans) : spans, rule);
   const perEntry = entries.map((e, index) => {
     if (hours.has(index)) return hours.get(index)!;
+    if (hadSpan.has(index)) return 0;
     if (e.start || e.finish) return null;
     return e.hours > 0 ? round2(e.hours) : null;
   });
@@ -295,9 +339,12 @@ export interface LinesCheck {
 /**
  * Checks a part the way the server does: both times entered, not the same time, not backwards
  * (overnight up to 14 h), no overlaps, hours between 0 and 24, and no accidental duplicate of an
- * hours-only line. Lines nobody filled in are ignored.
+ * hours-only line. Lines nobody filled in are ignored. When `mergeLeave` is on, a WORK line is
+ * split around any leave line it overlaps before the overlap check runs, so it is never flagged —
+ * the server will save it split, not reject it — while a WORK/WORK or leave/leave overlap is still
+ * always flagged (splitting never touches those, exactly like the server).
  */
-export function checkLines(lines: DraftLine[]): LinesCheck {
+export function checkLines(lines: DraftLine[], mergeLeave = false): LinesCheck {
   const issues: (string | null)[] = lines.map(() => null);
   const flag = (i: number, message: string) => {
     if (!issues[i]) issues[i] = message;
@@ -324,7 +371,7 @@ export function checkLines(lines: DraftLine[]): LinesCheck {
     spans.push({ index: i, ...span, type: l.type, hasBreak: l.has_break });
   });
 
-  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  const sorted = [...(mergeLeave ? mergeLeaveSpans(spans) : spans)].sort((a, b) => a.start - b.start);
   for (let a = 0; a < sorted.length; a++) {
     for (let b = a + 1; b < sorted.length && sorted[b].start < sorted[a].end; b++) {
       const la = lines[sorted[a].index];

@@ -20,6 +20,9 @@ interface DayEditorProps {
   /** The day as saved (undefined when nothing is saved yet). */
   day: DayRecord | undefined;
   breakSettings: BreakSettings;
+  /** The organisation's automatically_merge_leave_with_roster setting — a WORK entry that overlaps
+   * a leave entry is previewed and saved split around it instead of being blocked as an overlap. */
+  mergeLeave: boolean;
   /** The worker's branch has its roster locked for this pay period. */
   rosterLocked: boolean;
   /** The worker's branch has its timesheets locked for this pay period. */
@@ -55,7 +58,7 @@ const TARGETS: { value: Scope; label: string; hint: string }[] = [
  * the worked hours, or both — so a roster change can never touch worked hours.
  */
 export default function DayEditor({
-  worker, dateIso, day, breakSettings, rosterLocked, timesheetLocked, approved, fortnightDays, branchWorkers, onClose, onSaved, onCopied,
+  worker, dateIso, day, breakSettings, mergeLeave, rosterLocked, timesheetLocked, approved, fortnightDays, branchWorkers, onClose, onSaved, onCopied,
 }: DayEditorProps) {
   const id = useId();
   const rosterReadOnly = approved || rosterLocked;
@@ -98,8 +101,8 @@ export default function DayEditor({
         // A note on its own is saved with the unchanged roster (or, if that is locked, the unchanged timesheet).
         : noteChanged ? (rosterReadOnly ? 'TIMESHEET' : 'ROSTER') : null;
 
-  const rosterCheck = checkLines(rosterLines);
-  const workedCheck = checkLines(workedLines);
+  const rosterCheck = checkLines(rosterLines, mergeLeave);
+  const workedCheck = checkLines(workedLines, mergeLeave);
   const freshName = target === 'BOTH' ? 'Rostered and worked' : PART_LABEL[target === 'TIMESHEET' ? 'timesheet' : 'roster'];
   const problem = fresh
     ? (rosterCheck.first ? `${freshName}: ${rosterCheck.first}` : null)
@@ -180,7 +183,7 @@ export default function DayEditor({
   // ── Rendering ────────────────────────────────────────────────────────────────────────────────
   // A read-only part shows the hours as saved (what payroll uses), not a recalculation under today's settings.
   const partTotal = (lines: DraftLine[], stored?: Entry[]) => {
-    let { total, breakMins } = previewDayHours(lines.map(lineToEntry), rule);
+    let { total, breakMins } = previewDayHours(lines.map(lineToEntry), rule, mergeLeave);
     if (stored) {
       total = savedTotal(stored);
       breakMins = Math.max(0, Math.round((previewDayHours(stored, { breakMins: 0, thresholdHours: 0 }).total - total) * 60));
@@ -257,7 +260,7 @@ export default function DayEditor({
             name={PART_LABEL[part]}
             lines={lines}
             onChange={changeLines(part)}
-            preview={previewDayHours(lines.map(lineToEntry), rule)}
+            preview={previewDayHours(lines.map(lineToEntry), rule, mergeLeave)}
             issues={check.issues}
             autoFocus={focusPart === part}
           />
@@ -309,7 +312,7 @@ export default function DayEditor({
             name={freshName}
             lines={rosterLines}
             onChange={changeLines('roster')}
-            preview={previewDayHours(rosterLines.map(lineToEntry), rule)}
+            preview={previewDayHours(rosterLines.map(lineToEntry), rule, mergeLeave)}
             issues={rosterCheck.issues}
             autoFocus={focusPart === 'fresh'}
           />

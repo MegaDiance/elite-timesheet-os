@@ -72,6 +72,7 @@ export default function Roster() {
   const [locks, setLocks] = useState<LockRow[]>([]);
   const [timesheets, setTimesheets] = useState<TimesheetRow[]>([]);
   const [breakSettings, setBreakSettings] = useState<BreakSettings>(DEFAULT_BREAK_SETTINGS);
+  const [mergeLeave, setMergeLeave] = useState(false);
   const [holidays, setHolidays] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -129,6 +130,7 @@ export default function Roster() {
           break_mins_weekend: Number(d.break_mins_weekend ?? DEFAULT_BREAK_SETTINGS.break_mins_weekend),
           break_threshold_hours: Number(d.break_threshold_hours ?? DEFAULT_BREAK_SETTINGS.break_threshold_hours),
         });
+        setMergeLeave(Boolean(d.automatically_merge_leave_with_roster));
       })
       .catch(() => {
         // The live preview falls back to the default break rule; saved hours always come from the server.
@@ -880,6 +882,7 @@ export default function Roster() {
           dateIso={editing.dateIso}
           day={recordByCell.get(cellKey(editing.workerId, editing.dateIso))}
           breakSettings={breakSettings}
+          mergeLeave={mergeLeave}
           rosterLocked={Boolean(editingLock?.roster_locked)}
           timesheetLocked={Boolean(editingLock?.timesheet_locked)}
           approved={editingStatus === 'Approved' || editingStatus === 'Locked'}
