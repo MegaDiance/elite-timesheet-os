@@ -81,6 +81,7 @@ export default function Roster() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [fillMode, setFillMode] = useState<BulkFillMode | null>(null);
+  const [singleFill, setSingleFill] = useState<{ worker: Worker; mode: BulkFillMode } | null>(null);
   const [lockFlag, setLockFlag] = useState<LockFlag | null>(null);
   const [approveAllOpen, setApproveAllOpen] = useState(false);
   const [result, setResult] = useState<BulkResult | null>(null);
@@ -300,18 +301,25 @@ export default function Roster() {
   };
 
   // ── Whole-branch tools, approval, exports ────────────────────────────────────────────────────
-  const runFill = async (mode: BulkFillMode, dayIndexes: number[]) => {
+  const runFill = async (mode: BulkFillMode, dayIndexes: number[], worker?: Worker) => {
     setBusy(mode === 'roster' ? 'Applying default rosters…' : 'Copying the roster to worked hours…');
     try {
       const res = await api.post(mode === 'roster' ? '/roster/auto-roster' : '/roster/auto-log', {
         start_date: startIso,
         selected_days: dayIndexes,
         location_id: branchId || undefined,
+        employee_id: worker?.id,
       });
       const count = Number(res.data?.data?.workers ?? 0);
-      const who = `${count} worker${count === 1 ? '' : 's'}`;
-      toast.success(mode === 'roster' ? `Default rosters applied for ${who}.` : `Worked hours filled from the roster for ${who}.`);
+      const who = worker ? worker.full_name : `${count} worker${count === 1 ? '' : 's'}`;
+      const nothingToDo = worker && count === 0;
+      if (nothingToDo) {
+        toast.error(mode === 'roster' ? `${who}’s roster is locked or already approved for these days.` : `${who}’s timesheet is locked or already approved for these days.`);
+      } else {
+        toast.success(mode === 'roster' ? `Default roster applied for ${who}.` : `Worked hours filled from the roster for ${who}.`);
+      }
       setFillMode(null);
+      setSingleFill(null);
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err, mode === 'roster' ? 'The default rosters were not applied.' : 'The roster was not copied to worked hours.'));
@@ -467,6 +475,39 @@ export default function Roster() {
     );
   };
 
+  /** Per-worker "Apply default roster" / "Copy roster to worked hours", scoped to just this row instead of the whole branch filter. */
+  const rowFillButtons = (w: Worker, large: boolean) => {
+    const lock = lockByBranch.get(w.location_id);
+    const iconBtn = `inline-flex items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-hover)] disabled:opacity-40 disabled:pointer-events-none cursor-pointer ${large ? 'w-9 h-9' : 'w-6 h-6'}`;
+    const iconSize = large ? 'w-4 h-4' : 'w-3 h-3';
+    return (
+      <span className="flex items-center gap-1 shrink-0">
+        <button
+          type="button"
+          onClick={() => setSingleFill({ worker: w, mode: 'roster' })}
+          disabled={Boolean(busy) || Boolean(lock?.roster_locked)}
+          className={iconBtn}
+          title={lock?.roster_locked ? `The roster is locked for ${w.full_name}’s branch` : `Apply ${w.full_name}’s default roster to this fortnight`}
+          aria-label={`Apply default roster for ${w.full_name}`}
+        >
+          <Wand2 className={iconSize} aria-hidden="true" />
+        </button>
+        {canTimesheets && (
+          <button
+            type="button"
+            onClick={() => setSingleFill({ worker: w, mode: 'log' })}
+            disabled={Boolean(busy) || Boolean(lock?.timesheet_locked)}
+            className={iconBtn}
+            title={lock?.timesheet_locked ? `Timesheets are locked for ${w.full_name}’s branch` : `Copy ${w.full_name}’s roster to worked hours`}
+            aria-label={`Copy roster to worked hours for ${w.full_name}`}
+          >
+            <ClipboardCheck className={iconSize} aria-hidden="true" />
+          </button>
+        )}
+      </span>
+    );
+  };
+
   const cellLabel = (w: Worker, iso: string, day: DayContent) => {
     const empty = dayIsEmpty(day);
     const what = empty ? 'nothing rostered or worked' : describeDay(day);
@@ -538,7 +579,10 @@ export default function Roster() {
                 return (
                   <tr key={w.id}>
                     <th scope="row" className="sticky left-0 z-10 bg-[var(--panel)] border-b border-r-2 border-[var(--border)] px-3 py-2 align-top text-left font-normal">
-                      <span className="block font-semibold text-sm text-[var(--text)] truncate" title={w.full_name}>{w.full_name}</span>
+                      <span className="flex items-center justify-between gap-1">
+                        <span className="font-semibold text-sm text-[var(--text)] truncate" title={w.full_name}>{w.full_name}</span>
+                        {rowFillButtons(w, false)}
+                      </span>
                       <span className="block text-[11px] text-[var(--muted)] truncate mb-1">
                         {[w.department, `${Number(w.contracted_hours ?? 76)} h contract`].filter(Boolean).join(' · ')}
                       </span>
@@ -634,7 +678,10 @@ export default function Roster() {
                       <p className="font-semibold text-sm text-[var(--text)] truncate">{w.full_name}</p>
                       <p className="text-[11px] text-[var(--muted)]">Fortnight: {formatHours(t.roster)} rostered · {formatHours(t.worked)} worked</p>
                     </div>
-                    {statusControls(w, true)}
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      {rowFillButtons(w, true)}
+                      {statusControls(w, true)}
+                    </span>
                   </div>
                   <button
                     type="button"
@@ -854,6 +901,17 @@ export default function Roster() {
           busy={Boolean(busy)}
           onConfirm={dayIndexes => runFill(fillMode, dayIndexes)}
           onClose={() => setFillMode(null)}
+        />
+      )}
+
+      {singleFill && (
+        <DayPickerDialog
+          mode={singleFill.mode}
+          days={days}
+          scopeText={singleFill.worker.full_name}
+          busy={Boolean(busy)}
+          onConfirm={dayIndexes => runFill(singleFill.mode, dayIndexes, singleFill.worker)}
+          onClose={() => setSingleFill(null)}
         />
       )}
 

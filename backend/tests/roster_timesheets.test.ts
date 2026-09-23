@@ -204,6 +204,45 @@ describe('automatic roster and log', () => {
         expect(res.status).toBe(400);
         expect(res.body.error.code).toBe('OVERLAP');
     });
+
+    it('auto-roster with employee_id changes only that worker, even when others are in scope', async () => {
+        await request(app).post(`/api/employees/${w.workers.mel}/templates`).set(bearer(w.tokens.sarah))
+            .send({ templates: [{ day_index: 1, roster_in: '10:00', roster_out: '16:00' }] });
+        await request(app).post(`/api/employees/${w.workers.rich}/templates`).set(bearer(w.tokens.sarah))
+            .send({ templates: [{ day_index: 1, roster_in: '11:00', roster_out: '15:00' }] });
+
+        const res = await request(app).post('/api/roster/auto-roster').set(bearer(w.tokens.sarah))
+            .send({ start_date: PERIOD, selected_days: [1], employee_id: w.workers.mel });
+        expect(res.status).toBe(200);
+        expect(res.body.data.workers).toBe(1);
+        expect(times((await dayOf(w.workers.mel, MONDAY)).roster)).toEqual([['WORK', '10:00', '16:00', 5.5]]);
+        expect((await dayOf(w.workers.rich, MONDAY)).roster).toEqual([]);
+    });
+
+    it('auto-log with employee_id fills worked hours for only that worker', async () => {
+        await save(w.tokens.sarah, w.workers.mel, MONDAY, { scope: 'ROSTER', roster: [entry('09:00', '17:00')] });
+        await save(w.tokens.sarah, w.workers.rich, MONDAY, { scope: 'ROSTER', roster: [entry('09:00', '17:00')] });
+
+        const res = await request(app).post('/api/roster/auto-log').set(bearer(w.tokens.sarah))
+            .send({ start_date: PERIOD, selected_days: [1], employee_id: w.workers.mel });
+        expect(res.status).toBe(200);
+        expect(res.body.data.workers).toBe(1);
+        expect((await dayOf(w.workers.mel, MONDAY)).timesheet).not.toEqual([]);
+        expect((await dayOf(w.workers.rich, MONDAY)).timesheet).toEqual([]);
+    });
+
+    it('employee_id is authorised like any other single-worker action: a branch admin outside that branch is refused', async () => {
+        const res = await request(app).post('/api/roster/auto-roster').set(bearer(w.tokens.greg))
+            .send({ start_date: PERIOD, selected_days: [1], employee_id: w.workers.mel });
+        expect(res.status).toBe(403);
+        expect((await dayOf(w.workers.mel, MONDAY)).roster).toEqual([]);
+    });
+
+    it('employee_id from another organisation is not found', async () => {
+        const res = await request(app).post('/api/roster/auto-log').set(bearer(w.tokens.sarah))
+            .send({ start_date: PERIOD, selected_days: [1], employee_id: w.workers.syd });
+        expect(res.status).toBe(404);
+    });
 });
 
 describe('locks are per branch and change only what was asked', () => {

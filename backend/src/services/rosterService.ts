@@ -65,6 +65,8 @@ interface BulkScope {
     branchIds: string[];
     fortnightStartIso: string;
     selectedDays?: number[];
+    /** Restricts to just these workers (already authorised by the route via loadWorker), e.g. a single row's "Roster"/"Log" button. Omitted for the whole-branch tools. */
+    employeeIds?: string[];
     actorId: string;
 }
 
@@ -80,11 +82,12 @@ async function editableWorkers(scope: BulkScope, lockColumn: 'roster_locked' | '
         `SELECT e.id
            FROM employees e
           WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
+            AND ($4::uuid[] IS NULL OR e.id = ANY($4::uuid[]))
             AND NOT EXISTS (SELECT 1 FROM timesheet_submissions ts
                              WHERE ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3 AND ts.status = 'Approved')
             AND NOT EXISTS (SELECT 1 FROM fortnight_locks fl
                              WHERE fl.org_id = e.org_id AND fl.location_id = e.location_id AND fl.start_date = $3 AND fl.${lockColumn} = true)`,
-        [scope.orgId, scope.branchIds, scope.fortnightStartIso]
+        [scope.orgId, scope.branchIds, scope.fortnightStartIso, scope.employeeIds ?? null]
     );
     return res.rows.map((r: any) => r.id as string);
 }
