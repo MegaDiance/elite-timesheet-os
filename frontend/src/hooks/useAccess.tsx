@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import api from '../services/apiClient';
+import { portalLoginPath, rememberPortal } from '../services/portal';
 
 /**
  * What the signed-in account may do, as reported by GET /api/auth/me.
@@ -67,7 +68,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       const res = await api.get('/auth/me');
       current.current = res.data.data;
       setAccess(res.data.data);
-      localStorage.setItem('last_org_slug', res.data.data.organisation.portal_slug);
+      rememberPortal(res.data.data.organisation.portal_slug);
     } catch {
       current.current = null;
       setAccess(null);
@@ -83,19 +84,20 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   // A company setting (e.g. "employees can submit timesheets") must take effect in an already-open
-  // tab without a manual reload or re-login. Access is re-resolved from the server whenever the
-  // tab regains focus/visibility, and periodically while it stays in the foreground, so nav items
-  // gated on a permission or capability never lag more than about a minute behind a change made
-  // elsewhere. Mirrors the focus/visibility idiom already used by useSessionTimeout.
+  // tab without a manual reload or re-login. Access is re-read from the server — never guessed —
+  // whenever it can have changed from the user's point of view: when the tab regains focus or
+  // becomes visible, on every in-app navigation (AccessSync in App.tsx), and as soon as the API
+  // refuses a request because a feature was switched off (see apiClient's 'access-stale' event).
+  // There is deliberately no timer: nothing is polled while the user is not doing anything.
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('focus', refresh);
+    window.addEventListener('access-stale', refresh);
     document.addEventListener('visibilitychange', onVisible);
-    const interval = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 60000);
     return () => {
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('access-stale', refresh);
       document.removeEventListener('visibilitychange', onVisible);
-      clearInterval(interval);
     };
   }, [refresh]);
 
@@ -121,9 +123,12 @@ export function storeSession(token: string) {
   window.dispatchEvent(new Event('auth-change'));
 }
 
-/** Ends the session on the server first, then forgets it locally. */
-export async function signOut(): Promise<string> {
-  const slug = localStorage.getItem('last_org_slug');
+/**
+ * Ends the session on the server first, forgets it locally, then loads the organisation's own
+ * sign-in page (or the home page if none is known) with a full page load, so nothing from the
+ * signed-in session survives in memory. Never goes to a generic sign-in page — there isn't one.
+ */
+export async function signOut(reason: 'logout' | 'inactivity' = 'logout'): Promise<void> {
   try {
     if (localStorage.getItem('token')) await api.post('/auth/logout');
   } catch {
@@ -131,6 +136,5 @@ export async function signOut(): Promise<string> {
   }
   localStorage.removeItem('token');
   localStorage.removeItem('session_last_active');
-  window.dispatchEvent(new Event('auth-change'));
-  return slug ? `/login/${slug}?reason=logout` : '/login?reason=logout';
+  window.location.replace(portalLoginPath(reason));
 }

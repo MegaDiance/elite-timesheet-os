@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import api from '../services/apiClient';
 import { signOut } from './useAccess';
 
@@ -9,7 +8,6 @@ const THROTTLE_ACTIVITY_MS = 30 * 1000;       // 30 seconds throttle for passive
 const STORAGE_KEY = 'session_last_active';
 
 export function useSessionTimeout() {
-  const navigate = useNavigate();
   const [showWarning, setShowWarning] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(300);
   const [isKeepingAlive, setIsKeepingAlive] = useState(false);
@@ -29,9 +27,8 @@ export function useSessionTimeout() {
     if (signingOutRef.current) return;
     signingOutRef.current = true;
     setShowWarning(false);
-    const path = await signOut();
-    navigate(reason === 'logout' ? path : path.replace('reason=logout', `reason=${reason}`), { replace: true });
-  }, [navigate]);
+    await signOut(reason);
+  }, []);
 
   const handleLogoutDueToInactivity = useCallback(() => {
     void endSession('inactivity');

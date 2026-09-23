@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ShieldAlert, CheckCircle2, AlertCircle, ArrowRight, KeyRound, Clock, ArrowLeft, ShieldCheck } from 'lucide-react';
 import api from '../../services/apiClient';
+import { portalLoginPath } from '../../services/portal';
 import { storeSession } from '../../hooks/useAccess';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -41,7 +42,7 @@ export default function VerifyLogin() {
     if (body?.data?.token) {
       storeSession(body.data.token);
       setSuccess(true);
-      navigate('/dashboard', { replace: true });
+      navigate('/app', { replace: true });
       return;
     }
     setError('Verification failed. Please sign in again.');
@@ -217,9 +218,9 @@ export default function VerifyLogin() {
               )}
 
               <div className="pt-3 flex items-center justify-between text-xs border-t border-[var(--border)]">
-                <Link to="/login" className="text-[var(--muted)] hover:text-[var(--text)] inline-flex items-center gap-1">
+                <Link to={portalLoginPath()} className="text-[var(--muted)] hover:text-[var(--text)] inline-flex items-center gap-1">
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to sign in</span>
+                  <span>{portalLoginPath() === '/' ? 'Back to the home page' : 'Back to sign in'}</span>
                 </Link>
               </div>
             </>

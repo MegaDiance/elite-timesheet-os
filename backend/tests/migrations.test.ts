@@ -178,10 +178,10 @@ describe('two-role migrations on legacy data', () => {
     it('rolls back with everyone’s access intact, and re-applies to exactly the same access', async () => {
         const accessBefore = await q('SELECT org_id, location_id, user_id FROM branch_admins ORDER BY 1, 2, 3');
         await db.end();
-        // 7 = the two-role migrations (600, 601, 602) plus the additive employee-portal/
-        // workforce-settings/leave-requests/break-override migrations (700, 701, 702, 703)
-        // applied on top of them by the unconditional `migrate('up')` in beforeAll.
-        migrate('down', '7');
+        // Every migration from the two-role expand step (…600) onwards: the two-role migrations
+        // themselves plus the additive ones applied on top of them by `migrate('up')` in beforeAll.
+        const sinceTwoRole = fs.readdirSync(path.join(__dirname, '../migrations')).filter(f => /^\d+_.*\.js$/.test(f) && Number(f.split('_')[0]) >= 1789367660600).length;
+        migrate('down', String(sinceTwoRole));
         db = new Client({ connectionString: urlForDatabase(DB) });
         await db.connect();
         // The original legacy rows are back…

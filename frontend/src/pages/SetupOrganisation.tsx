@@ -166,7 +166,8 @@ export default function SetupOrganisation() {
         timesheet_lock_password: timesheetLockPassword || undefined,
         enable_2fa: accountExists ? undefined : enable2fa,
       });
-      setLoginPath(res.data?.data?.login_path || '/login');
+      const path: string = res.data?.data?.login_path || '';
+      setLoginPath(/^\/login\/[a-z0-9-]+$/.test(path) ? path : '/');
     } catch (err: any) {
       const code = err.response?.data?.error?.code;
       const message = err.response?.data?.error?.message;

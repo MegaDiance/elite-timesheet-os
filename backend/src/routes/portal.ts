@@ -78,10 +78,25 @@ async function readOnlyStatus(ctx: NonNullable<AuthRequest['auth']>, startDate: 
     return result.rows[0] || { approved: false, timesheet_locked: false };
 }
 
+/**
+ * The employee timesheet is a feature the organisation switches on or off
+ * (`employees_can_submit_timesheets`). While it is off, every timesheet endpoint answers as though
+ * the feature does not exist for employees — reading as well as writing — so hiding the tab in the
+ * portal is never the only thing standing between an employee and the data. Read per request, so
+ * a change takes effect on the very next call.
+ */
+async function assertEmployeeTimesheetsEnabled(orgId: string): Promise<void> {
+    const orgRes = await query('SELECT employees_can_submit_timesheets FROM organisations WHERE id = $1', [orgId]);
+    if (!orgRes.rows[0]?.employees_can_submit_timesheets) {
+        throw new HttpError(403, 'EMPLOYEE_TIMESHEETS_DISABLED', 'Employee timesheets are turned off for your organisation. Ask your manager to record your hours.');
+    }
+}
+
 /** GET /api/portal/timesheet?start_date — one fortnight of the employee's own roster + timesheet. */
 router.get('/timesheet', async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
+        await assertEmployeeTimesheetsEnabled(ctx.orgId);
         if (!isFortnightStart(req.query.start_date)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period.');
         const startDate = req.query.start_date as string;
         const endDate = fmtISO(addDays(parseIsoDateUtc(startDate), 13));
@@ -106,10 +121,7 @@ router.get('/timesheet', async (req: AuthRequest, res: Response) => {
 router.post('/timesheet', async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const orgRes = await query('SELECT employees_can_submit_timesheets FROM organisations WHERE id = $1', [ctx.orgId]);
-        if (!orgRes.rows[0]?.employees_can_submit_timesheets) {
-            throw new HttpError(403, 'EMPLOYEE_SUBMISSION_DISABLED', 'Submitting your own timesheet is turned off. Ask your manager to record your hours.');
-        }
+        await assertEmployeeTimesheetsEnabled(ctx.orgId);
 
         const { record_date } = req.body || {};
         if (!isIsoDate(record_date)) throw badRequest('VALIDATION_FAILED', 'record_date must be YYYY-MM-DD.');

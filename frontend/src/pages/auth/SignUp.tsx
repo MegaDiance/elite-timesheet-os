@@ -96,10 +96,7 @@ export default function SignUp() {
         </Card>
 
         <div className="text-center text-xs text-[var(--muted)] space-y-2">
-          <p>
-            Already use SimpleHours?{' '}
-            <Link to="/login" className="font-semibold text-[var(--primary)] hover:underline">Sign in</Link>
-          </p>
+          <p>Already use SimpleHours? Sign in with your organisation’s own sign-in link.</p>
           <Link to="/" className="inline-flex items-center gap-1 hover:text-[var(--text)]">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to home
           </Link>

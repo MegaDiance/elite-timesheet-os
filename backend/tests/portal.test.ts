@@ -92,13 +92,44 @@ describe('POST /portal/timesheet (self-submit)', () => {
         expect((await sql('SELECT COUNT(*)::int AS n FROM daily_records WHERE employee_id = $1', [w.workers.mel])).rows[0].n).toBe(1);
     });
 
-    it('refuses with 403 while employees_can_submit_timesheets is off, even with a valid session', async () => {
+    it('refuses reads and writes with 403 while employees_can_submit_timesheets is off, even with a valid session', async () => {
+        await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.mel, record_date: PERIOD, ...simpleDay(true) });
         await request(app).put('/api/organisation/settings').set(bearer(w.tokens.owner)).send({ employees_can_submit_timesheets: false });
-        const res = await request(app).post('/api/portal/timesheet').set(bearer(w.tokens.melEmployee))
+
+        const write = await request(app).post('/api/portal/timesheet').set(bearer(w.tokens.melEmployee))
+            .send({ record_date: PERIOD, timesheet: [{ type: 'WORK', start: '10:00', finish: '12:00' }] });
+        expect(write.status).toBe(403);
+        expect(write.body.error.code).toBe('EMPLOYEE_TIMESHEETS_DISABLED');
+
+        const read = await request(app).get(`/api/portal/timesheet?start_date=${PERIOD}`).set(bearer(w.tokens.melEmployee));
+        expect(read.status).toBe(403);
+        expect(read.body.error.code).toBe('EMPLOYEE_TIMESHEETS_DISABLED');
+        expect(read.body.data).toBeUndefined();
+
+        // Nothing was written: the manager's recorded day is untouched.
+        const stored = await sql('SELECT actual_in, actual_out FROM shift_segments ss JOIN daily_records dr ON dr.id = ss.record_id WHERE dr.employee_id = $1', [w.workers.mel]);
+        expect(stored.rows.map((r: any) => [r.actual_in.slice(0, 5), r.actual_out.slice(0, 5)])).toEqual([['09:00', '17:00']]);
+
+        // The portal's own capability flag, which drives the tab, reports it off on the very next request.
+        const me = await request(app).get('/api/auth/me').set(bearer(w.tokens.melEmployee));
+        expect(me.body.data.employee_capabilities).toEqual({ can_submit_timesheets: false });
+    });
+
+    it('turning employee timesheets back on restores reading and writing immediately', async () => {
+        await request(app).put('/api/organisation/settings').set(bearer(w.tokens.owner)).send({ employees_can_submit_timesheets: false });
+        expect((await request(app).get(`/api/portal/timesheet?start_date=${PERIOD}`).set(bearer(w.tokens.melEmployee))).status).toBe(403);
+
+        await request(app).put('/api/organisation/settings').set(bearer(w.tokens.owner)).send({ employees_can_submit_timesheets: true });
+        expect((await request(app).get(`/api/portal/timesheet?start_date=${PERIOD}`).set(bearer(w.tokens.melEmployee))).status).toBe(200);
+        const write = await request(app).post('/api/portal/timesheet').set(bearer(w.tokens.melEmployee))
             .send({ record_date: PERIOD, timesheet: [{ type: 'WORK', start: '09:00', finish: '17:00' }] });
-        expect(res.status).toBe(403);
-        expect(res.body.error.code).toBe('EMPLOYEE_SUBMISSION_DISABLED');
-        expect((await sql('SELECT COUNT(*)::int AS n FROM daily_records WHERE employee_id = $1', [w.workers.mel])).rows[0].n).toBe(0);
+        expect(write.status).toBe(200);
+        expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.melEmployee))).body.data.employee_capabilities).toEqual({ can_submit_timesheets: true });
+    });
+
+    it("one organisation turning employee timesheets off does not affect another organisation's employees", async () => {
+        await request(app).put('/api/organisation/settings').set(bearer(w.tokens.xavier)).send({ employees_can_submit_timesheets: false });
+        expect((await request(app).get(`/api/portal/timesheet?start_date=${PERIOD}`).set(bearer(w.tokens.melEmployee))).status).toBe(200);
     });
 
     it('rejects a roster key outright rather than silently ignoring it', async () => {

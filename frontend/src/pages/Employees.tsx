@@ -24,6 +24,7 @@ import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { EmptyState } from '../components/ui/EmptyState';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
+import PortalAccessModal, { type PortalStatus } from '../components/PortalAccessModal';
 
 const SEGMENT_TYPES = [
   { value: 'WORK', label: 'Normal Work' },
@@ -57,6 +58,7 @@ interface Worker {
   is_active: boolean;
   status: 'Active' | 'Inactive';
   template: TemplateRow[];
+  portal_status: PortalStatus;
 }
 
 const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
@@ -90,6 +92,9 @@ export default function Employees() {
 
   const [formWorker, setFormWorker] = useState<Worker | 'new' | null>(null);
   const [templateWorker, setTemplateWorker] = useState<Worker | null>(null);
+  // By id, so the modal always shows the worker's current portal status after a reload.
+  const [portalWorkerId, setPortalWorkerId] = useState<string | null>(null);
+  const portalWorker = workers.find(w => w.id === portalWorkerId) ?? null;
   const [showHolidays, setShowHolidays] = useState(false);
   const [pendingAction, setPendingAction] = useState<{ kind: 'deactivate' | 'delete'; worker: Worker } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -194,7 +199,7 @@ export default function Employees() {
         <div>
           <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Workers</h1>
           <p className="text-sm text-[var(--muted)] max-w-2xl">
-            Workers are the people you roster and pay. They don't sign in to SimpleHours: you keep their details, default roster and timesheets here.
+            Workers are the people you roster and pay. Keep their details and default roster here, and give them portal access to see their own schedule.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -315,12 +320,19 @@ export default function Employees() {
                     <td className="py-3 px-4 text-sm text-[var(--muted)]">{worker.department || '—'}</td>
                     <td className="py-3 px-4 text-sm font-semibold text-[var(--text)]">{Number(worker.contracted_hours ?? 0)}h</td>
                     <td className="py-3 px-4">
-                      {active ? <Badge variant="success" size="sm">Active</Badge> : <Badge variant="default" size="sm">Deactivated</Badge>}
+                      <div className="flex flex-wrap gap-1">
+                        {active ? <Badge variant="success" size="sm">Active</Badge> : <Badge variant="default" size="sm">Deactivated</Badge>}
+                        {worker.portal_status === 'active' && <Badge variant="info" size="sm">Portal</Badge>}
+                        {worker.portal_status === 'invited' && <Badge variant="warning" size="sm">Invited</Badge>}
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="flex justify-end gap-1.5 flex-wrap">
                         <button onClick={() => setTemplateWorker(worker)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--primary)] bg-[var(--primary-light)] hover:opacity-80 transition-colors cursor-pointer">
                           Default roster
+                        </button>
+                        <button onClick={() => setPortalWorkerId(worker.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--muted)] bg-[var(--glass-4)] hover:bg-[var(--glass-8)] border border-[var(--border)] transition-colors cursor-pointer">
+                          Portal access
                         </button>
                         <button onClick={() => setFormWorker(worker)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--muted)] bg-[var(--glass-4)] hover:bg-[var(--glass-8)] border border-[var(--border)] transition-colors cursor-pointer">
                           Edit
@@ -371,6 +383,10 @@ export default function Employees() {
             reload();
           }}
         />
+      )}
+
+      {portalWorker && (
+        <PortalAccessModal worker={portalWorker} onClose={() => setPortalWorkerId(null)} onChanged={reload} />
       )}
 
       {templateWorker && (
@@ -496,7 +512,7 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
           <Input label="Email (optional)" type="email" value={form.email} onChange={set('email')} leftIcon={<Mail className="w-4 h-4" />} />
           <Input label="Phone (optional)" type="tel" value={form.phone} onChange={set('phone')} leftIcon={<Phone className="w-4 h-4" />} />
         </div>
-        <p className="text-[11px] text-[var(--muted)]">Contact details are for your records only. Workers are never emailed and do not sign in.</p>
+        <p className="text-[11px] text-[var(--muted)]">Contact details are for your records. A worker is only emailed if you invite them to the employee portal (Portal access).</p>
         <div className="flex justify-end gap-2 pt-4 border-t border-[var(--border)]">
           <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button type="submit" variant="primary" size="sm" loading={saving}>{worker ? 'Save changes' : 'Add worker'}</Button>

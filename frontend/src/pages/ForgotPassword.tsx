@@ -1,12 +1,22 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/apiClient';
+import { portalLoginPath } from '../services/portal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Clock, ArrowLeft, Mail, AlertCircle, CheckCircle2 } from 'lucide-react';
 
+const SLUG_RE = /^[a-z0-9-]{1,64}$/;
+
 export default function ForgotPassword() {
+  // The portal this was opened from (/login/:slug → "Forgot password?"), so the emailed link
+  // brings the user back to that organisation's sign-in page. There is no generic sign-in page.
+  const [searchParams] = useSearchParams();
+  const orgParam = searchParams.get('org') || '';
+  const org = SLUG_RE.test(orgParam) ? orgParam : null;
+  const backTo = org ? `/login/${org}` : portalLoginPath();
+  const backLabel = backTo === '/' ? 'Back to the home page' : 'Back to sign in';
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
@@ -16,10 +26,11 @@ export default function ForgotPassword() {
     setStatus('loading');
 
     try {
-      await api.post('/auth/forgot-password', { email: email.trim() });
-      // The same answer whether or not the email has an account.
+      const res = await api.post('/auth/forgot-password', { email: email.trim(), ...(org ? { organisation_slug: org } : {}) });
+      // The same answer whether or not the email has an account. The server's own wording is
+      // shown, because while email is turned off it explains how to get a reset link instead.
       setStatus('success');
-      setMessage('If an account exists for that email, we\u2019ve sent it a link to reset the password.');
+      setMessage(res.data?.message || 'If an account exists for that email, we\u2019ve sent it a link to reset the password.');
     } catch (err: any) {
       setStatus('error');
       setMessage(err.response?.data?.error?.message || 'We couldn\u2019t send a reset link right now. Please try again.');
@@ -52,9 +63,9 @@ export default function ForgotPassword() {
               <p className="text-xs text-[var(--muted)] text-center leading-relaxed">
                 The link works once and expires in 1 hour. Check your spam folder if it doesn't arrive.
               </p>
-              <Link to="/login" className="block">
+              <Link to={backTo} className="block">
                 <Button variant="primary" size="md" className="w-full">
-                  Back to sign in
+                  {backLabel}
                 </Button>
               </Link>
             </div>
@@ -89,11 +100,11 @@ export default function ForgotPassword() {
 
               <div className="text-center pt-2">
                 <Link
-                  to="/login"
+                  to={backTo}
                   className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] transition-colors"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to sign in</span>
+                  <span>{backLabel}</span>
                 </Link>
               </div>
             </form>

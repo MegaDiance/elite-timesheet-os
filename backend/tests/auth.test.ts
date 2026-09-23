@@ -21,7 +21,8 @@ beforeEach(async () => {
     w = await buildWorld();
 });
 
-const login = (email: string, password = PASSWORD, extra: object = {}) =>
+/** Signs in through ABC Health's portal link unless `extra` names another (or no) organisation. */
+const login = (email: string, password = PASSWORD, extra: object = { organisation_slug: w.abc.portalSlug }) =>
     request(app).post('/api/auth/login').send({ email, password, ...extra });
 const lastMailTo = (to: string) => [...getTestOutbox()].reverse().find(m => m.to === to)!;
 
@@ -66,13 +67,38 @@ describe('login', () => {
         expect((await login(w.users.sarah.email)).status).toBe(401);
     });
 
-    it('without a link, someone with access to two organisations chooses one', async () => {
+    it('there is no generic sign-in: without a portal link the login is refused, and no organisation is listed', async () => {
+        const noSlug = await login(w.users.owner.email, PASSWORD, {});
+        expect(noSlug.status).toBe(400);
+        expect(noSlug.body.error.code).toBe('ORGANISATION_PORTAL_REQUIRED');
+        expect(noSlug.body.organisations).toBeUndefined();
+        expect(noSlug.body.data).toBeUndefined();
+
+        // Naming the organisation by id (the old picker's request) is not a way in either.
+        const byId = await login(w.users.owner.email, PASSWORD, { organisation_id: w.abc.id });
+        expect(byId.status).toBe(400);
+        expect(byId.body.error.code).toBe('ORGANISATION_PORTAL_REQUIRED');
+
+        // The same answer for an unknown email, so it reveals nothing about accounts.
+        const unknown = await login('nobody@abc.test', PASSWORD, {});
+        expect(unknown.status).toBe(400);
+        expect(unknown.body).toEqual(noSlug.body);
+    });
+
+    it('someone with access to two organisations signs in to whichever portal link they use', async () => {
         await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
-        const choose = await login(w.users.greg.email);
-        expect(choose.body.require_organisation_selection).toBe(true);
-        expect(choose.body.organisations.map((o: any) => o.name).sort()).toEqual(['ABC Health', 'XYZ Care']);
-        const chosen = await login(w.users.greg.email, PASSWORD, { organisation_id: w.xyz.id });
-        expect(chosen.body.data.organisation.name).toBe('XYZ Care');
+        const abc = await login(w.users.greg.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
+        expect(abc.body.data.organisation.name).toBe('ABC Health');
+        const xyz = await login(w.users.greg.email, PASSWORD, { organisation_slug: w.xyz.portalSlug });
+        expect(xyz.body.data.organisation.name).toBe('XYZ Care');
+        expect(xyz.body.require_organisation_selection).toBeUndefined();
+    });
+
+    it("another organisation's portal link never signs a user into it", async () => {
+        // Sarah is a Branch Admin of ABC only; XYZ's real link must fail exactly like a wrong password.
+        const res = await login(w.users.sarah.email, PASSWORD, { organisation_slug: w.xyz.portalSlug });
+        expect(res.status).toBe(401);
+        expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
     });
 
     it('five failed attempts lock the email out for 15 minutes', async () => {
@@ -151,6 +177,27 @@ describe('password reset', () => {
 
         expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.sarah))).status).toBe(401);
         expect((await login(w.users.sarah.email, 'NewPassword1', { organisation_slug: w.abc.portalSlug })).status).toBe(200);
+    });
+
+    const resetVia = async (email: string, organisation_slug?: string) => {
+        await request(app).post('/api/auth/forgot-password').send({ email, ...(organisation_slug ? { organisation_slug } : {}) });
+        const token = /token=([a-f0-9]{64})/.exec(lastMailTo(email).text || '')![1];
+        return request(app).post('/api/auth/reset-password').send({ token, password: 'NewPassword1' });
+    };
+
+    it('a completed reset sends the user back to their own organisation portal, never a generic page', async () => {
+        const res = await resetVia(w.users.sarah.email);
+        expect(res.status).toBe(200);
+        expect(res.body.data.login_path).toBe(`/login/${w.abc.portalSlug}`);
+    });
+
+    it('with two organisations, the portal the reset was requested from wins; a foreign portal is ignored', async () => {
+        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
+        expect((await resetVia(w.users.greg.email, w.xyz.portalSlug)).body.data.login_path).toBe(`/login/${w.xyz.portalSlug}`);
+        // No portal context and two organisations: ambiguous, so nothing is listed or guessed.
+        expect((await resetVia(w.users.greg.email)).body.data.login_path).toBeNull();
+        // Sarah has no access to XYZ, so naming XYZ's portal cannot bind her reset to it.
+        expect((await resetVia(w.users.sarah.email, w.xyz.portalSlug)).body.data.login_path).toBe(`/login/${w.abc.portalSlug}`);
     });
 });
 

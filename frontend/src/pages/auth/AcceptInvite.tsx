@@ -9,14 +9,29 @@ import { Card } from '../../components/ui/Card';
 interface Invitation {
   email: string;
   organisation_name: string;
-  branches: string[];
+  /** Branch Admin invitations only. */
+  branches?: string[];
   account_exists: boolean;
 }
 
-const INVALID_MESSAGE = 'This invitation has expired, has already been used or isn’t valid. Ask the Organisation Owner to send you a new one.';
+type InviteKind = 'branch-admin' | 'employee';
 
-/** Accepts a Branch Admin invitation. Accepting never signs anyone in; the person signs in afterwards. */
-export default function AcceptInvite() {
+const API_BASE: Record<InviteKind, string> = {
+  'branch-admin': '/branch-admins/invitations',
+  employee: '/employee-accounts/invitations',
+};
+
+const INVALID_MESSAGE: Record<InviteKind, string> = {
+  'branch-admin': 'This invitation has expired, has already been used or isn’t valid. Ask the Organisation Owner to send you a new one.',
+  employee: 'This invitation has expired, has already been used or isn’t valid. Ask your manager to send you a new one.',
+};
+
+/**
+ * Accepts a Branch Admin invitation (/accept-invite) or an employee portal invitation
+ * (/accept-employee-invite). Accepting never signs anyone in: the server answers with the
+ * organisation's own sign-in link, and the person signs in there afterwards.
+ */
+export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteKind }) {
   const [searchParams] = useSearchParams();
   const token = (searchParams.get('token') || '').trim();
 
@@ -34,7 +49,7 @@ export default function AcceptInvite() {
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    api.get('/branch-admins/invitations/verify', { params: { token } })
+    api.get(`${API_BASE[kind]}/verify`, { params: { token } })
       .then(res => {
         if (!cancelled) setInvitation(res.data.data);
       })
@@ -45,7 +60,7 @@ export default function AcceptInvite() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, kind]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,12 +87,14 @@ export default function AcceptInvite() {
 
     setSubmitting(true);
     try {
-      const res = await api.post('/branch-admins/invitations/accept', {
+      const res = await api.post(`${API_BASE[kind]}/accept`, {
         token,
         password,
         full_name: invitation.account_exists ? undefined : fullName.trim(),
       });
-      setLoginPath(res.data?.data?.login_path || '/login');
+      const path: string = res.data?.data?.login_path || '';
+      // Always the organisation's own sign-in link; there is no generic sign-in page to fall back to.
+      setLoginPath(/^\/login\/[a-z0-9-]+$/.test(path) ? path : '/');
     } catch (err: any) {
       const code = err.response?.data?.error?.code;
       if (code === 'INVALID_INVITATION') {
@@ -124,9 +141,9 @@ export default function AcceptInvite() {
           <AlertCircle className="w-6 h-6" />
         </div>
         <h1 className="text-xl font-bold text-[var(--text)]">This invitation can't be used</h1>
-        <p className="text-xs text-[var(--muted)] leading-relaxed">{INVALID_MESSAGE}</p>
-        <Link to="/login" className="block pt-2">
-          <Button variant="secondary" size="md" className="w-full">Go to sign in</Button>
+        <p className="text-xs text-[var(--muted)] leading-relaxed">{INVALID_MESSAGE[kind]}</p>
+        <Link to="/" className="block pt-2">
+          <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
         </Link>
       </Card>
     );
@@ -138,9 +155,11 @@ export default function AcceptInvite() {
         <div className="w-12 h-12 rounded-full bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center mx-auto">
           <CheckCircle2 className="w-6 h-6" />
         </div>
-        <h1 className="text-xl font-bold text-[var(--text)]">You're a Branch Admin</h1>
+        <h1 className="text-xl font-bold text-[var(--text)]">{kind === 'employee' ? 'Your account is ready' : 'You’re a Branch Admin'}</h1>
         <p className="text-xs text-[var(--muted)] leading-relaxed">
-          You can now manage {invitation.branches.join(', ')} for {invitation.organisation_name}. Sign in to get started.
+          {kind === 'employee'
+            ? `You can now see your schedule for ${invitation.organisation_name}. Sign in to get started, and bookmark the sign-in page — it’s your organisation’s own link.`
+            : `You can now manage ${(invitation.branches ?? []).join(', ')} for ${invitation.organisation_name}. Sign in to get started.`}
         </p>
         <Link to={loginPath} className="block pt-2">
           <Button variant="primary" size="md" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
@@ -156,8 +175,14 @@ export default function AcceptInvite() {
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Accept your invitation</h1>
         <p className="text-sm text-[var(--muted)] leading-relaxed">
-          <strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to be a Branch Admin for:{' '}
-          <strong className="text-[var(--text)]">{invitation.branches.join(', ')}</strong>
+          {kind === 'employee' ? (
+            <><strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to SimpleHours to see your schedule.</>
+          ) : (
+            <>
+              <strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to be a Branch Admin for:{' '}
+              <strong className="text-[var(--text)]">{(invitation.branches ?? []).join(', ')}</strong>
+            </>
+          )}
         </p>
       </div>
 
@@ -167,7 +192,9 @@ export default function AcceptInvite() {
             <MapPin className="w-4 h-4" />
           </div>
           <div className="text-[var(--muted)] leading-relaxed">
-            As a Branch Admin you'll manage the workers, roster and timesheets of these branches.
+            {kind === 'employee'
+              ? 'You’ll be able to see your roster and request leave, and — if your organisation allows it — record your own hours.'
+              : 'As a Branch Admin you’ll manage the workers, roster and timesheets of these branches.'}
           </div>
         </div>
 

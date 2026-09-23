@@ -329,7 +329,7 @@ export default function Dashboard() {
                   Copy link
                 </Button>
               </div>
-              <p className="text-[11px] text-[var(--muted)]">Share it with your Branch Admins. Workers do not sign in.</p>
+              <p className="text-[11px] text-[var(--muted)]">Share it with your Branch Admins and any workers you give portal access. It’s the only place anyone signs in.</p>
             </div>
 
             <Link

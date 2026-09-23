@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
-import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
+import { Outlet, useLocation, Link } from 'react-router-dom';
 import {
   Clock,
   Calendar,
@@ -50,7 +50,6 @@ interface NavSection {
 }
 
 export default function Layout() {
-  const navigate = useNavigate();
   const location = useLocation();
   const toast = useToast();
   const { access, isOwner, can } = useAccess();
@@ -131,7 +130,7 @@ export default function Layout() {
       const token = res.data?.data?.token;
       if (!token) throw new Error('No session returned');
       storeSession(token);
-      window.location.assign('/dashboard');
+      window.location.assign('/app');
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Could not switch organisation. Please try again.');
       setSwitching(false);
@@ -139,9 +138,8 @@ export default function Layout() {
   };
 
   const handleSignOut = async () => {
-    const path = await signOut();
     forgetActiveBranches();
-    navigate(path, { replace: true });
+    await signOut();
   };
 
   const toggleTheme = () => setTheme(t => (t === 'light' ? 'dark' : 'light'));

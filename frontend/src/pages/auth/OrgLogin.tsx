@@ -1,23 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Lock, Mail, ShieldCheck, ArrowRight, KeyRound, AlertCircle, ArrowLeft, Loader2, Clock, Building2, Info } from 'lucide-react';
+import { Lock, Mail, ShieldCheck, ArrowRight, KeyRound, AlertCircle, ArrowLeft, Loader2, Info } from 'lucide-react';
 import api from '../../services/apiClient';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
-import { ROLE_LABEL, storeSession, type Role } from '../../hooks/useAccess';
+import { storeSession } from '../../hooks/useAccess';
 
 interface OrganisationBrand {
   name: string;
 }
 
-interface OrganisationOption {
-  id: string;
-  name: string;
-  role: Role;
-}
-
-type Step = 'credentials' | 'organisation' | 'code';
+type Step = 'credentials' | 'code';
 
 const GENERIC_FAILURE = 'Email or password is incorrect.';
 
@@ -37,8 +31,10 @@ const toneClasses = {
 };
 
 /**
- * Sign-in page for `/login/:slug` (an organisation's private sign-in link) and `/login`
- * (email and password only; the account's organisations decide where it signs in).
+ * Sign-in page for `/login/:slug`, an organisation's own sign-in link — the only sign-in page
+ * SimpleHours has. The link names the organisation; the server still checks that the account
+ * belongs to it, exactly as for any other request. There is no organisation picker and no
+ * slug-less mode (`/login` itself is a "page not found").
  */
 export const OrgLogin: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
@@ -48,12 +44,11 @@ export const OrgLogin: React.FC = () => {
 
   // Organisation named by the private sign-in link
   const [brand, setBrand] = useState<OrganisationBrand | null>(null);
-  const [lookupState, setLookupState] = useState<'loading' | 'ready' | 'invalid'>(slug ? 'loading' : 'ready');
+  const [lookupState, setLookupState] = useState<'loading' | 'ready' | 'invalid'>('loading');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [step, setStep] = useState<Step>('credentials');
-  const [organisations, setOrganisations] = useState<OrganisationOption[]>([]);
   const [tempToken, setTempToken] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [code, setCode] = useState('');
@@ -64,8 +59,7 @@ export const OrgLogin: React.FC = () => {
 
   useEffect(() => {
     if (!slug) {
-      setBrand(null);
-      setLookupState('ready');
+      setLookupState('invalid');
       return;
     }
     let cancelled = false;
@@ -100,11 +94,6 @@ export const OrgLogin: React.FC = () => {
 
   /** Handles every sign-in response shape from /auth/login and /auth/verify-2fa. */
   const handleSignInResponse = (body: any) => {
-    if (body?.require_organisation_selection) {
-      setOrganisations(Array.isArray(body.organisations) ? body.organisations : []);
-      setStep('organisation');
-      return;
-    }
     if (body?.require_login_verification) {
       navigate(`/verify-login?challenge=${encodeURIComponent(body.challenge_id || '')}`);
       return;
@@ -118,25 +107,22 @@ export const OrgLogin: React.FC = () => {
     }
     if (body?.data?.token) {
       storeSession(body.data.token);
-      navigate('/dashboard', { replace: true });
+      // /app sends each role to its own home (employees to their schedule, managers to the dashboard).
+      navigate('/app', { replace: true });
       return;
     }
     setError(GENERIC_FAILURE);
   };
 
-  const signIn = async (organisationId?: string) => {
+  const signIn = async () => {
     setLoading(true);
     setError(null);
     setNotice(null);
     try {
-      const payload: Record<string, string> = { email: email.trim(), password };
-      if (slug) payload.organisation_slug = slug;
-      else if (organisationId) payload.organisation_id = organisationId;
-      const res = await api.post('/auth/login', payload);
+      const res = await api.post('/auth/login', { email: email.trim(), password, organisation_slug: slug });
       handleSignInResponse(res.data);
     } catch (err: any) {
       setError(failureMessage(err));
-      if (organisationId) setStep('credentials');
     } finally {
       setLoading(false);
     }
@@ -215,17 +201,17 @@ export const OrgLogin: React.FC = () => {
           </div>
           <h1 className="text-xl font-bold text-[var(--text)]">This sign-in link isn't valid</h1>
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            Check the link you were given, or sign in with your email and password instead.
+            Check the link your organisation gave you. If it still doesn’t work, ask your manager or organisation owner for the current sign-in link.
           </p>
-          <Link to="/login" className="block pt-2">
-            <Button variant="primary" size="md" className="w-full">Go to sign in</Button>
+          <Link to="/" className="block pt-2">
+            <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
           </Link>
         </Card>
       </div>
     );
   }
 
-  const title = brand ? brand.name : 'Sign in to SimpleHours';
+  const title = brand ? brand.name : 'Sign in';
 
   return (
     <div className="min-h-screen flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 bg-[var(--bg)] text-[var(--text)]">
@@ -233,19 +219,13 @@ export const OrgLogin: React.FC = () => {
         <div className="text-center space-y-2">
           <Link to="/" className="inline-flex" aria-label="SimpleHours home">
             <div className="w-12 h-12 rounded-xl bg-[var(--primary)] flex items-center justify-center text-white font-bold text-xl shadow-xs mx-auto overflow-hidden">
-              {brand ? (
-                brand.name.charAt(0).toUpperCase()
-              ) : (
-                <Clock className="w-6 h-6" />
-              )}
+              {(brand?.name || 'S').charAt(0).toUpperCase()}
             </div>
           </Link>
-          {brand && (
-            <div className="text-[11px] font-semibold tracking-wider uppercase text-[var(--primary)]">SimpleHours</div>
-          )}
+          <div className="text-[11px] font-semibold tracking-wider uppercase text-[var(--primary)]">SimpleHours</div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">{title}</h1>
           <p className="text-xs text-[var(--muted)]">
-            {brand ? 'Sign in to manage rosters, timesheets and reports' : 'For Organisation Owners and Branch Admins'}
+            Sign in to your rosters, timesheets and schedule
           </p>
         </div>
 
@@ -296,7 +276,7 @@ export const OrgLogin: React.FC = () => {
                   leftIcon={<Lock className="w-4 h-4" />}
                 />
                 <div className="flex justify-end mt-1.5">
-                  <Link to="/forgot-password" className="text-xs text-[var(--primary)] hover:underline">
+                  <Link to={`/forgot-password?org=${encodeURIComponent(slug || '')}`} className="text-xs text-[var(--primary)] hover:underline">
                     Forgot password?
                   </Link>
                 </div>
@@ -305,38 +285,6 @@ export const OrgLogin: React.FC = () => {
                 Sign in
               </Button>
             </form>
-          )}
-
-          {step === 'organisation' && (
-            <div className="space-y-4">
-              <div className="text-center space-y-1">
-                <h2 className="text-sm font-bold text-[var(--text)]">Choose an organisation</h2>
-                <p className="text-xs text-[var(--muted)]">Your account has access to more than one organisation.</p>
-              </div>
-              <div className="space-y-2">
-                {organisations.map(org => (
-                  <button
-                    key={org.id}
-                    type="button"
-                    onClick={() => void signIn(org.id)}
-                    disabled={loading}
-                    className="w-full p-3.5 rounded-xl border border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--panel-subtle)] text-left transition-colors flex items-center justify-between gap-3 disabled:opacity-60"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <Building2 className="w-4 h-4 text-[var(--primary)] shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-[var(--text)] truncate">{org.name}</div>
-                        <div className="text-[11px] text-[var(--muted)]">{ROLE_LABEL[org.role] ?? ''}</div>
-                      </div>
-                    </div>
-                    <ArrowRight className="w-4 h-4 text-[var(--muted)] shrink-0" />
-                  </button>
-                ))}
-              </div>
-              <button type="button" onClick={backToCredentials} className="text-xs text-[var(--muted)] hover:text-[var(--text)] inline-flex items-center gap-1">
-                <ArrowLeft className="w-3.5 h-3.5" /> Back
-              </button>
-            </div>
           )}
 
           {step === 'code' && (

@@ -178,6 +178,9 @@ export default function Settings() {
       });
   }, [activeTab, canManageSecurity, branchAdmins]);
 
+  // Declared before the early return below: hooks must run in the same order on every render.
+  const [savingWorkforceField, setSavingWorkforceField] = useState<string | null>(null);
+
   if (!access) return null;
 
   // --- My account -----------------------------------------------------------
@@ -239,7 +242,6 @@ export default function Settings() {
   };
 
   // --- Workforce ----------------------------------------------------------------
-  const [savingWorkforceField, setSavingWorkforceField] = useState<string | null>(null);
   const handleToggleWorkforce = async (field: 'employees_can_submit_timesheets' | 'automatically_merge_leave_with_roster' | 'leave_requests_require_approval', value: boolean) => {
     if (!org) return;
     setSavingWorkforceField(field);

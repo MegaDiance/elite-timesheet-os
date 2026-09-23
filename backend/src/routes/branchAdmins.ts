@@ -382,8 +382,8 @@ router.post('/:userId/reset-password-link', async (req: AuthRequest, res: Respon
         const token = newSecretToken();
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [targetUserId]);
         await query(
-            'INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
-            [token.hash, targetUserId, new Date(Date.now() + 3600000).toISOString()]
+            'INSERT INTO reset_tokens (token_hash, user_id, expires_at, org_id) VALUES ($1, $2, $3, $4)',
+            [token.hash, targetUserId, new Date(Date.now() + 3600000).toISOString(), ctx.orgId]
         );
 
         await writeAudit({

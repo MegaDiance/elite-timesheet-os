@@ -1,5 +1,5 @@
-import { type JSX } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
+import { useEffect, useRef, type JSX } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { PublicLayout } from './layouts/PublicLayout';
 import { Home } from './pages/public/Home';
@@ -12,6 +12,8 @@ import SignUp from './pages/auth/SignUp';
 import SetupOrganisation from './pages/SetupOrganisation';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import NotFound from './pages/public/NotFound';
+import { portalLoginPath } from './services/portal';
 
 import Dashboard from './pages/Dashboard';
 import Roster from './pages/Roster';
@@ -63,7 +65,7 @@ function NoAccess() {
 function Guard({ permission, children }: { permission?: Permission; children: JSX.Element }) {
   const { access, loading, can } = useAccess();
   if (loading) return <Loading />;
-  if (!access) return <Navigate to="/login" replace />;
+  if (!access) return <Navigate to={portalLoginPath()} replace />;
   if (access.role === 'EMPLOYEE') return <NoAccess />;
   if (permission && !can(permission)) return <NoAccess />;
   return children;
@@ -73,19 +75,33 @@ function Guard({ permission, children }: { permission?: Permission; children: JS
 function EmployeeGuard({ requireTimesheets, children }: { requireTimesheets?: boolean; children: JSX.Element }) {
   const { access, loading } = useAccess();
   if (loading) return <Loading />;
-  if (!access) return <Navigate to="/login" replace />;
+  if (!access) return <Navigate to={portalLoginPath()} replace />;
   if (access.role !== 'EMPLOYEE') return <NoAccess />;
+  // Employee timesheets switched off: the page does not exist for this employee (the API refuses it too).
   if (requireTimesheets && !access.employee_capabilities?.can_submit_timesheets) return <Navigate to="/my/schedule" replace />;
   return children;
 }
 
+/** Re-reads access on every in-app navigation, so a page switched off elsewhere disappears from the nav on the next click. */
+function AccessSync() {
+  const { pathname } = useLocation();
+  const { refresh } = useAccess();
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    void refresh();
+  }, [pathname, refresh]);
+  return null;
+}
+
 function AppShell() {
   const { access, loading } = useAccess();
-  if (!localStorage.getItem('token')) return <Navigate to="/login" replace />;
+  if (!localStorage.getItem('token')) return <Navigate to={portalLoginPath()} replace />;
   if (loading && !access) return <Loading />;
-  if (!access) return <Navigate to="/login" replace />;
+  if (!access) return <Navigate to={portalLoginPath()} replace />;
   return (
     <ActiveBranchProvider>
+      <AccessSync />
       <Layout />
     </ActiveBranchProvider>
   );
@@ -110,14 +126,16 @@ export default function App() {
         </Route>
 
         {/* Sign-in and account set-up */}
+        {/* Sign-in only exists at an organisation's own link. /login is deliberately not a sign-in page. */}
         <Route path="/login/:slug" element={<OrgLogin />} />
-        <Route path="/login" element={<OrgLogin />} />
+        <Route path="/login" element={<NotFound />} />
         <Route path="/verify-login" element={<VerifyLogin />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/setup-organisation" element={<SetupOrganisation />} />
-        <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/accept-invite" element={<AcceptInvite kind="branch-admin" />} />
+        <Route path="/accept-employee-invite" element={<AcceptInvite kind="employee" />} />
 
         {/* Signed-in application */}
         <Route element={<AppShell />}>

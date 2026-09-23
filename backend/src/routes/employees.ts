@@ -75,7 +75,11 @@ router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRe
         const includeInactive = req.query.include_inactive === 'true';
 
         const result = await query(
-            `SELECT ${WORKER_COLUMNS}, l.name AS location_name
+            `SELECT ${WORKER_COLUMNS}, l.name AS location_name,
+                    CASE WHEN e.user_id IS NOT NULL THEN 'active'
+                         WHEN EXISTS (SELECT 1 FROM employee_invitations i
+                                       WHERE i.employee_id = e.id AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()) THEN 'invited'
+                         ELSE 'none' END AS portal_status
                FROM employees e
                JOIN locations l ON l.id = e.location_id AND l.org_id = e.org_id
               WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[])

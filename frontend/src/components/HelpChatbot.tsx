@@ -90,9 +90,9 @@ const TOPICS: Topic[] = [
   {
     match: /worker|people|team member|department|contract/,
     owner:
-      'Workers are the people you roster and pay; they don’t sign in. Add them on the Workers page with their branch, department and contracted hours, and give them a fortnight template to speed up rostering.',
+      'Workers are the people you roster and pay. Use Portal access on the Workers page if you want one to see their own schedule. Add them on the Workers page with their branch, department and contracted hours, and give them a fortnight template to speed up rostering.',
     branchAdmin:
-      'Workers are the people you roster and pay; they don’t sign in. Add them to one of your branches on the Workers page with their department and contracted hours, and give them a fortnight template to speed up rostering.',
+      'Workers are the people you roster and pay. Use Portal access on the Workers page if you want one to see their own schedule. Add them to one of your branches on the Workers page with their department and contracted hours, and give them a fortnight template to speed up rostering.',
     action: { label: 'Open Workers', path: '/workers', permission: 'workers.manage' },
   },
   {

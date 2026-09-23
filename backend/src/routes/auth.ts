@@ -28,6 +28,21 @@ async function findOrganisationBySlug(slug: string): Promise<{ id: string } | nu
     return res.rows[0] || null;
 }
 
+/**
+ * Where a user should sign in after an auth flow that happens outside a session (password reset):
+ * the organisation the flow was started from when they still have access there, otherwise their
+ * only organisation. Null when that is ambiguous — there is no generic sign-in page to fall back
+ * to, and the user's organisations are never listed outside a session.
+ */
+async function portalLoginPath(userId: string, preferredOrgId: string | null): Promise<string | null> {
+    if (preferredOrgId && await resolveAccess(userId, preferredOrgId)) {
+        const org = await query('SELECT portal_slug FROM organisations WHERE id = $1 AND is_active = true', [preferredOrgId]);
+        if (org.rows[0]?.portal_slug) return `/login/${org.rows[0].portal_slug}`;
+    }
+    const orgs = await listAccessibleOrganisations(userId);
+    return orgs.length === 1 && orgs[0].portal_slug ? `/login/${orgs[0].portal_slug}` : null;
+}
+
 /** Issues the email one-time code and the short-lived token for the second login step. */
 async function beginTwoFactorStep(user: any, orgId: string): Promise<{ status: number; body: any }> {
     const { code, hash } = newSixDigitCode();
@@ -97,15 +112,21 @@ async function completeLogin(user: any, orgId: string, clientInfo: ClientInfo, a
 
 /**
  * POST /api/auth/login
- * { email, password, organisation_slug? | organisation_id? }
+ * { email, password, organisation_slug }
  *
- * Unknown email, wrong password, inactive account, unknown organisation and "no access to that
+ * Sign-in only happens through an organisation's own portal link (/login/:slug), so the slug is
+ * required. There is deliberately no generic sign-in: no organisation picker, no sign-in by
+ * organisation id, and nothing that reveals which organisations an email belongs to. Unknown
+ * email, wrong password, inactive account, unknown organisation and "no access to that
  * organisation" all produce the same response.
  */
 router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Response) => {
-    const { email, password, organisation_slug, organisation_id } = req.body || {};
+    const { email, password, organisation_slug } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
         return res.status(400).json({ success: false, error: { code: 'VALIDATION_FAILED', message: 'Email and password are required.' } });
+    }
+    if (typeof organisation_slug !== 'string' || !organisation_slug.trim()) {
+        return res.status(400).json({ success: false, error: { code: 'ORGANISATION_PORTAL_REQUIRED', message: 'Sign in using your organisation\'s sign-in link.' } });
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -124,25 +145,9 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
             return fail(user?.id);
         }
 
-        // Which organisation? The private entry URL names it; otherwise the account's own organisations decide.
-        let orgId: string | null = null;
-        if (typeof organisation_slug === 'string' && organisation_slug.trim()) {
-            orgId = (await findOrganisationBySlug(organisation_slug))?.id || null;
-            if (!orgId) return fail(user.id);
-        } else if (isUuid(organisation_id)) {
-            orgId = organisation_id;
-        } else {
-            const orgs = await listAccessibleOrganisations(user.id);
-            if (orgs.length === 0) return fail(user.id);
-            if (orgs.length > 1) {
-                return res.json({
-                    success: true,
-                    require_organisation_selection: true,
-                    organisations: orgs.map(o => ({ id: o.id, name: o.name, role: o.role }))
-                });
-            }
-            orgId = orgs[0].id;
-        }
+        // The organisation is named by the portal URL only; access to it is then checked like any other.
+        const orgId = (await findOrganisationBySlug(organisation_slug))?.id;
+        if (!orgId) return fail(user.id);
 
         if (!(await resolveAccess(user.id, orgId))) {
             return fail(user.id);
@@ -552,7 +557,7 @@ router.post('/security/revoke-other-sessions', requireAuth, async (req: AuthRequ
 // Password reset
 // ---------------------------------------------------------------------------
 router.post('/forgot-password', throttle, async (req: RateLimitedRequest, res: Response) => {
-    const { email } = req.body || {};
+    const { email, organisation_slug } = req.body || {};
     if (typeof email !== 'string' || !email.trim()) {
         return res.status(400).json({ success: false, error: { message: 'Email required' } });
     }
@@ -568,11 +573,19 @@ router.post('/forgot-password', throttle, async (req: RateLimitedRequest, res: R
         const user = userRes.rows[0];
         if (!user) return res.json(generic);
 
+        // The portal the request came from, kept only when this account really belongs there, so the
+        // completed reset can send the user back to that organisation's own sign-in page.
+        let orgId: string | null = null;
+        if (typeof organisation_slug === 'string' && organisation_slug.trim()) {
+            const org = await findOrganisationBySlug(organisation_slug);
+            if (org && await resolveAccess(user.id, org.id)) orgId = org.id;
+        }
+
         const token = newSecretToken();
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [user.id]);
         await query(
-            'INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
-            [token.hash, user.id, new Date(Date.now() + 3600000).toISOString()]
+            'INSERT INTO reset_tokens (token_hash, user_id, expires_at, org_id) VALUES ($1, $2, $3, $4)',
+            [token.hash, user.id, new Date(Date.now() + 3600000).toISOString(), orgId]
         );
 
         const template = buildPasswordResetEmailTemplate({ resetLink: `${publicBaseUrl()}/reset-password?token=${token.raw}`, recipientEmail: user.email });
@@ -615,7 +628,7 @@ router.post('/reset-password', checkRateLimit, async (req: RateLimitedRequest, r
     try {
         // Single use: the token row is consumed by the same statement that validates it.
         const tokenRes = await query(
-            'DELETE FROM reset_tokens WHERE token_hash = $1 AND expires_at > NOW() RETURNING user_id',
+            'DELETE FROM reset_tokens WHERE token_hash = $1 AND expires_at > NOW() RETURNING user_id, org_id',
             [sha256Hex(token.trim())]
         );
         if (tokenRes.rows.length === 0) {
@@ -629,7 +642,11 @@ router.post('/reset-password', checkRateLimit, async (req: RateLimitedRequest, r
         await revokeAllUserSessions(userId);
         clearRateLimit(req.rateLimitKey);
 
-        res.json({ success: true, message: 'Password updated successfully. You can now sign in.' });
+        res.json({
+            success: true,
+            data: { login_path: await portalLoginPath(userId, tokenRes.rows[0].org_id) },
+            message: 'Password updated successfully. You can now sign in.'
+        });
     } catch (err) {
         sendError(res, err, 'RESET PASSWORD ERROR');
     }

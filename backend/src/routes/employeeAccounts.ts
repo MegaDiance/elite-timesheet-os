@@ -276,7 +276,7 @@ router.post('/:employeeId/reset-password-link', requirePermission(Permission.WOR
 
         const token = newSecretToken();
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [worker.user_id]);
-        await query('INSERT INTO reset_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [token.hash, worker.user_id, new Date(Date.now() + 3600000).toISOString()]);
+        await query('INSERT INTO reset_tokens (token_hash, user_id, expires_at, org_id) VALUES ($1, $2, $3, $4)', [token.hash, worker.user_id, new Date(Date.now() + 3600000).toISOString(), ctx.orgId]);
 
         await writeAudit({
             orgId: ctx.orgId, actorId: ctx.userId, action: 'EMPLOYEE_PASSWORD_RESET_LINK_CREATED',

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../services/apiClient';
+import { portalLoginPath } from '../services/portal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Clock, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Clock, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -19,6 +20,10 @@ export default function ResetPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set when the password changed but the server could not tell which organisation to return to.
+  const [doneWithoutPortal, setDoneWithoutPortal] = useState(false);
+  const backTo = portalLoginPath();
+  const backLabel = backTo === '/' ? 'Back to the home page' : 'Back to sign in';
 
   // Validate token on mount
   useEffect(() => {
@@ -66,10 +71,17 @@ export default function ResetPassword() {
 
     setIsSubmitting(true);
     try {
-      await api.post('/auth/reset-password', { token, password });
-      // Every session was ended by the reset, so sign in again.
-      const slug = localStorage.getItem('last_org_slug');
-      navigate(slug ? `/login/${slug}?reason=password-reset` : '/login?reason=password-reset', { replace: true });
+      const res = await api.post('/auth/reset-password', { token, password });
+      // Every session was ended by the reset, so sign in again — at the organisation's own sign-in
+      // page, which the server works out from the reset link. There is no generic page to fall back to.
+      const loginPath: string | null = res.data?.data?.login_path || null;
+      if (loginPath && /^\/login\/[a-z0-9-]+$/.test(loginPath)) {
+        navigate(`${loginPath}?reason=password-reset`, { replace: true });
+      } else if (portalLoginPath() !== '/') {
+        navigate(portalLoginPath('password-reset'), { replace: true });
+      } else {
+        setDoneWithoutPortal(true);
+      }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'We couldn\u2019t reset your password. The link may have expired.');
     } finally {
@@ -99,6 +111,16 @@ export default function ResetPassword() {
               <Clock className="w-6 h-6 animate-spin text-[var(--primary)] mx-auto" />
               <p className="text-xs font-medium text-[var(--muted)]">Checking your reset link…</p>
             </div>
+          ) : doneWithoutPortal ? (
+            <div className="text-center py-4 space-y-3">
+              <div className="w-12 h-12 rounded-full bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <h2 className="text-lg font-bold text-[var(--text)]">Your password has been changed</h2>
+              <p className="text-xs text-[var(--muted)] leading-relaxed">
+                Sign in with your new password using your organisation’s sign-in link.
+              </p>
+            </div>
           ) : !tokenValid ? (
             <div className="text-center py-4 space-y-4">
               <div className="w-12 h-12 rounded-full bg-[var(--danger-light)] text-[var(--danger)] flex items-center justify-center mx-auto">
@@ -114,9 +136,9 @@ export default function ResetPassword() {
                     Request a new link
                   </Button>
                 </Link>
-                <Link to="/login" className="block">
+                <Link to={backTo} className="block">
                   <Button variant="ghost" size="sm" className="w-full">
-                    Back to sign in
+                    {backLabel}
                   </Button>
                 </Link>
               </div>
@@ -181,9 +203,9 @@ export default function ResetPassword() {
               </Button>
 
               <div className="text-center pt-2">
-                <Link to="/login" className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]">
+                <Link to={backTo} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]">
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to sign in</span>
+                  <span>{backLabel}</span>
                 </Link>
               </div>
             </form>

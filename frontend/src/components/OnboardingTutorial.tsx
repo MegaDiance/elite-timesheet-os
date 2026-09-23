@@ -116,7 +116,7 @@ export const OnboardingTutorial: FC<OnboardingTutorialProps> = ({ forceOpen = fa
                 </div>
                 <div className="text-[var(--muted)]">sam@example.com.au → Richmond, Footscray</div>
               </div>
-              <p>Workers don't sign in. They are records you roster, timesheet and report on.</p>
+              <p>Workers are the people you roster, timesheet and report on. You can optionally give a worker portal access to see their own schedule.</p>
             </div>
           ),
           primaryAction: 'Next: the roster',
@@ -134,7 +134,7 @@ export const OnboardingTutorial: FC<OnboardingTutorialProps> = ({ forceOpen = fa
               </p>
               <p>
                 The Organisation Owner creates branches and decides who is a Branch Admin. Ask them if you need access to
-                another branch. Workers don't sign in; you record their hours for them.
+                another branch. You record their hours, unless you let them record their own in the employee portal.
               </p>
             </div>
           ),
