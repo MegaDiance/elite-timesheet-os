@@ -40,6 +40,8 @@ export interface Entry {
   start: string | null;
   finish: string | null;
   hours: number;
+  /** Whether the org's unpaid break may be deducted from this entry. Defaults to true. */
+  has_break: boolean;
 }
 
 export interface DayRecord {
@@ -69,6 +71,7 @@ function readEntries(list: unknown): Entry[] {
     start: hhmm(e?.start),
     finish: hhmm(e?.finish),
     hours: Number(e?.hours) || 0,
+    has_break: e?.has_break !== false,
   }));
 }
 
@@ -165,6 +168,7 @@ interface Span {
   start: number;
   end: number;
   type: EntryType;
+  hasBreak: boolean;
 }
 
 type SpanResult = { start: number; end: number } | 'same' | 'backwards' | null;
@@ -195,7 +199,7 @@ function computeDayHours(spans: Span[], rule: BreakRule): { hours: Map<number, n
   let gapMinutes = 0;
   for (let i = 1; i < sorted.length; i++) gapMinutes += Math.max(0, sorted[i].start - sorted[i - 1].end);
 
-  const work = sorted.filter(s => s.type === 'WORK' && s.end - s.start >= rule.breakMins);
+  const work = sorted.filter(s => s.type === 'WORK' && s.hasBreak && s.end - s.start >= rule.breakMins);
   const deduct = rule.breakMins > 0 && work.length > 0 && totalMinutes >= rule.thresholdHours * 60 && gapMinutes < rule.breakMins;
   const longest = work.reduce((best, s) => (s.end - s.start > best.end - best.start ? s : best), work[0]);
 
@@ -220,7 +224,7 @@ export function previewDayHours(entries: Entry[], rule: BreakRule): HoursPreview
   const spans: Span[] = [];
   entries.forEach((e, index) => {
     const span = e.start && e.finish ? spanOf(e.start, e.finish) : null;
-    if (span && typeof span === 'object') spans.push({ index, ...span, type: e.type });
+    if (span && typeof span === 'object') spans.push({ index, ...span, type: e.type, hasBreak: e.has_break });
   });
   const { hours, breakAt } = computeDayHours(spans, rule);
   const perEntry = entries.map((e, index) => {
@@ -245,6 +249,7 @@ export interface DraftLine {
   start: string;
   finish: string;
   hours: number;
+  has_break: boolean;
 }
 
 export const MAX_LINES = 12;
@@ -252,7 +257,7 @@ export const MAX_LINES = 12;
 let keySeq = 0;
 const newKey = () => `line-${(keySeq++).toString(36)}`;
 
-export const blankLine = (start = ''): DraftLine => ({ key: newKey(), type: 'WORK', hoursOnly: false, start, finish: '', hours: 0 });
+export const blankLine = (start = ''): DraftLine => ({ key: newKey(), type: 'WORK', hoursOnly: false, start, finish: '', hours: 0, has_break: true });
 
 export const lineFromEntry = (e: Entry): DraftLine => ({
   key: newKey(),
@@ -261,6 +266,7 @@ export const lineFromEntry = (e: Entry): DraftLine => ({
   start: e.start ?? '',
   finish: e.finish ?? '',
   hours: !e.start && !e.finish ? e.hours : 0,
+  has_break: e.has_break,
 });
 
 /** A line nobody has filled in. It is left out when saving, so an empty part saves as nothing. */
@@ -268,8 +274,8 @@ export const isUntouched = (l: DraftLine): boolean => !l.hoursOnly && !l.start &
 
 /** What a line saves (a timed line's hours are computed by the server). */
 export const lineToEntry = (l: DraftLine): Entry => (l.hoursOnly
-  ? { type: l.type, start: null, finish: null, hours: round2(l.hours) }
-  : { type: l.type, start: l.start || null, finish: l.finish || null, hours: 0 });
+  ? { type: l.type, start: null, finish: null, hours: round2(l.hours), has_break: true }
+  : { type: l.type, start: l.start || null, finish: l.finish || null, hours: 0, has_break: l.has_break });
 
 export const linesToEntries = (lines: DraftLine[]): Entry[] => lines.filter(l => !isUntouched(l)).map(lineToEntry);
 
@@ -278,7 +284,7 @@ export const linesFor = (entries: Entry[]): DraftLine[] => (entries.length > 0 ?
 
 /** A comparable fingerprint of what a part would save. */
 export const partKey = (entries: Entry[]): string =>
-  JSON.stringify(entries.map(e => (e.start || e.finish ? [e.type, e.start, e.finish] : [e.type, round2(e.hours)])));
+  JSON.stringify(entries.map(e => (e.start || e.finish ? [e.type, e.start, e.finish, e.has_break] : [e.type, round2(e.hours)])));
 
 export interface LinesCheck {
   /** The problem with each line (same order as the input), or null. */
@@ -315,7 +321,7 @@ export function checkLines(lines: DraftLine[]): LinesCheck {
     if (span === null) return flag(i, 'Enter times like 9, 5p or 17:30.');
     if (span === 'same') return flag(i, 'The start and finish are the same time.');
     if (span === 'backwards') return flag(i, 'The finish is before the start. (A shift can run past midnight for up to 14 hours.)');
-    spans.push({ index: i, ...span, type: l.type });
+    spans.push({ index: i, ...span, type: l.type, hasBreak: l.has_break });
   });
 
   const sorted = [...spans].sort((a, b) => a.start - b.start);

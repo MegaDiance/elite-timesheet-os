@@ -42,6 +42,7 @@ interface TemplateRow {
   roster_in: string | null;
   roster_out: string | null;
   roster_hours: number | string | null;
+  has_break?: boolean;
 }
 
 interface Worker {
@@ -512,6 +513,7 @@ interface DraftSegment {
   roster_out: string;
   /** Only used for untimed segments (e.g. a leave day entered as hours); timed segments are calculated by the server. */
   roster_hours: number;
+  has_break: boolean;
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'incomplete' | 'error';
@@ -532,6 +534,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
           roster_in: (t.roster_in || '').slice(0, 5),
           roster_out: (t.roster_out || '').slice(0, 5),
           roster_hours: Number(t.roster_hours) || 0,
+          has_break: t.has_break !== false,
         }))
     )
   );
@@ -551,11 +554,11 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
       setSaveState('incomplete');
       return;
     }
-    type TemplatePayload = { day_index: number; segment_type: string; roster_in?: string; roster_out?: string; roster_hours?: number };
+    type TemplatePayload = { day_index: number; segment_type: string; roster_in?: string; roster_out?: string; roster_hours?: number; has_break: boolean };
     const templates = list.flatMap((day, dayIndex) =>
       day.flatMap((s): TemplatePayload[] => {
-        if (s.roster_in && s.roster_out) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out }];
-        if (s.roster_hours > 0) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_hours: s.roster_hours }];
+        if (s.roster_in && s.roster_out) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out, has_break: s.has_break }];
+        if (s.roster_hours > 0) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_hours: s.roster_hours, has_break: s.has_break }];
         return [];
       })
     );
@@ -598,9 +601,12 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
   const changeSegment = (dayIndex: number, key: number, field: 'segment_type' | 'roster_in' | 'roster_out', value: string) =>
     update(days.map((day, i) => (i === dayIndex ? day.map(s => (s.key === key ? { ...s, [field]: value } : s)) : day)));
 
+  const toggleSegmentBreak = (dayIndex: number, key: number, hasBreak: boolean) =>
+    update(days.map((day, i) => (i === dayIndex ? day.map(s => (s.key === key ? { ...s, has_break: hasBreak } : s)) : day)));
+
   const addSegment = (dayIndex: number) =>
     setDays(days.map((day, i) => (i === dayIndex
-      ? [...day, { key: nextKey(), segment_type: 'WORK', roster_in: '', roster_out: '', roster_hours: 0 }]
+      ? [...day, { key: nextKey(), segment_type: 'WORK', roster_in: '', roster_out: '', roster_hours: 0, has_break: true }]
       : day)));
 
   const removeSegment = (dayIndex: number, key: number) =>
@@ -673,6 +679,17 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
                             />
                             {!segment.roster_in && !segment.roster_out && segment.roster_hours > 0 && (
                               <Badge size="sm" title="Entered as hours without times">{segment.roster_hours}h, no times</Badge>
+                            )}
+                            {segment.roster_in && segment.roster_out && segment.segment_type === 'WORK' && (
+                              <label className="flex items-center gap-1 text-[11px] text-[var(--muted)] cursor-pointer" title="Whether the org's unpaid break rule applies to this shift">
+                                <input
+                                  type="checkbox"
+                                  checked={segment.has_break}
+                                  onChange={e => toggleSegmentBreak(dayIndex, segment.key, e.target.checked)}
+                                  className="h-3.5 w-3.5 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
+                                />
+                                Break
+                              </label>
                             )}
                             <button
                               type="button"

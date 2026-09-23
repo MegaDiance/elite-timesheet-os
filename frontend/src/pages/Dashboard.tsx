@@ -29,6 +29,7 @@ import { Skeleton, CardSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import { formatFortnightLabel } from '../utils/fortnight';
+import { STATUS_VARIANT, type DayStatus } from '../components/roster/DayBox';
 
 const SEGMENT_LABEL: Record<string, string> = {
   WORK: 'Normal Work',
@@ -508,7 +509,7 @@ export default function Dashboard() {
                         {[t.location_name, t.department].filter(Boolean).join(' • ')}
                       </div>
                     </div>
-                    <Badge variant={t.status === 'Locked' ? 'purple' : 'outline'} size="sm">{t.status}</Badge>
+                    <Badge variant={STATUS_VARIANT[t.status as DayStatus] ?? 'outline'} size="sm">{t.status}</Badge>
                   </div>
                 ))}
                 <Link to="/timesheets" className="block pt-1">

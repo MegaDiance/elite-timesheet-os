@@ -105,7 +105,7 @@ export async function autoRosterAll(scope: BulkScope): Promise<{ workers: number
 
     for (const workerId of workerIds) {
         const templates = (await query(
-            'SELECT day_index, segment_type, roster_in, roster_out FROM roster_templates WHERE employee_id = $1 AND roster_in IS NOT NULL AND roster_out IS NOT NULL ORDER BY day_index, roster_in',
+            'SELECT day_index, segment_type, roster_in, roster_out, has_break FROM roster_templates WHERE employee_id = $1 AND roster_in IS NOT NULL AND roster_out IS NOT NULL ORDER BY day_index, roster_in',
             [workerId]
         )).rows;
 
@@ -119,7 +119,7 @@ export async function autoRosterAll(scope: BulkScope): Promise<{ workers: number
             if (shifts.length === 0) continue;
 
             const planned = normaliseDaySegments(
-                shifts.map((t: any) => ({ segment_type: t.segment_type, roster_in: t.roster_in, roster_out: t.roster_out })),
+                shifts.map((t: any) => ({ segment_type: t.segment_type, roster_in: t.roster_in, roster_out: t.roster_out, has_break: t.has_break })),
                 breakRuleFor(settings, dateIso)
             ).segments;
 
@@ -140,13 +140,13 @@ export async function autoRosterAll(scope: BulkScope): Promise<{ workers: number
                     const shift = planned[i];
                     if (worked[i]) {
                         await tx(
-                            'UPDATE shift_segments SET segment_type = $1, roster_in = $2, roster_out = $3, roster_hours = $4, is_unplanned = false WHERE id = $5',
-                            [shift.segment_type, shift.roster_in, shift.roster_out, shift.roster_hours, worked[i].id]
+                            'UPDATE shift_segments SET segment_type = $1, roster_in = $2, roster_out = $3, roster_hours = $4, is_unplanned = false, has_break = $5 WHERE id = $6',
+                            [shift.segment_type, shift.roster_in, shift.roster_out, shift.roster_hours, shift.has_break, worked[i].id]
                         );
                     } else {
                         await tx(
-                            'INSERT INTO shift_segments (id, record_id, segment_type, roster_in, roster_out, roster_hours) VALUES ($1, $2, $3, $4, $5, $6)',
-                            [crypto.randomUUID(), recordId, shift.segment_type, shift.roster_in, shift.roster_out, shift.roster_hours]
+                            'INSERT INTO shift_segments (id, record_id, segment_type, roster_in, roster_out, roster_hours, has_break) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                            [crypto.randomUUID(), recordId, shift.segment_type, shift.roster_in, shift.roster_out, shift.roster_hours, shift.has_break]
                         );
                     }
                 }

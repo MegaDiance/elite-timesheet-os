@@ -1,19 +1,25 @@
 /**
- * SimpleHours has exactly two roles: OWNER and BRANCH_ADMIN.
- * This test fails if application code (backend or frontend) refers to any removed role.
- * Historical migrations are excluded: they must keep describing the data they migrated.
+ * SimpleHours has exactly three roles: OWNER, BRANCH_ADMIN and EMPLOYEE. EMPLOYEE is a
+ * deliberately powerless role — ROLE_PERMISSIONS.EMPLOYEE is an empty set (see the second
+ * describe block below), so every existing permission check rejects an employee exactly as
+ * it would reject an unauthenticated caller. New employee-only capability is granted only by
+ * routes that check `role === 'EMPLOYEE'` directly, never by adding new Permission values.
+ *
+ * This test fails if application code (backend or frontend) refers to any *other* removed
+ * role. Historical migrations are excluded: they must keep describing the data they migrated.
  */
 import fs from 'fs';
 import path from 'path';
+import { ROLE_PERMISSIONS } from '../../src/services/policy';
 
 const ROOT = path.join(__dirname, '../../..');
 const SCANNED = ['backend/src', 'frontend/src'];
 
 const FORBIDDEN: Array<[string, RegExp]> = [
-    ['removed role keys', /\b(ORG_ADMIN|ORG_MANAGER|ORG_OWNER|BRANCH_MANAGER|PLATFORM_ADMIN|PAYROLL|FINANCE|EMPLOYEE|STAFF)\b/],
+    ['removed role keys', /\b(ORG_ADMIN|ORG_MANAGER|ORG_OWNER|BRANCH_MANAGER|PLATFORM_ADMIN|PAYROLL|FINANCE|STAFF)\b/],
     ['legacy role names', /\b(Platform Admin|Company Admin|Org(anisation)? Admin|Org(anisation)? Manager|Branch Manager)\b/i],
-    ['legacy role string literals', /(['"`])(Manager|Employee|Admin|Owner|Payroll|Finance|Staff|manager|employee|admin)\1/],
-    ['comparisons with any role other than OWNER / BRANCH_ADMIN', /role\s*[!=]==?\s*(['"`])(?!(OWNER|BRANCH_ADMIN)\1)/],
+    ['legacy role string literals', /(['"`])(Manager|Admin|Owner|Payroll|Finance|Staff|manager|admin)\1/],
+    ['comparisons with any role other than OWNER / BRANCH_ADMIN / EMPLOYEE', /role\s*[!=]==?\s*(['"`])(?!(OWNER|BRANCH_ADMIN|EMPLOYEE)\1)/],
     ['legacy role storage', /\b(organisation_members|location_memberships|location_invitations|invitation_tokens|org_invitation_tokens)\b|users\.role\b|\bu\.role\b/],
     ['legacy guards', /\b(requireRole|requireOrgOwner|requireAnyPermission|requireAnyBranchPermission|requireLocationContext|requireTenantContext|securityContext|isPlatformAdmin)\b/],
 ];
@@ -44,4 +50,10 @@ describe('Removed roles stay removed', () => {
             expect(hits).toEqual([]);
         });
     }
+});
+
+describe('EMPLOYEE exists but is provably powerless', () => {
+    it('holds none of the Permission values, so every requirePermission/hasPermission check rejects it exactly like an unauthenticated caller', () => {
+        expect(ROLE_PERMISSIONS.EMPLOYEE.size).toBe(0);
+    });
 });

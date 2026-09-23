@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, ChevronDown, Copy, Eraser, Lock, MessageSquarePlus, Repeat } from 'lucide-react';
+import { AlertCircle, ChevronDown, Coffee, Copy, Eraser, Lock, MessageSquarePlus, Repeat } from 'lucide-react';
 import api from '../../services/apiClient';
+import ApplyBreakDialog from './ApplyBreakDialog';
 import CopyDayPanel from './CopyDayPanel';
 import { PART_STYLE, PartLines } from './DayBox';
 import { Dialog, buttonClass } from './Dialog';
@@ -70,6 +71,7 @@ export default function DayEditor({
   const [note, setNote] = useState(saved.note);
   const [noteOpen, setNoteOpen] = useState(Boolean(saved.note));
   const [showCopy, setShowCopy] = useState(false);
+  const [applyBreakMode, setApplyBreakMode] = useState<'some' | 'all' | null>(null);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
@@ -423,7 +425,31 @@ export default function DayEditor({
             </div>
           )}
         </div>
+
+        {/* Apply the unpaid break rule across the fortnight for this worker */}
+        <div className="flex flex-wrap gap-1">
+          <button type="button" onClick={() => setApplyBreakMode('some')} className={`${buttonClass.quiet} max-md:h-11 -ml-2.5`} title="Choose which days of this fortnight have a break">
+            <Coffee className="w-3.5 h-3.5" aria-hidden="true" /> Apply Break…
+          </button>
+          <button type="button" onClick={() => setApplyBreakMode('all')} className={`${buttonClass.quiet} max-md:h-11`} title="Give every day a break, then untick exceptions">
+            <Coffee className="w-3.5 h-3.5" aria-hidden="true" /> Apply Break to All Days…
+          </button>
+        </div>
       </div>
+
+      {applyBreakMode && (
+        <ApplyBreakDialog
+          startAllChecked={applyBreakMode === 'all'}
+          worker={worker}
+          days={fortnightDays}
+          onClose={() => setApplyBreakMode(null)}
+          onConfirm={async (recordDates, hasBreakValue) => {
+            const res = await api.post('/records/apply-break', { employee_id: worker.id, record_dates: recordDates, has_break: hasBreakValue });
+            return res.data.data;
+          }}
+          onApplied={() => { setApplyBreakMode(null); onCopied(); }}
+        />
+      )}
     </Dialog>
   );
 }

@@ -15,7 +15,7 @@ import LockDialog, { type LockFlag } from '../components/roster/LockDialog';
 import DayPickerDialog, { type BulkFillMode } from '../components/roster/DayPickerDialog';
 import BulkResultDialog, { type BulkResult, type ResultProblem } from '../components/roster/BulkResultDialog';
 import { Dialog, buttonClass } from '../components/roster/Dialog';
-import { DayLines, PART_STYLE, PlannedWorkedKey, describeDay, type DayContent } from '../components/roster/DayBox';
+import { DayLines, PART_STYLE, PUBLIC_HOLIDAY_CLASS, PlannedWorkedKey, PublicHolidayBadge, WEEKEND_CLASS, describeDay, type DayContent } from '../components/roster/DayBox';
 import {
   SKIP_REASON_LABEL, apiErrorCode, apiErrorMessage, downloadPayrollCsv, openPayrollPrint,
   type BulkApproveResult, type CopyDayRequest, type CopyDayResult, type LockRow, type TimesheetRow, type TimesheetStatus, type Worker,
@@ -72,6 +72,7 @@ export default function Roster() {
   const [locks, setLocks] = useState<LockRow[]>([]);
   const [timesheets, setTimesheets] = useState<TimesheetRow[]>([]);
   const [breakSettings, setBreakSettings] = useState<BreakSettings>(DEFAULT_BREAK_SETTINGS);
+  const [holidays, setHolidays] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [partialError, setPartialError] = useState<string | null>(null);
@@ -131,6 +132,19 @@ export default function Roster() {
       .catch(() => {
         // The live preview falls back to the default break rule; saved hours always come from the server.
       });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/organisation/holidays')
+      .then(res => {
+        if (cancelled) return;
+        setHolidays(new Map((res.data?.data ?? []).map((h: { holiday_date: string; name: string }) => [h.holiday_date.slice(0, 10), h.name])));
+      })
+      .catch(() => { /* the grid just shows no holiday badges if this fails */ });
     return () => {
       cancelled = true;
     };
@@ -534,18 +548,20 @@ export default function Roster() {
                       const day = dayOf(w.id, iso);
                       const empty = dayIsEmpty(day);
                       const isSelected = selected.has(cellKey(w.id, iso));
+                      const holidayName = holidays.get(iso);
                       return (
-                        <td key={iso} className={`border-b border-r border-[var(--border)] p-1 align-top ${i === 7 ? 'border-l-2 border-l-[var(--divider-split)]' : ''} ${isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : ''}`}>
+                        <td key={iso} className={`border-b border-r border-[var(--border)] p-1 align-top ${i === 7 ? 'border-l-2 border-l-[var(--divider-split)]' : ''} ${holidayName ? PUBLIC_HOLIDAY_CLASS : isWeekendIso(iso) ? WEEKEND_CLASS : ''}`}>
                           <button
                             type="button"
                             onClick={e => openDay(e, w.id, iso)}
                             aria-pressed={selectMode ? isSelected : undefined}
-                            aria-label={cellLabel(w, iso, day)}
+                            aria-label={holidayName ? `${cellLabel(w, iso, day)}; public holiday: ${holidayName}` : cellLabel(w, iso, day)}
                             title={empty ? undefined : describeDay(day)}
                             className={`group relative w-full min-h-[3.25rem] rounded-lg p-1.5 text-left cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--primary)] ${
                               empty ? 'border border-dashed border-transparent hover:border-[var(--border-hover)]' : 'border border-[var(--border)] bg-[var(--panel-subtle)] hover:border-[var(--border-hover)]'
                             } ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''}`}
                           >
+                            {holidayName && <PublicHolidayBadge name={holidayName} />}
                             {empty
                               ? <Plus className="w-4 h-4 mx-auto mt-2.5 text-[var(--muted)] opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70" aria-hidden="true" />
                               : <DayLines day={day} variant="compact" />}

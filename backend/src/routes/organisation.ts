@@ -38,6 +38,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         const result = await query(
             `SELECT id, name, portal_slug,
                     break_mins_weekday, break_mins_weekend, break_threshold_hours,
+                    employees_can_submit_timesheets, automatically_merge_leave_with_roster, leave_requests_require_approval,
                     roster_lock_password_hash IS NOT NULL AS has_roster_lock_password,
                     timesheet_lock_password_hash IS NOT NULL AS has_timesheet_lock_password
                FROM organisations WHERE id = $1`,
@@ -57,6 +58,9 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
                 break_mins_weekday: Number(org.break_mins_weekday ?? 30),
                 break_mins_weekend: Number(org.break_mins_weekend ?? 0),
                 break_threshold_hours: Number(org.break_threshold_hours ?? 6),
+                employees_can_submit_timesheets: org.employees_can_submit_timesheets,
+                automatically_merge_leave_with_roster: org.automatically_merge_leave_with_roster,
+                leave_requests_require_approval: org.leave_requests_require_approval,
                 has_roster_lock_password: org.has_roster_lock_password,
                 has_timesheet_lock_password: org.has_timesheet_lock_password
             }
@@ -66,7 +70,18 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     }
 });
 
-router.put('/settings', requireAuth, requirePermission(Permission.ORGANISATION_MANAGE), async (req: AuthRequest, res: Response) => {
+/**
+ * PUT /api/organisation/settings
+ *
+ * Two authorisation tiers in one route: the original organisation-wide fields (break rules,
+ * name) stay Owner-only, exactly as `organisation.manage` always meant. The three workforce
+ * booleans below them are policy toggles a Branch Admin also needs day-to-day, so they check
+ * role directly instead — deliberately not via `Permission.ORGANISATION_MANAGE` (Owner-only)
+ * or a new branch-scoped Permission (they are organisation-wide, not per-branch). Each tier is
+ * checked before any update is built, so a Branch Admin can never smuggle an Owner-only field
+ * into the same request as a workforce boolean.
+ */
+router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const body = req.body || {};
@@ -78,6 +93,13 @@ router.put('/settings', requireAuth, requirePermission(Permission.ORGANISATION_M
             ['break_mins_weekend', 0, 240],
             ['break_threshold_hours', 0, 24],
         ];
+        const ownerFieldsPresent = numeric.some(([field]) => body[field] !== undefined) || body.name !== undefined;
+        if (ownerFieldsPresent && ctx.role !== 'OWNER') throw forbidden();
+
+        const workforceBooleans = ['employees_can_submit_timesheets', 'automatically_merge_leave_with_roster', 'leave_requests_require_approval'];
+        const workforceFieldsPresent = workforceBooleans.some(field => body[field] !== undefined);
+        if (workforceFieldsPresent && ctx.role !== 'OWNER' && ctx.role !== 'BRANCH_ADMIN') throw forbidden();
+
         for (const [field, min, max] of numeric) {
             if (body[field] === undefined) continue;
             const value = Number(body[field]);
@@ -92,6 +114,12 @@ router.put('/settings', requireAuth, requirePermission(Permission.ORGANISATION_M
             if (!name || name.length > 120) throw badRequest('VALIDATION_FAILED', 'Organisation name is required (120 characters at most).');
             params.push(name);
             updates.push(`name = $${params.length}`);
+        }
+        for (const field of workforceBooleans) {
+            if (body[field] === undefined) continue;
+            if (typeof body[field] !== 'boolean') throw badRequest('VALIDATION_FAILED', `${field} must be true or false.`);
+            params.push(body[field]);
+            updates.push(`${field} = $${params.length}`);
         }
 
         if (updates.length > 0) {

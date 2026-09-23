@@ -94,13 +94,19 @@ describe('two-role migrations on legacy data', () => {
     });
 
     it('legacy role structures are gone', async () => {
+        // leave_requests is intentionally excluded here: 1789367660702_leave_requests_revival.js
+        // deliberately revives it (leave request/approval workflow), in a new shape, so it is
+        // expected to exist again after a full `up`.
         const tables = (await q("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).map(r => r.tablename);
-        for (const t of ['organisation_members', 'location_memberships', 'location_invitations', 'invitation_tokens', 'org_invitation_tokens', 'leave_requests', 'xero_connections']) {
+        for (const t of ['organisation_members', 'location_memberships', 'location_invitations', 'invitation_tokens', 'org_invitation_tokens', 'xero_connections']) {
             expect(tables).not.toContain(t);
         }
+        // employees.user_id is intentionally excluded here: 1789367660700_employee_accounts.js
+        // deliberately revives it (employee portal accounts), so it is expected to exist again
+        // after a full `up`.
         const columns = await q(`SELECT table_name || '.' || column_name AS c FROM information_schema.columns
                                   WHERE table_schema = 'public' AND (table_name, column_name) IN
-                                  (('users','role'),('users','org_id'),('employees','user_id'),('sessions','location_id'),
+                                  (('users','role'),('users','org_id'),('sessions','location_id'),
                                    ('login_verification_challenges','role'),('organisations','slug'),('organisations','timesheet_entry_mode'),
                                    ('audit_logs','scope'),('fortnight_locks','is_published'),
                                    ('organisations','display_name'),('organisations','logo_url'),('employees','deleted_at'),
@@ -172,7 +178,10 @@ describe('two-role migrations on legacy data', () => {
     it('rolls back with everyone’s access intact, and re-applies to exactly the same access', async () => {
         const accessBefore = await q('SELECT org_id, location_id, user_id FROM branch_admins ORDER BY 1, 2, 3');
         await db.end();
-        migrate('down', '3');
+        // 7 = the two-role migrations (600, 601, 602) plus the additive employee-portal/
+        // workforce-settings/leave-requests/break-override migrations (700, 701, 702, 703)
+        // applied on top of them by the unconditional `migrate('up')` in beforeAll.
+        migrate('down', '7');
         db = new Client({ connectionString: urlForDatabase(DB) });
         await db.connect();
         // The original legacy rows are back…

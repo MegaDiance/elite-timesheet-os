@@ -10,7 +10,7 @@ import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Skeleton } from '../components/ui/Skeleton';
 import BulkResultDialog, { type BulkResult } from '../components/roster/BulkResultDialog';
-import { DayLines, PlannedWorkedKey } from '../components/roster/DayBox';
+import { DayLines, PUBLIC_HOLIDAY_CLASS, PlannedWorkedKey, PublicHolidayBadge, WEEKEND_CLASS } from '../components/roster/DayBox';
 import { Dialog, buttonClass } from '../components/roster/Dialog';
 import { apiErrorMessage, signedHours, type BulkApproveResult, type TimesheetRow, type TimesheetStatus } from '../components/roster/api';
 import { currentFortnightIso, dayLabel, fortnightDays, isWeekendIso, periodLabel, shiftIso, todayIso } from '../components/roster/dates';
@@ -53,6 +53,20 @@ export default function TimesheetReview() {
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, DayRecord[] | 'error'>>({});
+  const [holidays, setHolidays] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/organisation/holidays')
+      .then(res => {
+        if (cancelled) return;
+        setHolidays(new Map((res.data?.data ?? []).map((h: { holiday_date: string; name: string }) => [h.holiday_date.slice(0, 10), h.name])));
+      })
+      .catch(() => { /* the grid just shows no holiday badges if this fails */ });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const loadSeq = useRef(0);
 
   const days = useMemo(() => fortnightDays(startIso), [startIso]);
@@ -439,10 +453,14 @@ export default function TimesheetReview() {
                             <ol key={week} aria-label={`Week ${week + 1}`} className="space-y-1.5">
                               {days.slice(week * 7, week * 7 + 7).map(iso => {
                                 const record = detail.find(r => r.record_date === iso);
+                                const holidayName = holidays.get(iso);
                                 return (
-                                  <li key={iso} className={`grid grid-cols-[5.25rem_minmax(0,1fr)] gap-2 rounded-lg border border-[var(--border)] p-2 ${isWeekendIso(iso) ? 'bg-[var(--glass-4)]' : 'bg-[var(--panel-subtle)]'}`}>
+                                  <li key={iso} className={`grid grid-cols-[5.25rem_minmax(0,1fr)] gap-2 rounded-lg border border-[var(--border)] p-2 ${holidayName ? PUBLIC_HOLIDAY_CLASS : isWeekendIso(iso) ? WEEKEND_CLASS : 'bg-[var(--panel-subtle)]'}`}>
                                     <span className={`text-xs font-semibold leading-5 whitespace-nowrap ${iso === today ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>{dayLabel(iso)}</span>
-                                    <DayLines day={record ?? { roster: [], timesheet: [], note: null }} variant="regular" />
+                                    <div className="min-w-0">
+                                      {holidayName && <PublicHolidayBadge name={holidayName} />}
+                                      <DayLines day={record ?? { roster: [], timesheet: [], note: null }} variant="regular" />
+                                    </div>
                                   </li>
                                 );
                               })}

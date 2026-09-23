@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 describe('C1: only the Organisation Owner creates privileged accounts', () => {
-    it('creating a worker never creates an account, whatever role fields are sent', async () => {
+    it('creating a worker never creates or links an account, whatever role fields are sent', async () => {
         const users = (await sql('SELECT COUNT(*)::int AS n FROM users')).rows[0].n;
         const res = await request(app).post('/api/employees').set(bearer(w.tokens.owner)).send({
             full_name: 'Worker Only', email: 'worker@abc.test', location_id: w.abc.melbourne,
@@ -43,7 +43,10 @@ describe('C1: only the Organisation Owner creates privileged accounts', () => {
         });
         expect(res.status).toBe(201);
         expect((await sql('SELECT COUNT(*)::int AS n FROM users')).rows[0].n).toBe(users);
-        expect(await sql('SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name IN ($2, $3)', ['employees', 'user_id', 'role'])).toMatchObject({ rows: [] });
+        // employees.user_id exists (it links a worker to an employee-portal login, set only via
+        // the invitation/accept flow), but POST /employees must never set it from request fields.
+        expect((await sql('SELECT user_id FROM employees WHERE id = $1', [res.body.data.id])).rows[0].user_id).toBeNull();
+        expect(await sql("SELECT column_name FROM information_schema.columns WHERE table_name = 'employees' AND column_name = 'role'")).toMatchObject({ rows: [] });
     });
 
     it('a Branch Admin cannot invite, assign or remove Branch Admins', async () => {

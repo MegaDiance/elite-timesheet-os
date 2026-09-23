@@ -4,19 +4,24 @@ import { query } from './db';
 /**
  * SimpleHours authorisation model.
  *
- * There are exactly two authenticated roles:
+ * There are three authenticated roles:
  *   OWNER        — organisations.owner_user_id. Organisation-wide authority.
  *   BRANCH_ADMIN — one row in branch_admins per assigned branch. Branch-scoped authority.
+ *   EMPLOYEE     — a worker record (employees table) linked to a login via employees.user_id.
+ *                  Holds none of the Permission values below (ROLE_PERMISSIONS.EMPLOYEE is
+ *                  empty), so every existing permission check rejects an employee exactly as
+ *                  it would reject an unauthenticated caller. Employee-only capability is
+ *                  granted by new routes checking `ctx.role === 'EMPLOYEE'` directly, never by
+ *                  adding new Permission values.
  *
- * Branches are scopes, not roles. Workers (the employees table) are operational records
- * and never authenticate.
+ * Branches are scopes, not roles.
  *
  * Everything here is resolved from the database on every request. Nothing is read from
  * token claims, URLs, request bodies, query strings or headers to decide what a caller
  * may do; client-supplied branch ids are only ever a filter that is checked against the
  * caller's scope.
  */
-export type Role = 'OWNER' | 'BRANCH_ADMIN';
+export type Role = 'OWNER' | 'BRANCH_ADMIN' | 'EMPLOYEE';
 
 export const Permission = {
     // Organisation-wide (OWNER only)
@@ -50,6 +55,7 @@ const BRANCH_SCOPED: ReadonlySet<Permission> = new Set([
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
     OWNER: new Set(Object.values(Permission)),
     BRANCH_ADMIN: BRANCH_SCOPED,
+    EMPLOYEE: new Set(),
 };
 
 export interface AccessContext {
@@ -61,6 +67,8 @@ export interface AccessContext {
     role: Role;
     /** Branches this account may act in. OWNER: every branch of the organisation. */
     branchIds: string[];
+    /** The worker record this login is linked to, when role is EMPLOYEE. Null otherwise. */
+    employeeId: string | null;
 }
 
 export class HttpError extends Error {
@@ -78,24 +86,36 @@ export const isUuid = (value: unknown): value is string => typeof value === 'str
 
 /**
  * Resolves what a user may do in one organisation, or null when they have no access there
- * (unknown or inactive organisation, not the owner, and no assignment to an active branch).
+ * (unknown or inactive organisation, not the owner, no assignment to an active branch, and
+ * no active worker record linked to this login).
  */
-export async function resolveAccess(userId: string, orgId: string): Promise<{ role: Role; branchIds: string[] } | null> {
+export async function resolveAccess(userId: string, orgId: string): Promise<{ role: Role; branchIds: string[]; employeeId: string | null } | null> {
     const res = await query(
         `SELECT o.owner_user_id = $1 AS is_owner,
                 ARRAY(SELECT l.id::text FROM locations l WHERE l.org_id = o.id) AS all_branches,
                 ARRAY(SELECT ba.location_id::text
                         FROM branch_admins ba
                         JOIN locations l ON l.id = ba.location_id
-                       WHERE ba.user_id = $1 AND ba.org_id = o.id AND l.is_active = true) AS assigned_branches
+                       WHERE ba.user_id = $1 AND ba.org_id = o.id AND l.is_active = true) AS assigned_branches,
+                (SELECT e.id::text
+                   FROM employees e
+                   JOIN locations l ON l.id = e.location_id AND l.is_active = true
+                  WHERE e.user_id = $1 AND e.org_id = o.id AND e.is_active = true
+                  LIMIT 1) AS employee_id,
+                (SELECT e.location_id::text
+                   FROM employees e
+                   JOIN locations l ON l.id = e.location_id AND l.is_active = true
+                  WHERE e.user_id = $1 AND e.org_id = o.id AND e.is_active = true
+                  LIMIT 1) AS employee_branch_id
            FROM organisations o
           WHERE o.id = $2 AND o.is_active = true`,
         [userId, orgId]
     );
     const row = res.rows[0];
     if (!row) return null;
-    if (row.is_owner === true) return { role: 'OWNER', branchIds: row.all_branches };
-    if (row.assigned_branches.length > 0) return { role: 'BRANCH_ADMIN', branchIds: row.assigned_branches };
+    if (row.is_owner === true) return { role: 'OWNER', branchIds: row.all_branches, employeeId: null };
+    if (row.assigned_branches.length > 0) return { role: 'BRANCH_ADMIN', branchIds: row.assigned_branches, employeeId: null };
+    if (row.employee_id) return { role: 'EMPLOYEE', branchIds: [row.employee_branch_id], employeeId: row.employee_id };
     return null;
 }
 
@@ -103,13 +123,22 @@ export async function resolveAccess(userId: string, orgId: string): Promise<{ ro
 export async function listAccessibleOrganisations(userId: string): Promise<Array<{ id: string; name: string; portal_slug: string | null; role: Role }>> {
     const res = await query(
         `SELECT o.id, o.name, o.portal_slug,
-                CASE WHEN o.owner_user_id = $1 THEN 'OWNER' ELSE 'BRANCH_ADMIN' END AS role
+                CASE
+                    WHEN o.owner_user_id = $1 THEN 'OWNER'
+                    WHEN EXISTS (SELECT 1 FROM branch_admins ba
+                                   JOIN locations l ON l.id = ba.location_id
+                                  WHERE ba.org_id = o.id AND ba.user_id = $1 AND l.is_active = true) THEN 'BRANCH_ADMIN'
+                    ELSE 'EMPLOYEE'
+                END AS role
            FROM organisations o
           WHERE o.is_active = true
             AND (o.owner_user_id = $1
                  OR EXISTS (SELECT 1 FROM branch_admins ba
                               JOIN locations l ON l.id = ba.location_id
-                             WHERE ba.org_id = o.id AND ba.user_id = $1 AND l.is_active = true))
+                             WHERE ba.org_id = o.id AND ba.user_id = $1 AND l.is_active = true)
+                 OR EXISTS (SELECT 1 FROM employees e
+                              JOIN locations l ON l.id = e.location_id
+                             WHERE e.org_id = o.id AND e.user_id = $1 AND e.is_active = true AND l.is_active = true))
           ORDER BY name ASC`,
         [userId]
     );
@@ -153,6 +182,9 @@ export interface WorkerRow {
     location_id: string;
     full_name: string;
     is_active: boolean;
+    email: string | null;
+    /** The employee-portal login linked to this worker, if any. */
+    user_id: string | null;
 }
 
 /**
@@ -163,7 +195,7 @@ export interface WorkerRow {
 export async function loadWorker(ctx: AccessContext, permission: Permission, workerId: unknown): Promise<WorkerRow> {
     if (!isUuid(workerId)) throw notFound('Worker');
     const res = await query(
-        'SELECT id, org_id, location_id, full_name, is_active FROM employees WHERE id = $1 AND org_id = $2',
+        'SELECT id, org_id, location_id, full_name, is_active, email, user_id FROM employees WHERE id = $1 AND org_id = $2',
         [workerId, ctx.orgId]
     );
     const worker: WorkerRow | undefined = res.rows[0];

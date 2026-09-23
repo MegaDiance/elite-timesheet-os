@@ -145,4 +145,29 @@ describe('Authorisation matrix', () => {
             });
         }
     }
+
+    /**
+     * EMPLOYEE holds none of the Permission values (ROLE_PERMISSIONS.EMPLOYEE is an empty set,
+     * see policy.ts and role_removal.test.ts), so every requirePermission-gated route above must
+     * reject an employee token with 403 — the entire existing admin surface, unmodified, is
+     * employee-proof by construction. The only legitimate exceptions are the handful of
+     * requireAuth-only "any authenticated account" routes that are personal-account or org-context
+     * reads an employee also needs (session/2FA self-service, switching between their own
+     * organisations, and the organisation profile the portal itself will read from).
+     */
+    const OPEN_TO_EMPLOYEE = new Set([
+        'GET /auth/me', 'GET /auth/organisations', 'GET /auth/security/activity', 'GET /auth/2fa/status',
+        'GET /organisation/me',
+    ]);
+
+    for (const row of rows) {
+        const expected = OPEN_TO_EMPLOYEE.has(row.name) ? 200 : 403;
+        it(`${row.name} as melEmployee → ${expected}`, async () => {
+            let req = request(app)[row.method](row.path(world)).set(bearer(world.tokens.melEmployee));
+            const res = row.body ? await req.send(row.body(world)) : await req;
+            if (res.status !== expected) {
+                throw new Error(`expected ${expected}, got ${res.status}: ${JSON.stringify(res.body).slice(0, 300)}`);
+            }
+        });
+    }
 });

@@ -3,6 +3,7 @@ import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   Clock,
   Calendar,
+  CalendarDays,
   Users,
   FileText,
   Building2,
@@ -150,6 +151,26 @@ export default function Layout() {
   // Display only: the API authorises every request itself.
   // ---------------------------------------------------------------------------
   const openHelp = () => setShowHelpModal(true);
+  const isEmployee = access?.role === 'EMPLOYEE';
+  const canSubmitTimesheets = access?.employee_capabilities?.can_submit_timesheets ?? false;
+  const homePath = isEmployee ? '/my/schedule' : '/dashboard';
+
+  const employeeSections: NavSection[] = [
+    {
+      title: 'Main',
+      items: [
+        { label: 'Schedule', path: '/my/schedule', icon: <Calendar className="w-4 h-4" /> },
+        ...(canSubmitTimesheets ? [{ label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-4 h-4" /> }] : []),
+        { label: 'History', path: '/my/history', icon: <Clock className="w-4 h-4" /> },
+        { label: 'Leave', path: '/my/leave', icon: <CalendarDays className="w-4 h-4" /> },
+      ],
+    },
+    {
+      title: 'Account',
+      items: [{ label: 'Help & Guide', onClick: openHelp, icon: <HelpCircle className="w-4 h-4" /> }],
+    },
+  ];
+
   const sections: NavSection[] = [
     {
       title: 'Main',
@@ -157,6 +178,7 @@ export default function Layout() {
         { label: 'Dashboard', path: '/dashboard', permission: 'branch.view', icon: <LayoutDashboard className="w-4 h-4" /> },
         { label: 'Roster', path: '/roster', permission: 'rosters.manage', icon: <Calendar className="w-4 h-4" /> },
         { label: 'Timesheets', path: '/timesheets', permission: 'timesheets.manage', icon: <CheckSquare className="w-4 h-4" /> },
+        { label: 'Leave Requests', path: '/leave-requests', permission: 'timesheets.manage', icon: <CalendarDays className="w-4 h-4" /> },
         { label: 'Workers', path: '/workers', permission: 'workers.manage', icon: <Users className="w-4 h-4" /> },
         { label: 'Reports', path: '/reports', permission: 'reports.view', icon: <BarChart3 className="w-4 h-4" /> },
       ],
@@ -183,7 +205,7 @@ export default function Layout() {
       ],
     },
   ];
-  const navSections = sections
+  const navSections = (isEmployee ? employeeSections : sections)
     .map(section => ({ ...section, items: section.items.filter(item => !item.permission || can(item.permission)) }))
     .filter(section => section.items.length > 0);
 
@@ -207,12 +229,18 @@ export default function Layout() {
 
   const isFluid = location.pathname === '/roster';
 
-  const bottomItems: Array<{ label: string; path: string; permission: Permission; icon: ReactNode }> = [
-    { label: 'Home', path: '/dashboard', permission: 'branch.view', icon: <Home className="w-5 h-5 mb-0.5" /> },
-    { label: 'Roster', path: '/roster', permission: 'rosters.manage', icon: <Calendar className="w-5 h-5 mb-0.5" /> },
-    { label: 'Timesheets', path: '/timesheets', permission: 'timesheets.manage', icon: <Clock className="w-5 h-5 mb-0.5" /> },
-    { label: 'Reports', path: '/reports', permission: 'reports.view', icon: <BarChart3 className="w-5 h-5 mb-0.5" /> },
-  ];
+  const bottomItems: Array<{ label: string; path: string; permission?: Permission; icon: ReactNode }> = isEmployee
+    ? [
+        { label: 'Schedule', path: '/my/schedule', icon: <Calendar className="w-5 h-5 mb-0.5" /> },
+        ...(canSubmitTimesheets ? [{ label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-5 h-5 mb-0.5" /> }] : []),
+        { label: 'History', path: '/my/history', icon: <Clock className="w-5 h-5 mb-0.5" /> },
+      ]
+    : [
+        { label: 'Home', path: '/dashboard', permission: 'branch.view', icon: <Home className="w-5 h-5 mb-0.5" /> },
+        { label: 'Roster', path: '/roster', permission: 'rosters.manage', icon: <Calendar className="w-5 h-5 mb-0.5" /> },
+        { label: 'Timesheets', path: '/timesheets', permission: 'timesheets.manage', icon: <Clock className="w-5 h-5 mb-0.5" /> },
+        { label: 'Reports', path: '/reports', permission: 'reports.view', icon: <BarChart3 className="w-5 h-5 mb-0.5" /> },
+      ];
 
   return (
     <div className="min-h-screen flex bg-[var(--bg)] text-[var(--text)]">
@@ -229,7 +257,7 @@ export default function Layout() {
       >
         {/* Brand */}
         <div className="h-16 px-4 border-b border-[var(--sidebar-border)] flex items-center justify-between shrink-0">
-          <Link to="/dashboard" className="flex items-center gap-2.5 min-w-0">
+          <Link to={homePath} className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-xl bg-[var(--primary)] text-white flex items-center justify-center font-black text-sm shrink-0 shadow-md shadow-indigo-500/20">
               <Clock className="w-4 h-4" />
             </div>
@@ -551,7 +579,7 @@ export default function Layout() {
 
       {/* Mobile bottom navigation (48px+ tap targets) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[var(--sidebar-bg)] border-t border-[var(--sidebar-border)] flex items-center justify-around px-2 py-1 shadow-2xl select-none">
-        {bottomItems.filter(item => can(item.permission)).map(item => (
+        {bottomItems.filter(item => !item.permission || can(item.permission)).map(item => (
           <Link
             key={item.path}
             to={item.path}

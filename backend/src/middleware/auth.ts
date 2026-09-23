@@ -77,6 +77,7 @@ export const requireAuth: PolicyHandler = Object.assign(
                 sessionId: session.id,
                 role: access.role,
                 branchIds: access.branchIds,
+                employeeId: access.employeeId,
             };
             next();
         } catch (err) {
@@ -104,6 +105,18 @@ export function requirePermission(permission: Permission): PolicyHandler {
         { policy: permission }
     );
 }
+
+/** Coarse gate for employee-only (portal) routes. Owners and Branch Admins are denied here too. */
+export const requireEmployee: PolicyHandler = Object.assign(
+    (req: AuthRequest, res: Response, next: NextFunction) => {
+        if (!req.auth) return deny(res, 401, 'UNAUTHENTICATED', 'Unauthorized');
+        if (req.auth.role !== 'EMPLOYEE') {
+            return deny(res, 403, 'FORBIDDEN', 'You do not have access to this.');
+        }
+        next();
+    },
+    { policy: 'employee' }
+);
 
 /** Translates policy errors thrown by handlers; everything else is a generic 500 with no detail. */
 export function sendError(res: Response, err: unknown, logLabel: string) {

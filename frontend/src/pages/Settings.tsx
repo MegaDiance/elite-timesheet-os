@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRightLeft,
   Building2,
+  CalendarDays,
   Check,
   Copy,
   KeyRound,
@@ -38,6 +39,9 @@ interface OrganisationSettings {
   break_mins_weekday: number;
   break_mins_weekend: number;
   break_threshold_hours: number;
+  employees_can_submit_timesheets: boolean;
+  automatically_merge_leave_with_roster: boolean;
+  leave_requests_require_approval: boolean;
   has_roster_lock_password: boolean;
   has_timesheet_lock_password: boolean;
 }
@@ -49,7 +53,7 @@ interface BranchAdminOption {
   is_active: boolean;
 }
 
-type TabId = 'account' | 'organisation' | 'security' | 'ownership';
+type TabId = 'account' | 'organisation' | 'workforce' | 'security' | 'ownership';
 
 const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
 
@@ -75,17 +79,44 @@ function SectionHeader({ icon, title, description, action }: {
   );
 }
 
+function ToggleRow({ label, description, checked, saving, disabled, onChange }: {
+  label: string;
+  description: string;
+  checked: boolean;
+  saving: boolean;
+  disabled: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className={`flex items-start gap-3 p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] ${disabled ? 'opacity-60' : 'cursor-pointer'}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled || saving}
+        onChange={e => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer disabled:cursor-not-allowed"
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-[var(--text)]">{label}{saving && ' · Saving…'}</span>
+        <span className="block text-xs text-[var(--muted)] mt-0.5">{description}</span>
+      </span>
+    </label>
+  );
+}
+
 export default function Settings() {
   const toast = useToast();
   const navigate = useNavigate();
   const { access, can, refresh } = useAccess();
   const canManageOrganisation = can('organisation.manage');
+  const canManageWorkforce = can('timesheets.manage');
   const canManageSecurity = can('security.manage');
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabs: TabItem[] = [
     { id: 'account', label: 'My account', icon: <UserRound className="w-3.5 h-3.5" /> },
     ...(canManageOrganisation ? [{ id: 'organisation', label: 'Organisation', icon: <Building2 className="w-3.5 h-3.5" /> }] : []),
+    ...(canManageWorkforce ? [{ id: 'workforce', label: 'Workforce', icon: <Sliders className="w-3.5 h-3.5" /> }] : []),
     ...(canManageSecurity ? [
       { id: 'security', label: 'Security', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
       { id: 'ownership', label: 'Ownership', icon: <ArrowRightLeft className="w-3.5 h-3.5" /> },
@@ -134,8 +165,8 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (canManageOrganisation || canManageSecurity) fetchOrganisation();
-  }, [canManageOrganisation, canManageSecurity]);
+    if (canManageOrganisation || canManageWorkforce || canManageSecurity) fetchOrganisation();
+  }, [canManageOrganisation, canManageWorkforce, canManageSecurity]);
 
   useEffect(() => {
     if (activeTab !== 'ownership' || !canManageSecurity || branchAdmins !== null) return;
@@ -204,6 +235,23 @@ export default function Settings() {
       toast.error(errorMessage(err, 'The organisation name could not be saved.'));
     } finally {
       setSavingDisplayName(false);
+    }
+  };
+
+  // --- Workforce ----------------------------------------------------------------
+  const [savingWorkforceField, setSavingWorkforceField] = useState<string | null>(null);
+  const handleToggleWorkforce = async (field: 'employees_can_submit_timesheets' | 'automatically_merge_leave_with_roster' | 'leave_requests_require_approval', value: boolean) => {
+    if (!org) return;
+    setSavingWorkforceField(field);
+    const previous = org[field];
+    setOrg({ ...org, [field]: value });
+    try {
+      await api.put('/organisation/settings', { [field]: value });
+    } catch (err: any) {
+      setOrg(o => (o ? { ...o, [field]: previous } : o));
+      toast.error(errorMessage(err, 'This setting could not be saved.'));
+    } finally {
+      setSavingWorkforceField(null);
     }
   };
 
@@ -420,6 +468,53 @@ export default function Settings() {
                   <div className="text-[10px] text-[var(--muted)] mt-0.5">Saturday and Sunday</div>
                 </div>
               </div>
+            </Card>
+          </div>
+        )
+      )}
+
+      {/* WORKFORCE (Owner or Branch Admin) */}
+      {activeTab === 'workforce' && (
+        orgUnavailable || (
+          <div className="space-y-6">
+            <Card className="p-6 space-y-4">
+              <SectionHeader
+                icon={<Sliders className="w-4 h-4" />}
+                title="Employee timesheets"
+                description="Whether employees can create and submit their own timesheets, or hours are only entered by managers."
+              />
+              <ToggleRow
+                label="Allow employees to submit timesheets"
+                description="When enabled, employees can create and submit their own timesheets. When disabled, timesheets are managed by authorised managers."
+                checked={org?.employees_can_submit_timesheets ?? true}
+                saving={savingWorkforceField === 'employees_can_submit_timesheets'}
+                disabled={!org}
+                onChange={v => handleToggleWorkforce('employees_can_submit_timesheets', v)}
+              />
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <SectionHeader
+                icon={<CalendarDays className="w-4 h-4" />}
+                title="Leave"
+                description="How approved leave interacts with the roster, and whether leave requests need approval."
+              />
+              <ToggleRow
+                label="Automatically merge leave with rostered hours"
+                description="Automatically splits rostered work around approved leave, so overlapping leave and work hours don't need to be entered as separate manual edits."
+                checked={org?.automatically_merge_leave_with_roster ?? false}
+                saving={savingWorkforceField === 'automatically_merge_leave_with_roster'}
+                disabled={!org}
+                onChange={v => handleToggleWorkforce('automatically_merge_leave_with_roster', v)}
+              />
+              <ToggleRow
+                label="Leave requests require approval"
+                description="When enabled, an employee's leave request stays pending until a manager approves it. When disabled, it takes effect immediately."
+                checked={org?.leave_requests_require_approval ?? true}
+                saving={savingWorkforceField === 'leave_requests_require_approval'}
+                disabled={!org}
+                onChange={v => handleToggleWorkforce('leave_requests_require_approval', v)}
+              />
             </Card>
           </div>
         )

@@ -19,10 +19,15 @@ import TimesheetReview from './pages/TimesheetReview';
 import Employees from './pages/Employees';
 import Locations from './pages/Locations';
 import BranchAdmins from './pages/BranchAdmins';
+import LeaveRequests from './pages/LeaveRequests';
 import Reports from './pages/Reports';
 import Audit from './pages/Audit';
 import Announcements from './pages/Announcements';
 import Settings from './pages/Settings';
+import EmployeeSchedule from './pages/EmployeeSchedule';
+import EmployeeTimesheet from './pages/EmployeeTimesheet';
+import EmployeeHistory from './pages/EmployeeHistory';
+import EmployeeLeave from './pages/EmployeeLeave';
 import { useAccess, type Permission } from './hooks/useAccess';
 import { ActiveBranchProvider } from './hooks/useActiveBranch';
 
@@ -31,23 +36,46 @@ function Loading() {
 }
 
 function NoAccess() {
+  const { access } = useAccess();
+  const isEmployee = access?.role === 'EMPLOYEE';
   return (
     <div className="max-w-md mx-auto mt-16 p-8 bg-[var(--panel)] border border-[var(--border)] rounded-2xl text-center space-y-3">
       <h1 className="text-lg font-bold text-[var(--text)]">You don’t have access to this page</h1>
       <p className="text-sm text-[var(--muted)]">
-        This area is managed by the Organisation Owner. If you need it, ask the owner to change your access.
+        {isEmployee
+          ? 'This area is for managers and owners. If you need it, ask your manager to change your access.'
+          : 'This area is managed by the Organisation Owner. If you need it, ask the owner to change your access.'}
       </p>
-      <Link to="/dashboard" className="inline-block text-sm font-semibold text-[var(--primary)] hover:underline">Go to the dashboard</Link>
+      <Link to={isEmployee ? '/my/schedule' : '/dashboard'} className="inline-block text-sm font-semibold text-[var(--primary)] hover:underline">
+        Go to {isEmployee ? 'my schedule' : 'the dashboard'}
+      </Link>
     </div>
   );
 }
 
-/** Shows a page only when the signed-in account holds `permission`. Display only — the API enforces it too. */
+/**
+ * Shows a page only when the signed-in account holds `permission`. Employees hold no permissions
+ * at all, so any permission check already excludes them; a bare Guard (no permission — team chat,
+ * settings) additionally excludes EMPLOYEE explicitly, since those pages are the same
+ * "any management account" audience the API itself restricts them to. Display only — the API
+ * authorises every request itself regardless of what this shows.
+ */
 function Guard({ permission, children }: { permission?: Permission; children: JSX.Element }) {
   const { access, loading, can } = useAccess();
   if (loading) return <Loading />;
   if (!access) return <Navigate to="/login" replace />;
+  if (access.role === 'EMPLOYEE') return <NoAccess />;
   if (permission && !can(permission)) return <NoAccess />;
+  return children;
+}
+
+/** Shows a page only to a signed-in Employee. The counterpart of Guard for the employee portal. */
+function EmployeeGuard({ requireTimesheets, children }: { requireTimesheets?: boolean; children: JSX.Element }) {
+  const { access, loading } = useAccess();
+  if (loading) return <Loading />;
+  if (!access) return <Navigate to="/login" replace />;
+  if (access.role !== 'EMPLOYEE') return <NoAccess />;
+  if (requireTimesheets && !access.employee_capabilities?.can_submit_timesheets) return <Navigate to="/my/schedule" replace />;
   return children;
 }
 
@@ -61,6 +89,13 @@ function AppShell() {
       <Layout />
     </ActiveBranchProvider>
   );
+}
+
+/** Employees land on their schedule; every other role lands on the dashboard. */
+function DefaultLanding() {
+  const { access, loading } = useAccess();
+  if (loading) return <Loading />;
+  return <Navigate to={access?.role === 'EMPLOYEE' ? '/my/schedule' : '/dashboard'} replace />;
 }
 
 export default function App() {
@@ -86,10 +121,11 @@ export default function App() {
 
         {/* Signed-in application */}
         <Route element={<AppShell />}>
-          <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/app" element={<DefaultLanding />} />
           <Route path="/dashboard" element={<Guard permission="branch.view"><Dashboard /></Guard>} />
           <Route path="/roster" element={<Guard permission="rosters.manage"><Roster /></Guard>} />
           <Route path="/timesheets" element={<Guard permission="timesheets.manage"><TimesheetReview /></Guard>} />
+          <Route path="/leave-requests" element={<Guard permission="timesheets.manage"><LeaveRequests /></Guard>} />
           <Route path="/workers" element={<Guard permission="workers.manage"><Employees /></Guard>} />
           <Route path="/reports" element={<Guard permission="reports.view"><Reports /></Guard>} />
           <Route path="/branches" element={<Guard permission="branch.view"><Locations /></Guard>} />
@@ -97,6 +133,13 @@ export default function App() {
           <Route path="/audit" element={<Guard permission="audit.view"><Audit /></Guard>} />
           <Route path="/announcements" element={<Guard><Announcements /></Guard>} />
           <Route path="/settings" element={<Guard><Settings /></Guard>} />
+
+          {/* Employee portal */}
+          <Route path="/my/schedule" element={<EmployeeGuard><EmployeeSchedule /></EmployeeGuard>} />
+          <Route path="/my/timesheet" element={<EmployeeGuard requireTimesheets><EmployeeTimesheet /></EmployeeGuard>} />
+          <Route path="/my/history" element={<EmployeeGuard><EmployeeHistory /></EmployeeGuard>} />
+          <Route path="/my/leave" element={<EmployeeGuard><EmployeeLeave /></EmployeeGuard>} />
+
           <Route path="*" element={<Guard><NoAccess /></Guard>} />
         </Route>
       </Routes>

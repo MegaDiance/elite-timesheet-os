@@ -7,6 +7,7 @@ import { useToast } from '../components/ui/Toast';
 import { Badge, Button, Card, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs } from '../components/ui';
 import { apiErrorMessage, downloadPayrollCsv, openPayrollPrint, signedHours } from '../components/roster/api';
 import { currentFortnightIso, periodLabel, shiftIso } from '../components/roster/dates';
+import { STATUS_VARIANT, type DayStatus } from '../components/roster/DayBox';
 
 interface WorkerPayrollSummary {
   employee_id: string;
@@ -71,9 +72,8 @@ const hasException = (w: WorkerPayrollSummary) =>
 const sumOf = (rows: WorkerPayrollSummary[], key: keyof WorkerPayrollSummary) => rows.reduce((acc, r) => acc + n(r[key]), 0);
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === 'Approved') return <Badge variant="success"><CheckCircle2 className="w-3 h-3" aria-hidden="true" />Approved</Badge>;
-  if (status === 'Locked') return <Badge variant="warning">Locked</Badge>;
-  return <Badge variant="default">Draft</Badge>;
+  const variant = STATUS_VARIANT[status as DayStatus] ?? 'outline';
+  return <Badge variant={variant}>{status === 'Approved' && <CheckCircle2 className="w-3 h-3" aria-hidden="true" />}{status}</Badge>;
 }
 
 export default function Reports() {

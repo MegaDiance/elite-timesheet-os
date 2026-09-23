@@ -61,7 +61,7 @@ async function describeAccess(userId: string, orgId: string) {
     if (!access) return null;
     const [userRes, orgRes, branchRes] = await Promise.all([
         query('SELECT id, email, full_name, two_factor_enabled FROM users WHERE id = $1', [userId]),
-        query('SELECT id, name, portal_slug FROM organisations WHERE id = $1', [orgId]),
+        query('SELECT id, name, portal_slug, employees_can_submit_timesheets FROM organisations WHERE id = $1', [orgId]),
         query('SELECT id, name, address, timezone, is_active FROM locations WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name ASC', [orgId, access.branchIds]),
     ]);
     const org = orgRes.rows[0];
@@ -71,6 +71,7 @@ async function describeAccess(userId: string, orgId: string) {
         role: access.role,
         permissions: Array.from(ROLE_PERMISSIONS[access.role]),
         branches: branchRes.rows,
+        ...(access.role === 'EMPLOYEE' ? { employee_capabilities: { can_submit_timesheets: org.employees_can_submit_timesheets } } : {}),
     };
 }
 

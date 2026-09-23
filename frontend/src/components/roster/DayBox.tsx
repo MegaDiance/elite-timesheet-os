@@ -27,6 +27,43 @@ const LEAVE_HUE: Record<Exclude<EntryType, 'WORK'>, string> = {
 const typeStyle = (type: EntryType): CSSProperties | undefined =>
   type === 'WORK' ? undefined : { color: `color-mix(in srgb, ${LEAVE_HUE[type]} 65%, var(--text))` };
 
+/**
+ * One colour system, shared by every page that shows a day: the roster grid, the timesheet
+ * review grid, reports and the dashboard. A type or status always looks the same wherever it
+ * appears — colour is never the only signal (every use here pairs it with a label, badge text or
+ * icon, matching PART_STYLE's own "never colour alone" rule above).
+ */
+export const TYPE_HUE: Record<EntryType, string | null> = { WORK: null, ...LEAVE_HUE };
+
+/** A weekend day cell's background tint, shared by the roster and timesheet grids (both used the same value ad hoc before). Always paired with the day's own weekday label — never the only signal. */
+export const WEEKEND_CLASS = 'bg-[var(--glass-4)]';
+
+/** A public holiday's background tint + label for the roster/timesheet grids — these had no visual treatment at all before. */
+export const PUBLIC_HOLIDAY_CLASS = 'bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]';
+export function PublicHolidayBadge({ name }: { name?: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-[var(--danger)]"
+      title={name ? `Public holiday: ${name}` : 'Public holiday'}
+    >
+      ★ {name || 'Holiday'}
+    </span>
+  );
+}
+
+export type DayStatus = 'Draft' | 'Approved' | 'Locked';
+
+/**
+ * One status → one Badge variant, everywhere a timesheet's status is shown. Locked is treated as
+ * a neutral "final/immutable" state (purple), not a warning — Reports and the Dashboard
+ * previously disagreed on this.
+ */
+export const STATUS_VARIANT: Record<DayStatus, 'outline' | 'success' | 'purple'> = {
+  Draft: 'outline',
+  Approved: 'success',
+  Locked: 'purple',
+};
+
 export interface DayContent {
   roster: Entry[];
   timesheet: Entry[];

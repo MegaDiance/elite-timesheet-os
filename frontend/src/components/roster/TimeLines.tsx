@@ -168,6 +168,23 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
                   )}
                 </div>
 
+                {!line.hoursOnly && line.type === 'WORK' && (
+                  <label
+                    className="order-last md:order-none flex items-center gap-1.5 h-11 md:h-9 px-1 shrink-0 text-[11px] text-[var(--muted)] cursor-pointer whitespace-nowrap"
+                    title={
+                      (line.has_break ? 'The unpaid break rule may apply to this shift' : 'This shift is exempt from the unpaid break rule')
+                      + ' — shared by its rostered and worked hours, since it describes the shift itself.'
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={line.has_break}
+                      onChange={e => patch(line.key, { has_break: e.target.checked })}
+                      className="h-4 w-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
+                    />
+                    Break
+                  </label>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleHoursOnly(line, index)}

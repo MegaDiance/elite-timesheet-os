@@ -21,6 +21,8 @@ const PUBLIC_ROUTES = new Set([
     'signup POST /complete',
     'branchAdmins GET /invitations/verify',
     'branchAdmins POST /invitations/accept',
+    'employeeAccounts GET /invitations/verify',
+    'employeeAccounts POST /invitations/accept',
     'organisation GET /lookup/:slug',
 ]);
 

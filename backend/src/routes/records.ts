@@ -4,8 +4,8 @@ import { query, withTransaction } from '../services/db';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, loadWorker, resolveBranchFilter } from '../services/policy';
 import { getFortnightStartIso, isFortnightStart, isIsoDate } from '../services/periodUtils';
-import { getPeriodLock, isTimesheetApproved, rosterLockedError, timesheetLockedError } from '../services/periodLocks';
-import { NormalisedSegment, breakRuleFor, loadBreakSettings, mergeDayWrite, normaliseDaySegments, rowsToDay } from '../services/segments';
+import { getPeriodLock, isTimesheetApproved } from '../services/periodLocks';
+import { breakRuleFor, loadBreakSettings, normaliseDaySegments, rowsToDay, writeDayRecord } from '../services/segments';
 import { calculateRosterStats } from '../services/rosterService';
 
 /**
@@ -81,21 +81,6 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
     }
 });
 
-const hhmm = (t: string | null) => (t ? String(t).slice(0, 5) : '');
-// A side is identified by its type and times; hours only identify it when it has no times.
-const sideKey = (type: string, start: string | null, end: string | null, hours: unknown) => {
-    if (start) return [type, hhmm(start), hhmm(end)].join('|');
-    return Number(hours) > 0 ? [type, Number(hours).toFixed(2)].join('|') : null;
-};
-const rosterSide = (s: any) => sideKey(s.segment_type, s.roster_in, s.roster_out, s.roster_hours);
-const actualSide = (s: any) => sideKey(s.actual_segment_type || s.segment_type, s.actual_in, s.actual_out, s.actual_hours);
-
-function sameSide(existing: any[], incoming: NormalisedSegment[], side: (s: any) => string | null): boolean {
-    const a = existing.map(side).filter(Boolean).sort();
-    const b = incoming.map(side).filter(Boolean).sort();
-    return a.length === b.length && a.every((v, i) => v === b[i]);
-}
-
 /**
  * POST /api/records
  *   { employee_id, record_date, scope?: 'ROSTER' | 'TIMESHEET' | 'BOTH', roster?: Entry[], timesheet?: Entry[], note? }
@@ -119,41 +104,8 @@ router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthR
             throw badRequest('WORKER_INACTIVE', 'Cannot record shifts or hours for an inactive worker.');
         }
 
-        const fortnightStart = getFortnightStartIso(record_date);
-        if (await isTimesheetApproved(ctx.orgId, worker.id, fortnightStart)) {
-            throw new HttpError(423, 'TIMESHEET_ALREADY_APPROVED', 'This timesheet is approved. Reopen it before changing shifts or hours.');
-        }
-
         const rule = breakRuleFor(await loadBreakSettings(ctx.orgId), record_date);
-        const lock = await getPeriodLock(ctx.orgId, worker.location_id, fortnightStart);
-        const saved = await withTransaction(async (tx) => {
-            const recRes = await tx(
-                `INSERT INTO daily_records (id, org_id, employee_id, record_date) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (org_id, employee_id, record_date) DO UPDATE SET record_date = EXCLUDED.record_date
-                 RETURNING id`,
-                [crypto.randomUUID(), ctx.orgId, worker.id, record_date]
-            );
-            const recordId = recRes.rows[0].id;
-            const existing = (await tx('SELECT * FROM shift_segments WHERE record_id = $1', [recordId])).rows;
-
-            const day = normaliseDaySegments(mergeDayWrite(rowsToDay(existing), req.body || {}), rule);
-            if (lock.roster_locked && !sameSide(existing, day.segments, rosterSide)) throw rosterLockedError();
-            if (lock.timesheet_locked && !sameSide(existing, day.segments, actualSide)) throw timesheetLockedError();
-
-            await tx('DELETE FROM shift_segments WHERE record_id = $1', [recordId]);
-            for (const seg of day.segments) {
-                await tx(
-                    `INSERT INTO shift_segments (id, record_id, segment_type, is_unplanned, roster_in, roster_out, roster_hours,
-                                                 actual_in, actual_out, actual_hours, actual_segment_type, notes)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                    [crypto.randomUUID(), recordId, seg.segment_type, seg.is_unplanned, seg.roster_in, seg.roster_out, seg.roster_hours,
-                        seg.actual_in, seg.actual_out, seg.actual_hours, seg.actual_segment_type, seg.notes]
-                );
-            }
-            await tx('UPDATE daily_records SET has_actuals = $1 WHERE id = $2', [day.hasActuals, recordId]);
-            return day.segments;
-        });
-
+        const saved = await writeDayRecord({ orgId: ctx.orgId, worker, recordDate: record_date, body: req.body || {}, rule });
         res.json({ success: true, data: rowsToDay(saved) });
     } catch (err) {
         sendError(res, err, 'RECORDS SAVE ERROR');
@@ -181,7 +133,7 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
 
         const source = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
         const sourceSegs = (await query(
-            `SELECT ss.segment_type, ss.roster_in, ss.roster_out, ss.roster_hours, ss.notes
+            `SELECT ss.segment_type, ss.roster_in, ss.roster_out, ss.roster_hours, ss.notes, ss.has_break
                FROM shift_segments ss JOIN daily_records dr ON dr.id = ss.record_id
               WHERE dr.org_id = $1 AND dr.employee_id = $2 AND dr.record_date = $3
                 AND (ss.roster_in IS NOT NULL OR ss.roster_hours > 0)`,
@@ -205,7 +157,7 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
                 if ((await getPeriodLock(ctx.orgId, worker.location_id, fortnightStart)).roster_locked) { skip('ROSTER_LOCKED'); continue; }
 
                 const day = normaliseDaySegments(
-                    sourceSegs.map((s: any) => ({ segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out, roster_hours: s.roster_hours, notes: s.notes })),
+                    sourceSegs.map((s: any) => ({ segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out, roster_hours: s.roster_hours, notes: s.notes, has_break: s.has_break })),
                     breakRuleFor(settings, date)
                 );
 
@@ -220,9 +172,9 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
                     await tx('DELETE FROM shift_segments WHERE record_id = $1', [recRes.rows[0].id]);
                     for (const seg of day.segments) {
                         await tx(
-                            `INSERT INTO shift_segments (id, record_id, segment_type, roster_in, roster_out, roster_hours, notes)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                            [crypto.randomUUID(), recRes.rows[0].id, seg.segment_type, seg.roster_in, seg.roster_out, seg.roster_hours, seg.notes]
+                            `INSERT INTO shift_segments (id, record_id, segment_type, roster_in, roster_out, roster_hours, notes, has_break)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                            [crypto.randomUUID(), recRes.rows[0].id, seg.segment_type, seg.roster_in, seg.roster_out, seg.roster_hours, seg.notes, seg.has_break]
                         );
                     }
                     return true;
@@ -234,6 +186,60 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
         res.json({ success: true, data: { copied, skipped } });
     } catch (err) {
         sendError(res, err, 'RECORDS COPY ERROR');
+    }
+});
+
+/**
+ * POST /api/records/apply-break
+ *   { employee_id, record_dates: string[], has_break: boolean }
+ *
+ * Turns the unpaid break on or off for every existing segment of the given days ("Apply Break" /
+ * "Apply Break to All Days" in the roster/timesheet editor). A day with nothing recorded yet has
+ * nothing to flip, so it is skipped rather than creating an empty day. Each date is authorised
+ * and lock/approval-checked independently, exactly like `copy-day` — one locked or approved day
+ * never blocks the others.
+ */
+router.post('/apply-break', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const { employee_id, record_dates, has_break } = req.body || {};
+        if (typeof has_break !== 'boolean') throw badRequest('VALIDATION_FAILED', 'has_break must be true or false.');
+        if (!Array.isArray(record_dates) || record_dates.length === 0 || record_dates.length > 31 || !record_dates.every(isIsoDate)) {
+            throw badRequest('VALIDATION_FAILED', 'record_dates must be a list of 1-31 dates.');
+        }
+
+        const worker = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
+        if (!worker.is_active) throw badRequest('WORKER_INACTIVE', 'Cannot change breaks for an inactive worker.');
+
+        const settings = await loadBreakSettings(ctx.orgId);
+        const applied: string[] = [];
+        const skipped: Array<{ date: string; reason: string }> = [];
+
+        for (const date of record_dates as string[]) {
+            const skip = (reason: string) => skipped.push({ date, reason });
+            try {
+                const recRes = await query(
+                    'SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3',
+                    [ctx.orgId, worker.id, date]
+                );
+                if (recRes.rows.length === 0) { skip('NOTHING_TO_CHANGE'); continue; }
+
+                const existing = (await query('SELECT * FROM shift_segments WHERE record_id = $1', [recRes.rows[0].id])).rows;
+                if (existing.length === 0) { skip('NOTHING_TO_CHANGE'); continue; }
+
+                const view = rowsToDay(existing);
+                const flip = (list: typeof view.roster) => list.map(e => ({ ...e, has_break }));
+                const body = { scope: 'BOTH' as const, roster: flip(view.roster), timesheet: flip(view.timesheet), note: view.note };
+                await writeDayRecord({ orgId: ctx.orgId, worker, recordDate: date, body, rule: breakRuleFor(settings, date) });
+                applied.push(date);
+            } catch (err) {
+                skip(err instanceof HttpError ? err.code : 'ERROR');
+            }
+        }
+
+        res.json({ success: true, data: { applied, skipped } });
+    } catch (err) {
+        sendError(res, err, 'RECORDS APPLY BREAK ERROR');
     }
 });
 

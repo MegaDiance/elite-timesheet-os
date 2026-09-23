@@ -56,6 +56,15 @@ export async function createWorker(orgId: string, branchId: string, fullName: st
     return res.rows[0].id;
 }
 
+/**
+ * Links a worker record to a login, exactly as accepting an employee invitation would — used
+ * directly by fixtures rather than through the invitation/accept HTTP flow, which is what those
+ * routes' own tests exercise.
+ */
+export async function linkEmployeeLogin(employeeId: string, userId: string): Promise<void> {
+    await sql('UPDATE employees SET user_id = $1 WHERE id = $2', [userId, employeeId]);
+}
+
 /** A real server session + token, exactly as a successful login produces. */
 export async function signIn(userId: string, orgId: string): Promise<string> {
     const session = await createSession(userId, orgId, CLIENT);
@@ -67,9 +76,12 @@ export const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 export interface World {
     abc: { id: string; portalSlug: string; melbourne: string; richmond: string; geelong: string };
     xyz: { id: string; portalSlug: string; sydney: string };
-    users: { owner: { id: string; email: string }; sarah: { id: string; email: string }; greg: { id: string; email: string }; xavier: { id: string; email: string } };
+    users: {
+        owner: { id: string; email: string }; sarah: { id: string; email: string }; greg: { id: string; email: string }; xavier: { id: string; email: string };
+        melEmployee: { id: string; email: string }; richEmployee: { id: string; email: string };
+    };
     workers: { mel: string; rich: string; gee: string; syd: string };
-    tokens: { owner: string; sarah: string; greg: string; xavier: string };
+    tokens: { owner: string; sarah: string; greg: string; xavier: string; melEmployee: string; richEmployee: string };
 }
 
 export async function buildWorld(): Promise<World> {
@@ -96,16 +108,23 @@ export async function buildWorld(): Promise<World> {
         syd: await createWorker(xyzOrg.id, sydney, 'Syd Worker'),
     };
 
+    const melEmployee = await createUser('mel.worker@abc.test', 'Mel Worker');
+    const richEmployee = await createUser('rich.worker@abc.test', 'Rich Worker');
+    await linkEmployeeLogin(workers.mel, melEmployee.id);
+    await linkEmployeeLogin(workers.rich, richEmployee.id);
+
     return {
         abc: { id: abcOrg.id, portalSlug: abcOrg.portalSlug, melbourne, richmond, geelong },
         xyz: { id: xyzOrg.id, portalSlug: xyzOrg.portalSlug, sydney },
-        users: { owner, sarah, greg, xavier },
+        users: { owner, sarah, greg, xavier, melEmployee, richEmployee },
         workers,
         tokens: {
             owner: await signIn(owner.id, abcOrg.id),
             sarah: await signIn(sarah.id, abcOrg.id),
             greg: await signIn(greg.id, abcOrg.id),
             xavier: await signIn(xavier.id, xyzOrg.id),
+            melEmployee: await signIn(melEmployee.id, abcOrg.id),
+            richEmployee: await signIn(richEmployee.id, abcOrg.id),
         },
     };
 }

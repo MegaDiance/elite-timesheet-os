@@ -314,6 +314,28 @@ export function buildBranchAdminInviteEmailTemplate(params: {
 }
 
 /**
+ * Employee portal invitation, sent by an Organisation Owner or Branch Admin.
+ */
+export function buildEmployeeInviteEmailTemplate(params: {
+    inviteLink: string,
+    recipientEmail: string,
+    organisationName: string,
+}): { subject: string, html: string, text: string } {
+    const subject = `You have been invited to SimpleHours by ${params.organisationName}`;
+    const footer = `This single-use invitation was issued to ${params.recipientEmail} and expires in 7 days.`;
+    const body = `You have been invited to set up your employee account at ${params.organisationName} on SimpleHours, where you can view your schedule and timesheet.`;
+    const text = `${subject}\n\n${body}\n\nAccept the invitation:\n${params.inviteLink}\n\n${footer}`;
+    const html = buildActionEmail({
+        title: `Employee invitation — ${params.organisationName}`,
+        body,
+        buttonLabel: 'Set up my account',
+        link: params.inviteLink,
+        footer,
+    });
+    return { subject, html, text };
+}
+
+/**
  * Generates branded HTML template for Password Reset
  */
 export function buildPasswordResetEmailTemplate(params: { resetLink: string, recipientEmail: string }): { subject: string, html: string, text: string } {

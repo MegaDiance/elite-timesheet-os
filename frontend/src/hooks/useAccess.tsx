@@ -4,10 +4,11 @@ import api from '../services/apiClient';
 /**
  * What the signed-in account may do, as reported by GET /api/auth/me.
  *
- * SimpleHours has two roles: the Organisation Owner and Branch Admins (each assigned to specific
- * branches). This is used only to decide what to SHOW; the server authorises every request itself.
+ * SimpleHours has three roles: the Organisation Owner, Branch Admins (each assigned to specific
+ * branches), and Employees (each linked to one worker record, holding no `permissions`). This is
+ * used only to decide what to SHOW; the server authorises every request itself.
  */
-export type Role = 'OWNER' | 'BRANCH_ADMIN';
+export type Role = 'OWNER' | 'BRANCH_ADMIN' | 'EMPLOYEE';
 
 export type Permission =
   | 'organisation.manage' | 'security.manage' | 'branches.manage' | 'branch_admins.manage'
@@ -28,6 +29,8 @@ export interface Access {
   role: Role;
   permissions: Permission[];
   branches: Branch[];
+  /** Present only when role is EMPLOYEE. */
+  employee_capabilities?: { can_submit_timesheets: boolean };
 }
 
 interface AccessValue {
@@ -41,6 +44,7 @@ interface AccessValue {
 export const ROLE_LABEL: Record<Role, string> = {
   OWNER: 'Organisation Owner',
   BRANCH_ADMIN: 'Branch Admin',
+  EMPLOYEE: 'Employee',
 };
 
 const AccessContext = createContext<AccessValue | null>(null);
@@ -76,6 +80,23 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     refresh();
     window.addEventListener('auth-change', refresh);
     return () => window.removeEventListener('auth-change', refresh);
+  }, [refresh]);
+
+  // A company setting (e.g. "employees can submit timesheets") must take effect in an already-open
+  // tab without a manual reload or re-login. Access is re-resolved from the server whenever the
+  // tab regains focus/visibility, and periodically while it stays in the foreground, so nav items
+  // gated on a permission or capability never lag more than about a minute behind a change made
+  // elsewhere. Mirrors the focus/visibility idiom already used by useSessionTimeout.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    const interval = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 60000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(interval);
+    };
   }, [refresh]);
 
   const can = useCallback((permission: Permission) => Boolean(access?.permissions.includes(permission)), [access]);

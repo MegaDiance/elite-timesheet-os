@@ -8,12 +8,18 @@ import { AccessContext, Role, badRequest, forbidden, hasPermission, isUuid, notF
  * Management noticeboard.
  *
  * The audience is the organisation's accounts: the Organisation Owner and its Branch Admins.
- * Posts, reactions and threaded replies are organisation-wide. Any authenticated account may
- * read, post, react and reply. Authors may delete their own posts and replies; deleting someone
- * else's requires announcements.moderate.
+ * Posts, reactions and threaded replies are organisation-wide. Any authenticated management
+ * account may read, post, react and reply — employees are not part of this audience and are
+ * denied below, before any handler runs. Authors may delete their own posts and replies;
+ * deleting someone else's requires announcements.moderate.
  */
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, (req: AuthRequest, res: Response, next) => {
+    if (req.auth!.role === 'EMPLOYEE') {
+        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You do not have access to this.' } });
+    }
+    next();
+});
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_CONTENT_LENGTH = 5000;
@@ -23,6 +29,7 @@ const MAX_EMOJI_LENGTH = 32;
 const ROLE_LABELS: Record<Role, string> = {
     OWNER: 'Organisation Owner',
     BRANCH_ADMIN: 'Branch Admin',
+    EMPLOYEE: 'Employee',
 };
 
 interface ReactionSummary {
