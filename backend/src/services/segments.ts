@@ -44,8 +44,13 @@ export interface SegmentInput {
     actual_out?: unknown;
     actual_hours?: unknown;
     notes?: unknown;
-    /** Whether the org's unpaid break may be deducted from this segment. Defaults to true (today's implicit rule) when absent. */
+    /** Whether the org's unpaid break may be deducted from the ROSTERED side. Defaults to true (today's implicit rule) when absent. */
     has_break?: unknown;
+    /** Explicit break length for the rostered side; absent/null = the organisation's rule. */
+    break_mins?: unknown;
+    /** The WORKED side's own break flag and length. Absent = the same as the rostered side (callers that only know one flag). */
+    actual_has_break?: unknown;
+    actual_break_mins?: unknown;
 }
 
 export interface NormalisedSegment {
@@ -60,7 +65,13 @@ export interface NormalisedSegment {
     actual_hours: number;
     notes: string | null;
     has_break: boolean;
+    break_mins: number | null;
+    actual_has_break: boolean;
+    actual_break_mins: number | null;
 }
+
+/** Longest explicit break accepted for one shift. */
+export const MAX_BREAK_MINS = 240;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -87,10 +98,20 @@ function readHours(value: unknown, label: string): number {
     return round2(n);
 }
 
-interface TimedSpan { index: number; start: number; end: number; type: SegmentType; hasBreak: boolean }
+/** An explicit break length: null when absent (the organisation's rule applies), else whole minutes 0–240. */
+export function readBreakMins(value: unknown, label: string): number | null {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_BREAK_MINS) {
+        throw badRequest('INVALID_BREAK', `${label} must be a whole number of minutes from 0 to ${MAX_BREAK_MINS}.`);
+    }
+    return n;
+}
+
+interface TimedSpan { index: number; start: number; end: number; type: SegmentType; hasBreak: boolean; breakMins: number | null }
 
 /** Start/end in minutes from midnight of the record date; an overnight segment ends after 1440. */
-function spanOf(index: number, type: SegmentType, start: string, end: string, label: string, hasBreak: boolean): TimedSpan {
+function spanOf(index: number, type: SegmentType, start: string, end: string, label: string, hasBreak: boolean, breakMins: number | null = null): TimedSpan {
     const s = toMinutes(start);
     let e = toMinutes(end);
     if (e === s) throw badRequest('EMPTY_SEGMENT', `${label}: start and finish are the same time.`);
@@ -98,7 +119,7 @@ function spanOf(index: number, type: SegmentType, start: string, end: string, la
     if (e - s > MAX_SEGMENT_MINUTES) {
         throw badRequest('BACKWARDS_TIME', `${label}: the finish time is before the start time.`);
     }
-    return { index, start: s, end: e, type, hasBreak };
+    return { index, start: s, end: e, type, hasBreak, breakMins };
 }
 
 function assertNoOverlap(spans: TimedSpan[], side: string) {
@@ -113,13 +134,16 @@ function assertNoOverlap(spans: TimedSpan[], side: string) {
 /**
  * Hours for one side (rostered or worked) of a whole day.
  *
- * The organisation's unpaid break is a property of the DAY, not of each segment: it is deducted
- * once when the day's timed segments add up to the threshold — unless the segments already leave
- * a gap at least as long as the break (the break was taken between them). It only ever comes off
- * Normal Work: the longest Normal Work segment that is at least as long as the break. Leave
- * (Sick, Annual, TIL, LWIP, Other) is never reduced, so a day with no such work has no deduction.
- * A single Normal Work day calculates exactly as before, a split day is not under-deducted, and
- * two long segments are not deducted twice.
+ * The unpaid break is a property of the DAY, not of each segment: it is deducted at most once, and
+ * never when the segments already leave a gap at least as long as the break (it was taken between
+ * them). It only ever comes off Normal Work — the longest Normal Work segment that has its break
+ * switched on and is at least as long as the break. Leave (Sick, Annual, TIL, LWIP, Other) is
+ * never reduced, so a day with no such work has no deduction.
+ *
+ * The break's length is that segment's explicit `breakMins` when it has one — an explicit break is
+ * deducted whatever the day's length — otherwise the organisation's rule for the day, which only
+ * applies once the day's timed segments reach the threshold. With no explicit lengths anywhere
+ * (every row stored before explicit lengths existed) this is exactly the previous calculation.
  */
 export function computeDayHours(spans: TimedSpan[], rule: BreakRule): Map<number, number> {
     const hours = new Map<number, number>();
@@ -130,13 +154,16 @@ export function computeDayHours(spans: TimedSpan[], rule: BreakRule): Map<number
     let gapMinutes = 0;
     for (let i = 1; i < sorted.length; i++) gapMinutes += Math.max(0, sorted[i].start - sorted[i - 1].end);
 
-    const work = sorted.filter(s => s.type === 'WORK' && s.hasBreak && s.end - s.start >= rule.breakMins);
-    const deduct = rule.breakMins > 0 && work.length > 0 && totalMinutes >= rule.thresholdHours * 60 && gapMinutes < rule.breakMins;
-    const longest = work.reduce((best, s) => (s.end - s.start > best.end - best.start ? s : best), work[0]);
+    const breakFor = (s: TimedSpan) => s.breakMins ?? rule.breakMins;
+    const work = sorted.filter(s => s.type === 'WORK' && s.hasBreak && breakFor(s) > 0 && s.end - s.start >= breakFor(s));
+    const longest = work.reduce<TimedSpan | undefined>((best, s) => (!best || s.end - s.start > best.end - best.start ? s : best), undefined);
+    const breakMins = longest ? breakFor(longest) : 0;
+    const reachesThreshold = longest?.breakMins != null || totalMinutes >= rule.thresholdHours * 60;
+    const deduct = Boolean(longest) && reachesThreshold && gapMinutes < breakMins;
 
     for (const span of spans) {
         let minutes = span.end - span.start;
-        if (deduct && span === longest) minutes = Math.max(0, minutes - rule.breakMins);
+        if (deduct && span === longest) minutes = Math.max(0, minutes - breakMins);
         hours.set(span.index, round2(minutes / 60));
     }
     return hours;
@@ -174,11 +201,17 @@ export function normaliseDaySegments(inputs: unknown, rule: BreakRule): { segmen
             manualActualHours: readHours(raw.actual_hours, `${label} worked hours`),
             notes: typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes.trim().slice(0, 500) : null,
             hasBreak: raw.has_break !== false,
+            breakMins: readBreakMins(raw.break_mins, `${label} break`),
+            // The worked side has its own break; callers that only send one flag mean both sides.
+            actualHasBreak: raw.actual_has_break === undefined ? raw.has_break !== false : raw.actual_has_break !== false,
+            actualBreakMins: raw.actual_break_mins === undefined
+                ? readBreakMins(raw.break_mins, `${label} break`)
+                : readBreakMins(raw.actual_break_mins, `${label} worked break`),
         };
     });
 
-    const rosterSpans = drafts.filter(d => d.rosterIn && d.rosterOut).map(d => spanOf(d.index, d.segment_type, d.rosterIn!, d.rosterOut!, `${d.label} (rostered)`, d.hasBreak));
-    const actualSpans = drafts.filter(d => d.actualIn && d.actualOut).map(d => spanOf(d.index, d.actual_segment_type || d.segment_type, d.actualIn!, d.actualOut!, `${d.label} (worked)`, d.hasBreak));
+    const rosterSpans = drafts.filter(d => d.rosterIn && d.rosterOut).map(d => spanOf(d.index, d.segment_type, d.rosterIn!, d.rosterOut!, `${d.label} (rostered)`, d.hasBreak, d.breakMins));
+    const actualSpans = drafts.filter(d => d.actualIn && d.actualOut).map(d => spanOf(d.index, d.actual_segment_type || d.segment_type, d.actualIn!, d.actualOut!, `${d.label} (worked)`, d.actualHasBreak, d.actualBreakMins));
     assertNoOverlap(rosterSpans, 'Rostered');
     assertNoOverlap(actualSpans, 'Worked');
 
@@ -211,6 +244,9 @@ export function normaliseDaySegments(inputs: unknown, rule: BreakRule): { segmen
             actual_in: d.actualIn, actual_out: d.actualOut, actual_hours,
             notes: d.notes,
             has_break: d.hasBreak,
+            break_mins: d.breakMins,
+            actual_has_break: d.actualHasBreak,
+            actual_break_mins: d.actualBreakMins,
         };
     });
 
@@ -260,6 +296,8 @@ export interface DayEntry {
     finish: string | null;
     hours: number;
     has_break: boolean;
+    /** Explicit break length for this shift; null = the organisation's rule. */
+    break_mins: number | null;
 }
 
 export interface DayView {
@@ -277,13 +315,19 @@ export function rowsToDay(rows: any[]): DayView {
     const roster: DayEntry[] = [];
     const timesheet: DayEntry[] = [];
     const notes: string[] = [];
+    const mins = (v: unknown) => (v === null || v === undefined ? null : Number(v));
     for (const row of rows) {
-        const hasBreak = row.has_break !== false;
         if (row.roster_in || Number(row.roster_hours) > 0) {
-            roster.push({ type: row.segment_type, start: hhmm(row.roster_in), finish: hhmm(row.roster_out), hours: Number(row.roster_hours) || 0, has_break: hasBreak });
+            roster.push({
+                type: row.segment_type, start: hhmm(row.roster_in), finish: hhmm(row.roster_out), hours: Number(row.roster_hours) || 0,
+                has_break: row.has_break !== false, break_mins: mins(row.break_mins),
+            });
         }
         if (row.actual_in || Number(row.actual_hours) > 0) {
-            timesheet.push({ type: row.actual_segment_type || row.segment_type, start: hhmm(row.actual_in), finish: hhmm(row.actual_out), hours: Number(row.actual_hours) || 0, has_break: hasBreak });
+            timesheet.push({
+                type: row.actual_segment_type || row.segment_type, start: hhmm(row.actual_in), finish: hhmm(row.actual_out), hours: Number(row.actual_hours) || 0,
+                has_break: (row.actual_has_break ?? row.has_break) !== false, break_mins: mins(row.actual_break_mins),
+            });
         }
         if (row.notes) notes.push(row.notes);
     }
@@ -317,7 +361,12 @@ export function dayToRows(roster: Array<Record<string, unknown>>, timesheet: Arr
             roster_in: planned?.start, roster_out: planned?.finish, roster_hours: planned?.hours,
             actual_segment_type: worked ? (worked.type ?? 'WORK') : null,
             actual_in: worked?.start, actual_out: worked?.finish, actual_hours: worked?.hours,
-            has_break: (planned?.has_break ?? worked?.has_break) !== false,
+            // Each side keeps its own break, so pairing a rostered and a worked entry in one row
+            // never lets one side's break setting overwrite the other's.
+            has_break: (planned ? planned.has_break : worked?.has_break) !== false,
+            break_mins: planned ? planned.break_mins : worked?.break_mins,
+            actual_has_break: worked ? worked.has_break !== false : undefined,
+            actual_break_mins: worked ? worked.break_mins ?? null : undefined,
             is_unplanned: !planned && Boolean(worked),
             notes: i === 0 ? note : null,
         });
@@ -416,13 +465,17 @@ export function mergeDayWrite(existing: DayView, body: Record<string, unknown>, 
 
 const hhmmKey = (t: unknown): string => (t ? String(t).slice(0, 5) : '');
 
-function sideKey(type: unknown, start: unknown, end: unknown, hours: unknown): string | null {
-    if (start) return [type, hhmmKey(start), hhmmKey(end)].join('|');
+// A timed Normal Work entry's break is part of its identity: changing it changes the day's hours,
+// so on a locked side it counts as a change like any other.
+function sideKey(type: unknown, start: unknown, end: unknown, hours: unknown, hasBreak: unknown, breakMins: unknown): string | null {
+    const brk = type === 'WORK' ? `${hasBreak !== false}:${breakMins ?? ''}` : '';
+    if (start) return [type, hhmmKey(start), hhmmKey(end), brk].join('|');
     return Number(hours) > 0 ? [type, Number(hours).toFixed(2)].join('|') : null;
 }
 
-export const rosterSide = (s: any): string | null => sideKey(s.segment_type, s.roster_in, s.roster_out, s.roster_hours);
-export const actualSide = (s: any): string | null => sideKey(s.actual_segment_type || s.segment_type, s.actual_in, s.actual_out, s.actual_hours);
+export const rosterSide = (s: any): string | null => sideKey(s.segment_type, s.roster_in, s.roster_out, s.roster_hours, s.has_break, s.break_mins);
+export const actualSide = (s: any): string | null =>
+    sideKey(s.actual_segment_type || s.segment_type, s.actual_in, s.actual_out, s.actual_hours, s.actual_has_break ?? s.has_break, s.actual_break_mins);
 
 export function sameSide(existing: any[], incoming: NormalisedSegment[], side: (s: any) => string | null): boolean {
     const a = existing.map(side).filter(Boolean).sort();
@@ -471,10 +524,12 @@ export async function writeDayRecord(params: {
         for (const seg of day.segments) {
             await tx(
                 `INSERT INTO shift_segments (id, record_id, segment_type, is_unplanned, roster_in, roster_out, roster_hours,
-                                             actual_in, actual_out, actual_hours, actual_segment_type, notes, has_break)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                                             actual_in, actual_out, actual_hours, actual_segment_type, notes, has_break,
+                                             break_mins, actual_has_break, actual_break_mins)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
                 [crypto.randomUUID(), recordId, seg.segment_type, seg.is_unplanned, seg.roster_in, seg.roster_out, seg.roster_hours,
-                    seg.actual_in, seg.actual_out, seg.actual_hours, seg.actual_segment_type, seg.notes, seg.has_break]
+                    seg.actual_in, seg.actual_out, seg.actual_hours, seg.actual_segment_type, seg.notes, seg.has_break,
+                    seg.break_mins, seg.actual_has_break, seg.actual_break_mins]
             );
         }
         await tx('UPDATE daily_records SET has_actuals = $1 WHERE id = $2', [day.hasActuals, recordId]);

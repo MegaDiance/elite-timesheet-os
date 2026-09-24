@@ -40,8 +40,10 @@ export interface Entry {
   start: string | null;
   finish: string | null;
   hours: number;
-  /** Whether the org's unpaid break may be deducted from this entry. Defaults to true. */
+  /** Whether an unpaid break may be deducted from this entry. Defaults to true. */
   has_break: boolean;
+  /** Explicit break length in minutes; null = the organisation's rule for the day. */
+  break_mins: number | null;
 }
 
 export interface DayRecord {
@@ -72,6 +74,7 @@ function readEntries(list: unknown): Entry[] {
     finish: hhmm(e?.finish),
     hours: Number(e?.hours) || 0,
     has_break: e?.has_break !== false,
+    break_mins: e?.break_mins === null || e?.break_mins === undefined ? null : Number(e.break_mins),
   }));
 }
 
@@ -150,6 +153,31 @@ export const breakRuleFor = (settings: BreakSettings, dateIso: string): BreakRul
   thresholdHours: settings.break_threshold_hours,
 });
 
+/**
+ * One break control for a Normal Work shift: the organisation's standard rule, an explicit length
+ * (deducted whatever the day's length), or no break. Stored as has_break + break_mins.
+ */
+export type BreakChoice = 'standard' | 'none' | `${number}`;
+export const BREAK_LENGTHS = [15, 20, 30, 45, 60] as const;
+
+export const breakChoiceOf = (hasBreak: boolean, breakMins: number | null): BreakChoice =>
+  !hasBreak ? 'none' : breakMins === null ? 'standard' : `${breakMins}`;
+
+export const breakFromChoice = (choice: BreakChoice): { has_break: boolean; break_mins: number | null } =>
+  choice === 'none' ? { has_break: false, break_mins: null }
+    : choice === 'standard' ? { has_break: true, break_mins: null }
+      : { has_break: true, break_mins: Number(choice) };
+
+/** "Standard break (30 min at 6 h+)" / "45 min break" / "No break". */
+export function breakChoiceLabel(choice: BreakChoice, rule?: BreakRule): string {
+  if (choice === 'none') return 'No break';
+  if (choice === 'standard') {
+    if (!rule) return 'Standard break';
+    return rule.breakMins > 0 ? `Standard (${rule.breakMins} min at ${rule.thresholdHours} h+)` : 'Standard (none this day)';
+  }
+  return `${choice} min break`;
+}
+
 export function describeBreakRule(rule: BreakRule): string {
   if (rule.breakMins <= 0) return 'No unpaid break on this day.';
   return `A ${rule.breakMins} min unpaid break comes off Normal Work on days of ${rule.thresholdHours} h or more.`;
@@ -169,6 +197,7 @@ interface Span {
   end: number;
   type: EntryType;
   hasBreak: boolean;
+  breakMins: number | null;
 }
 
 type SpanResult = { start: number; end: number } | 'same' | 'backwards' | null;
@@ -185,32 +214,37 @@ function spanOf(start: string, finish: string): SpanResult {
 }
 
 /**
- * Exactly the server's rule: the break is deducted ONCE per day per part when the timed entries
- * add up to the threshold and the gaps between them are shorter than the break. It comes only off
- * Normal Work — the longest Normal Work entry at least as long as the break (the earliest one on a
- * tie). Leave is never reduced, so a day without such work has no deduction.
+ * Exactly the server's rule: the break is deducted at most ONCE per day per part, never when the
+ * gaps between entries are already at least as long as the break, and only off Normal Work — the
+ * longest Normal Work entry with its break on that is at least as long as the break (the earliest
+ * one on a tie). An explicit break length on that entry is always deducted; otherwise the
+ * organisation's break applies once the day's timed entries reach the threshold. Leave is never
+ * reduced, so a day without such work has no deduction.
  */
-function computeDayHours(spans: Span[], rule: BreakRule): { hours: Map<number, number>; breakAt: number | null } {
+function computeDayHours(spans: Span[], rule: BreakRule): { hours: Map<number, number>; breakAt: number | null; breakMins: number } {
   const hours = new Map<number, number>();
-  if (spans.length === 0) return { hours, breakAt: null };
+  if (spans.length === 0) return { hours, breakAt: null, breakMins: 0 };
 
   const sorted = [...spans].sort((a, b) => a.start - b.start);
   const totalMinutes = sorted.reduce((acc, s) => acc + (s.end - s.start), 0);
   let gapMinutes = 0;
   for (let i = 1; i < sorted.length; i++) gapMinutes += Math.max(0, sorted[i].start - sorted[i - 1].end);
 
-  const work = sorted.filter(s => s.type === 'WORK' && s.hasBreak && s.end - s.start >= rule.breakMins);
-  const deduct = rule.breakMins > 0 && work.length > 0 && totalMinutes >= rule.thresholdHours * 60 && gapMinutes < rule.breakMins;
-  const longest = work.reduce((best, s) => (s.end - s.start > best.end - best.start ? s : best), work[0]);
+  const breakFor = (s: Span) => s.breakMins ?? rule.breakMins;
+  const work = sorted.filter(s => s.type === 'WORK' && s.hasBreak && breakFor(s) > 0 && s.end - s.start >= breakFor(s));
+  const longest = work.reduce<Span | undefined>((best, s) => (!best || s.end - s.start > best.end - best.start ? s : best), undefined);
+  const breakMins = longest ? breakFor(longest) : 0;
+  const reachesThreshold = longest?.breakMins != null || totalMinutes >= rule.thresholdHours * 60;
+  const deduct = Boolean(longest) && reachesThreshold && gapMinutes < breakMins;
 
   // Summed rather than overwritten: mergeLeaveSpans can hand back several sub-spans that share the
   // original line's index (a WORK line split around a leave line), and their hours add up onto it.
   for (const span of spans) {
     let minutes = span.end - span.start;
-    if (deduct && span === longest) minutes = Math.max(0, minutes - rule.breakMins);
+    if (deduct && span === longest) minutes = Math.max(0, minutes - breakMins);
     hours.set(span.index, round2((hours.get(span.index) ?? 0) + minutes / 60));
   }
-  return { hours, breakAt: deduct ? longest.index : null };
+  return { hours, breakAt: deduct && longest ? longest.index : null, breakMins: deduct ? breakMins : 0 };
 }
 
 /**
@@ -265,11 +299,11 @@ export function previewDayHours(entries: Entry[], rule: BreakRule, mergeLeave = 
   entries.forEach((e, index) => {
     const span = e.start && e.finish ? spanOf(e.start, e.finish) : null;
     if (span && typeof span === 'object') {
-      spans.push({ index, ...span, type: e.type, hasBreak: e.has_break });
+      spans.push({ index, ...span, type: e.type, hasBreak: e.has_break, breakMins: e.break_mins });
       hadSpan.add(index);
     }
   });
-  const { hours, breakAt } = computeDayHours(mergeLeave ? mergeLeaveSpans(spans) : spans, rule);
+  const { hours, breakMins } = computeDayHours(mergeLeave ? mergeLeaveSpans(spans) : spans, rule);
   const perEntry = entries.map((e, index) => {
     if (hours.has(index)) return hours.get(index)!;
     if (hadSpan.has(index)) return 0;
@@ -279,7 +313,7 @@ export function previewDayHours(entries: Entry[], rule: BreakRule, mergeLeave = 
   return {
     perEntry,
     total: round2(perEntry.reduce<number>((acc, h) => acc + (h ?? 0), 0)),
-    breakMins: breakAt === null ? 0 : rule.breakMins,
+    breakMins,
   };
 }
 
@@ -294,6 +328,7 @@ export interface DraftLine {
   finish: string;
   hours: number;
   has_break: boolean;
+  break_mins: number | null;
 }
 
 export const MAX_LINES = 12;
@@ -301,7 +336,7 @@ export const MAX_LINES = 12;
 let keySeq = 0;
 const newKey = () => `line-${(keySeq++).toString(36)}`;
 
-export const blankLine = (start = ''): DraftLine => ({ key: newKey(), type: 'WORK', hoursOnly: false, start, finish: '', hours: 0, has_break: true });
+export const blankLine = (start = ''): DraftLine => ({ key: newKey(), type: 'WORK', hoursOnly: false, start, finish: '', hours: 0, has_break: true, break_mins: null });
 
 export const lineFromEntry = (e: Entry): DraftLine => ({
   key: newKey(),
@@ -311,6 +346,7 @@ export const lineFromEntry = (e: Entry): DraftLine => ({
   finish: e.finish ?? '',
   hours: !e.start && !e.finish ? e.hours : 0,
   has_break: e.has_break,
+  break_mins: e.break_mins,
 });
 
 /** A line nobody has filled in. It is left out when saving, so an empty part saves as nothing. */
@@ -318,8 +354,8 @@ export const isUntouched = (l: DraftLine): boolean => !l.hoursOnly && !l.start &
 
 /** What a line saves (a timed line's hours are computed by the server). */
 export const lineToEntry = (l: DraftLine): Entry => (l.hoursOnly
-  ? { type: l.type, start: null, finish: null, hours: round2(l.hours), has_break: true }
-  : { type: l.type, start: l.start || null, finish: l.finish || null, hours: 0, has_break: l.has_break });
+  ? { type: l.type, start: null, finish: null, hours: round2(l.hours), has_break: true, break_mins: null }
+  : { type: l.type, start: l.start || null, finish: l.finish || null, hours: 0, has_break: l.has_break, break_mins: l.has_break ? l.break_mins : null });
 
 export const linesToEntries = (lines: DraftLine[]): Entry[] => lines.filter(l => !isUntouched(l)).map(lineToEntry);
 
@@ -328,7 +364,7 @@ export const linesFor = (entries: Entry[]): DraftLine[] => (entries.length > 0 ?
 
 /** A comparable fingerprint of what a part would save. */
 export const partKey = (entries: Entry[]): string =>
-  JSON.stringify(entries.map(e => (e.start || e.finish ? [e.type, e.start, e.finish, e.has_break] : [e.type, round2(e.hours)])));
+  JSON.stringify(entries.map(e => (e.start || e.finish ? [e.type, e.start, e.finish, e.has_break, e.break_mins] : [e.type, round2(e.hours)])));
 
 export interface LinesCheck {
   /** The problem with each line (same order as the input), or null. */
@@ -368,7 +404,7 @@ export function checkLines(lines: DraftLine[], mergeLeave = false): LinesCheck {
     if (span === null) return flag(i, 'Enter times like 9, 5p or 17:30.');
     if (span === 'same') return flag(i, 'The start and finish are the same time.');
     if (span === 'backwards') return flag(i, 'The finish is before the start. (A shift can run past midnight for up to 14 hours.)');
-    spans.push({ index: i, ...span, type: l.type, hasBreak: l.has_break });
+    spans.push({ index: i, ...span, type: l.type, hasBreak: l.has_break, breakMins: l.break_mins });
   });
 
   const sorted = [...(mergeLeave ? mergeLeaveSpans(spans) : spans)].sort((a, b) => a.start - b.start);

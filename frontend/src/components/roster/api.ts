@@ -54,11 +54,18 @@ export interface BulkApproveResult {
   failed: Array<{ employee_id: string; code: string; message: string }>;
 }
 
+/** Why the server left a day unchanged in a bulk action. Leave always wins over a roster change. */
 export const SKIP_REASON_LABEL: Record<string, string> = {
   INACTIVE: 'the worker is inactive',
   APPROVED: 'the timesheet is approved',
+  TIMESHEET_ALREADY_APPROVED: 'the timesheet is approved',
   ROSTER_LOCKED: 'the roster is locked',
+  TIMESHEET_LOCKED: 'timesheets are locked',
   HAS_WORKED_HOURS: 'the day already has worked hours',
+  APPROVED_LEAVE: 'approved leave covers the whole day — kept as is',
+  LEAVE_ON_DAY: 'a whole day of leave is rostered — kept as is',
+  OVERLAP: 'the new shifts overlap leave already on that day',
+  NOTHING_TO_CHANGE: 'nothing recorded',
 };
 
 interface ErrorLike {

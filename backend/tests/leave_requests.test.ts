@@ -203,3 +203,16 @@ describe('GET /leave-requests (admin) and GET /portal/leave-requests (employee)'
         expect(res.body.data).toEqual([]);
     });
 });
+
+describe('reviewing is race-safe', () => {
+    it('two simultaneous approvals: exactly one wins, and the leave is written once', async () => {
+        const created = await request(app).post('/api/portal/leave-requests').set(bearer(w.tokens.melEmployee))
+            .send({ leave_type: 'Annual', start_date: PERIOD, end_date: PERIOD, hours: 7.6 });
+        const id = created.body.data.id;
+        const review = () => request(app).post(`/api/leave-requests/${id}/review`).set(bearer(w.tokens.owner)).send({ decision: 'approve' });
+        const results = await Promise.all([review(), review()]);
+        expect(results.map(r => r.status).sort()).toEqual([200, 400]);
+        const segs = await sql(`SELECT ss.segment_type FROM shift_segments ss JOIN daily_records dr ON dr.id = ss.record_id WHERE dr.employee_id = $1`, [w.workers.mel]);
+        expect(segs.rows).toEqual([{ segment_type: 'Annual' }]);
+    });
+});

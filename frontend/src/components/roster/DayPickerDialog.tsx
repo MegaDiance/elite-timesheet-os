@@ -17,7 +17,7 @@ interface DayPickerDialogProps {
 const TEXT: Record<BulkFillMode, { title: string; body: string }> = {
   roster: {
     title: 'Apply default rosters',
-    body: 'Each worker’s default roster (set on the Workers page) replaces what is rostered on the chosen days; days their default leaves empty are left alone. Workers without a default roster get 9:00 am – 5:00 pm. Worked hours and notes are kept. Branches with a locked roster and approved timesheets are skipped.',
+    body: 'Each worker’s default roster (set on the Workers page) replaces the Normal Work rostered on the chosen days; days their default leaves empty are left alone. Workers without a default roster get 9:00 am – 5:00 pm. Leave is never replaced: shifts are fitted around part-day leave, and whole days of leave are kept as they are. Worked hours and notes are kept. Branches with a locked roster and approved timesheets are skipped.',
   },
   log: {
     title: 'Copy roster to worked hours',

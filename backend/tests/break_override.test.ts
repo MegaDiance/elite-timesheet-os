@@ -31,14 +31,14 @@ describe('has_break persists and affects hours', () => {
             timesheet: [],
         });
         expect(res.status).toBe(200);
-        expect(res.body.data.roster).toEqual([{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: false }]);
+        expect(res.body.data.roster).toEqual([{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: false, break_mins: null }]);
     });
 
     it('defaults to has_break: true when omitted, matching today\'s behaviour (30 min deducted)', async () => {
         const res = await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({
             employee_id: w.workers.mel, record_date: MONDAY, roster: [entry('09:00', '17:00')], timesheet: [],
         });
-        expect(res.body.data.roster[0]).toEqual({ type: 'WORK', start: '09:00', finish: '17:00', hours: 7.5, has_break: true });
+        expect(res.body.data.roster[0]).toEqual({ type: 'WORK', start: '09:00', finish: '17:00', hours: 7.5, has_break: true, break_mins: null });
     });
 });
 

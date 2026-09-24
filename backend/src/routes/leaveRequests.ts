@@ -60,14 +60,23 @@ router.post('/:id/review', async (req: AuthRequest, res: Response) => {
 
         if (decision === 'reject') {
             const reason = typeof rejection_reason === 'string' && rejection_reason.trim() ? rejection_reason.trim().slice(0, 500) : null;
-            await query('UPDATE leave_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW(), rejection_reason = $3 WHERE id = $4',
-                ['Rejected', ctx.userId, reason, request.id]);
+            const rejected = await query(
+                `UPDATE leave_requests SET status = 'Rejected', reviewed_by = $1, reviewed_at = NOW(), rejection_reason = $2 WHERE id = $3 AND status = 'Pending' RETURNING id`,
+                [ctx.userId, reason, request.id]
+            );
+            if (rejected.rows.length === 0) throw badRequest('ALREADY_REVIEWED', 'This request has already been reviewed.');
             await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'LEAVE_REQUEST_REJECTED', entityType: 'leave_request', entityId: request.id, targetUserId: null, branchId: worker.location_id, details: reason || undefined });
             return res.json({ success: true, message: 'Leave request rejected.' });
         }
 
+        // Claimed atomically before anything is written, so two reviewers approving at the same
+        // moment can never both write the leave into the roster/timesheet.
+        const claimed = await query(
+            `UPDATE leave_requests SET status = 'Approved', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2 AND status = 'Pending' RETURNING id`,
+            [ctx.userId, request.id]
+        );
+        if (claimed.rows.length === 0) throw badRequest('ALREADY_REVIEWED', 'This request has already been reviewed.');
         const result = await materializeLeaveRequest(ctx.orgId, worker, request as any);
-        await query('UPDATE leave_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3', ['Approved', ctx.userId, request.id]);
         await writeAudit({
             orgId: ctx.orgId, actorId: ctx.userId, action: 'LEAVE_REQUEST_APPROVED', entityType: 'leave_request', entityId: request.id,
             branchId: worker.location_id, details: result.skipped.length ? `${result.applied.length} day(s) applied, ${result.skipped.length} skipped` : `${result.applied.length} day(s) applied`,

@@ -315,8 +315,19 @@ export default function Roster() {
       const count = Number(res.data?.data?.workers ?? 0);
       const who = worker ? worker.full_name : `${count} worker${count === 1 ? '' : 's'}`;
       const nothingToDo = worker && count === 0;
+      const skipped: Array<{ employee_id: string; date: string; reason: string }> = mode === 'roster' ? res.data?.data?.skipped ?? [] : [];
       if (nothingToDo) {
         toast.error(mode === 'roster' ? `${who}’s roster is locked or already approved for these days.` : `${who}’s timesheet is locked or already approved for these days.`);
+      } else if (skipped.length > 0) {
+        // Days kept as they were (leave, locks) are listed, never silently dropped.
+        const applied = Number(res.data?.data?.applied ?? 0);
+        setResult({
+          title: 'Apply default roster',
+          summary: applied > 0 ? `Default roster applied to ${applied} day${applied === 1 ? '' : 's'} for ${who}.` : 'No days were changed.',
+          problemHeading: 'Kept as they were',
+          problems: skipped.map(s => ({ label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`, detail: SKIP_REASON_LABEL[s.reason] ?? s.reason })),
+          anyDone: applied > 0,
+        });
       } else {
         toast.success(mode === 'roster' ? `Default roster applied for ${who}.` : `Worked hours filled from the roster for ${who}.`);
       }

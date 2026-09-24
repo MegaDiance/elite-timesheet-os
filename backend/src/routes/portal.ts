@@ -4,7 +4,9 @@ import { query } from '../services/db';
 import { requireAuth, requireEmployee, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, isUuid } from '../services/policy';
 import { addDays, fmtISO, getFortnightStartIso, isFortnightStart, isIsoDate, parseIsoDateUtc } from '../services/periodUtils';
-import { breakRuleFor, isSegmentType, loadBreakSettings, rowsToDay, writeDayRecord } from '../services/segments';
+import { DayEntry, breakRuleFor, isSegmentType, loadBreakSettings, rowsToDay, writeDayRecord } from '../services/segments';
+import { loadApprovedLeave } from '../services/rosterService';
+import { parseSmartTime } from '../services/timeParser';
 import { assertNoOverlappingLeaveRequests, materializeLeaveRequest } from '../services/leaveRequests';
 
 /**
@@ -18,6 +20,7 @@ import { assertNoOverlappingLeaveRequests, materializeLeaveRequest } from '../se
 const router = Router();
 router.use(requireAuth, requireEmployee);
 
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const MAX_SCHEDULE_RANGE_DAYS = 42; // roughly six weeks — a monthly schedule view plus margin
 const MAX_HISTORY_RANGE_DAYS = 372; // matches the 26-fortnight cap in the /history loop below
 
@@ -110,6 +113,61 @@ router.get('/timesheet', async (req: AuthRequest, res: Response) => {
     }
 });
 
+const minutesOf = (t: string) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+};
+
+/** [start, end) in minutes; an end before the start runs past midnight. Null when not a valid timed entry. */
+function windowOf(start: unknown, finish: unknown): [number, number] | null {
+    const s = typeof start === 'string' ? parseSmartTime(start) : '';
+    const f = typeof finish === 'string' ? parseSmartTime(finish) : '';
+    if (!TIME_RE.test(s) || !TIME_RE.test(f)) return null;
+    const a = minutesOf(s);
+    let b = minutesOf(f);
+    if (b <= a) b += 1440;
+    return [a, b];
+}
+
+/**
+ * What an employee's own timesheet save becomes. Employees record Normal Work only — leave goes
+ * through a leave request, which a manager approves — so the employee can neither add leave here
+ * (bypassing approval) nor remove or overwrite leave that is already recorded:
+ *
+ *   - leave already on the day's WORKED side is always kept, whatever the submission says;
+ *   - submitted work may not overlap leave on either side of the day, or an approved leave
+ *     request for the date; a whole-day (hours-only) leave entry blocks any work that day.
+ *
+ * A conflict is refused with a clear message instead of either side being silently replaced.
+ */
+async function employeeTimesheetKeepingLeave(ctx: NonNullable<AuthRequest['auth']>, recordDate: string, submitted: unknown): Promise<DayEntry[]> {
+    if (!Array.isArray(submitted)) throw badRequest('VALIDATION_FAILED', 'timesheet must be a list.');
+    const work = submitted.map(e => (e && typeof e === 'object' ? e as Record<string, unknown> : {}));
+    if (work.some(e => (e.type ?? 'WORK') !== 'WORK')) {
+        throw badRequest('LEAVE_VIA_REQUEST', 'Record leave with a leave request (Leave tab), not on your timesheet.');
+    }
+
+    const recRes = await query('SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [ctx.orgId, ctx.employeeId, recordDate]);
+    const day = rowsToDay(recRes.rows.length ? (await query('SELECT * FROM shift_segments WHERE record_id = $1', [recRes.rows[0].id])).rows : []);
+    const keptLeave = day.timesheet.filter(e => e.type !== 'WORK');
+
+    const approved = await loadApprovedLeave(ctx.orgId, ctx.employeeId!, recordDate, recordDate);
+    const leave: Array<{ type: string; window: [number, number] | null }> = [
+        ...[...keptLeave, ...day.roster.filter(e => e.type !== 'WORK')].map(e => ({ type: e.type, window: windowOf(e.start, e.finish) })),
+        ...approved.map(l => ({ type: l.leave_type, window: windowOf(l.start_time, l.end_time) })),
+    ];
+    for (const entry of work) {
+        const w = windowOf(entry.start, entry.finish);
+        const clash = leave.find(l => !l.window || !w || (w[0] < l.window[1] && l.window[0] < w[1]));
+        if (clash) {
+            throw new HttpError(409, 'LEAVE_CONFLICT', `You have ${LEAVE_LABEL[clash.type] ?? 'leave'} recorded ${clash.window ? 'at that time' : 'on this day'}. Ask your manager if that is wrong.`);
+        }
+    }
+    return [...keptLeave, ...(work as unknown as DayEntry[])];
+}
+
+const LEAVE_LABEL: Record<string, string> = { Sick: 'Sick Leave', Annual: 'Annual Leave', TIL: 'TIL', LWIP: 'unpaid leave', Other: 'leave' };
+
 /**
  * POST /api/portal/timesheet  { record_date, timesheet: Entry[], note? }
  *
@@ -130,7 +188,8 @@ router.post('/timesheet', async (req: AuthRequest, res: Response) => {
         if (!workerRes.rows[0]?.is_active) throw badRequest('WORKER_INACTIVE', 'Your worker record is deactivated.');
 
         const rule = breakRuleFor(await loadBreakSettings(ctx.orgId), record_date);
-        const body = { ...(req.body || {}), scope: 'TIMESHEET' };
+        const timesheet = await employeeTimesheetKeepingLeave(ctx, record_date, req.body?.timesheet);
+        const body = { ...(req.body || {}), scope: 'TIMESHEET', timesheet };
         const saved = await writeDayRecord({
             orgId: ctx.orgId,
             worker: { id: ctx.employeeId!, location_id: ctx.branchIds[0] },
@@ -188,7 +247,6 @@ router.get('/history', async (req: AuthRequest, res: Response) => {
     }
 });
 
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** GET /api/portal/leave-requests — the employee's own requests, newest first. */
 router.get('/leave-requests', async (req: AuthRequest, res: Response) => {

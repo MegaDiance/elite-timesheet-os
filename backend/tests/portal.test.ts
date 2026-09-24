@@ -22,7 +22,7 @@ describe('GET /portal/schedule', () => {
         await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.mel, record_date: PERIOD, ...simpleDay(true) });
         const res = await request(app).get(`/api/portal/schedule?start_date=${PERIOD}&end_date=${PERIOD}`).set(bearer(w.tokens.melEmployee));
         expect(res.status).toBe(200);
-        expect(res.body.data).toEqual([{ record_date: PERIOD, roster: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true }] }]);
+        expect(res.body.data).toEqual([{ record_date: PERIOD, roster: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true, break_mins: null }] }]);
         expect(JSON.stringify(res.body)).not.toMatch(/timesheet/);
     });
 
@@ -50,8 +50,8 @@ describe('GET /portal/timesheet', () => {
         expect(res.status).toBe(200);
         expect(res.body.data).toEqual([{
             record_date: PERIOD,
-            roster: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true }],
-            timesheet: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true }],
+            roster: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true, break_mins: null }],
+            timesheet: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true, break_mins: null }],
             note: null,
         }]);
     });
@@ -88,7 +88,7 @@ describe('POST /portal/timesheet (self-submit)', () => {
         const res = await request(app).post('/api/portal/timesheet').set(bearer(w.tokens.melEmployee))
             .send({ record_date: PERIOD, timesheet: [{ type: 'WORK', start: '09:00', finish: '17:00' }] });
         expect(res.status).toBe(200);
-        expect(res.body.data).toEqual({ roster: [], timesheet: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true }], note: null });
+        expect(res.body.data).toEqual({ roster: [], timesheet: [{ type: 'WORK', start: '09:00', finish: '17:00', hours: 8, has_break: true, break_mins: null }], note: null });
         expect((await sql('SELECT COUNT(*)::int AS n FROM daily_records WHERE employee_id = $1', [w.workers.mel])).rows[0].n).toBe(1);
     });
 

@@ -112,7 +112,7 @@ export async function materializeLeaveRequest(
         const recRes = await query('SELECT dr.id FROM daily_records dr WHERE dr.org_id = $1 AND dr.employee_id = $2 AND dr.record_date = $3', [orgId, worker.id, date]);
         const existing = recRes.rows.length ? (await query('SELECT * FROM shift_segments WHERE record_id = $1', [recRes.rows[0].id])).rows : [];
         const view = rowsToDay(existing);
-        const leaveEntry: DayEntry = { type: request.leave_type, start: request.start_time, finish: request.end_time, hours: 0, has_break: true };
+        const leaveEntry: DayEntry = { type: request.leave_type, start: request.start_time, finish: request.end_time, hours: 0, has_break: true, break_mins: null };
         await writeOne(date, { scope: 'BOTH', roster: [...view.roster, leaveEntry], timesheet: [...view.timesheet, leaveEntry], note: view.note }, rule);
         return { applied, skipped };
     }
@@ -127,7 +127,7 @@ export async function materializeLeaveRequest(
         const view = rowsToDay(existing);
 
         if (view.roster.length === 0 && view.timesheet.length === 0) {
-            const leaveEntry: DayEntry = { type: request.leave_type, start: null, finish: null, hours: hoursPerDay, has_break: true };
+            const leaveEntry: DayEntry = { type: request.leave_type, start: null, finish: null, hours: hoursPerDay, has_break: true, break_mins: null };
             await writeOne(date, { scope: 'BOTH', roster: [leaveEntry], timesheet: [], note: null }, rule);
             continue;
         }

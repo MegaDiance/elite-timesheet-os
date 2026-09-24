@@ -4,7 +4,7 @@ import { query, withTransaction } from '../services/db';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { AccessContext, HttpError, badRequest, isUuid, loadBranch, loadWorker, resolveBranchFilter, writeAudit } from '../services/policy';
 import { isValidEmail } from '../services/authUtils';
-import { loadBreakSettings, normaliseDaySegments } from '../services/segments';
+import { loadBreakSettings, normaliseDaySegments, readBreakMins } from '../services/segments';
 
 /**
  * Workers (stored in the `employees` table).
@@ -265,7 +265,7 @@ router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), asyn
                 throw badRequest('VALIDATION_FAILED', 'day_index must be a whole number from 0 to 13.');
             }
             // Templates only describe the roster, never worked hours.
-            const row = { segment_type: t.segment_type || 'WORK', roster_in: t.roster_in, roster_out: t.roster_out, roster_hours: t.roster_hours, has_break: t.has_break };
+            const row = { segment_type: t.segment_type || 'WORK', roster_in: t.roster_in, roster_out: t.roster_out, roster_hours: t.roster_hours, has_break: t.has_break, break_mins: t.break_mins };
             byDay.set(dayIndex, [...(byDay.get(dayIndex) || []), row]);
         }
 
@@ -275,7 +275,7 @@ router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), asyn
             const isWeekend = dayIndex % 7 === 0 || dayIndex % 7 === 6;
             const rule = { breakMins: isWeekend ? settings.break_mins_weekend : settings.break_mins_weekday, thresholdHours: settings.break_threshold_hours };
             for (const seg of normaliseDaySegments(dayRows, rule).segments) {
-                rows.push([crypto.randomUUID(), worker.id, dayIndex, seg.segment_type, seg.roster_in, seg.roster_out, seg.roster_hours, seg.has_break]);
+                rows.push([crypto.randomUUID(), worker.id, dayIndex, seg.segment_type, seg.roster_in, seg.roster_out, seg.roster_hours, seg.has_break, seg.break_mins]);
             }
         }
 
@@ -283,8 +283,8 @@ router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), asyn
             await tx('DELETE FROM roster_templates WHERE employee_id = $1', [worker.id]);
             for (const row of rows) {
                 await tx(
-                    `INSERT INTO roster_templates (id, employee_id, day_index, segment_type, roster_in, roster_out, roster_hours, has_break)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    `INSERT INTO roster_templates (id, employee_id, day_index, segment_type, roster_in, roster_out, roster_hours, has_break, break_mins)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
                     row
                 );
             }
@@ -297,8 +297,9 @@ router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), asyn
 });
 
 /**
- * POST /api/employees/:id/templates/apply-break  { day_indexes: number[], has_break: boolean }
- * Turns the unpaid break on or off for the given days of the worker's default roster template.
+ * POST /api/employees/:id/templates/apply-break  { day_indexes: number[], has_break: boolean, break_mins?: number | null }
+ * Turns the unpaid break on or off for the Normal Work shifts on the given days of the worker's
+ * default roster template, optionally with an explicit length (null = the organisation's rule).
  * A day with no template shift has nothing to flip, so it is left alone.
  */
 router.post('/:id/templates/apply-break', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
@@ -312,7 +313,11 @@ router.post('/:id/templates/apply-break', requirePermission(Permission.WORKERS_M
             throw badRequest('VALIDATION_FAILED', 'day_indexes must be a list of whole numbers from 0 to 13.');
         }
 
-        await query('UPDATE roster_templates SET has_break = $1 WHERE employee_id = $2 AND day_index = ANY($3::int[])', [has_break, worker.id, day_indexes]);
+        const breakMins = has_break ? readBreakMins(req.body?.break_mins, 'break_mins') : null;
+        await query(
+            `UPDATE roster_templates SET has_break = $1, break_mins = $2 WHERE employee_id = $3 AND day_index = ANY($4::int[]) AND segment_type = 'WORK'`,
+            [has_break, breakMins, worker.id, day_indexes]
+        );
         res.json({ success: true });
     } catch (err) {
         sendError(res, err, 'WORKER TEMPLATE APPLY BREAK ERROR');

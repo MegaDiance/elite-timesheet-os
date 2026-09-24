@@ -261,6 +261,7 @@ export default function DayEditor({
             lines={lines}
             onChange={changeLines(part)}
             preview={previewDayHours(lines.map(lineToEntry), rule, mergeLeave)}
+            breakRule={rule}
             issues={check.issues}
             autoFocus={focusPart === part}
           />
@@ -313,6 +314,7 @@ export default function DayEditor({
             lines={rosterLines}
             onChange={changeLines('roster')}
             preview={previewDayHours(rosterLines.map(lineToEntry), rule, mergeLeave)}
+            breakRule={rule}
             issues={rosterCheck.issues}
             autoFocus={focusPart === 'fresh'}
           />
@@ -446,8 +448,8 @@ export default function DayEditor({
           worker={worker}
           days={fortnightDays}
           onClose={() => setApplyBreakMode(null)}
-          onConfirm={async (recordDates, hasBreakValue) => {
-            const res = await api.post('/records/apply-break', { employee_id: worker.id, record_dates: recordDates, has_break: hasBreakValue });
+          onConfirm={async (recordDates, brk) => {
+            const res = await api.post('/records/apply-break', { employee_id: worker.id, record_dates: recordDates, ...brk });
             return res.data.data;
           }}
           onApplied={() => { setApplyBreakMode(null); onCopied(); }}

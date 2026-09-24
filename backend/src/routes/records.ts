@@ -1,12 +1,11 @@
 import { Router, Response } from 'express';
-import crypto from 'crypto';
-import { query, withTransaction } from '../services/db';
+import { query } from '../services/db';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, loadWorker, resolveBranchFilter } from '../services/policy';
 import { getFortnightStartIso, isFortnightStart, isIsoDate } from '../services/periodUtils';
 import { getPeriodLock, isTimesheetApproved } from '../services/periodLocks';
-import { breakRuleFor, loadBreakSettings, normaliseDaySegments, rowsToDay, writeDayRecord } from '../services/segments';
-import { calculateRosterStats } from '../services/rosterService';
+import { breakRuleFor, loadBreakSettings, readBreakMins, rowsToDay, writeDayRecord } from '../services/segments';
+import { applyRosterKeepingLeave, calculateRosterStats, loadApprovedLeave } from '../services/rosterService';
 
 /**
  * Daily records: one per worker per day. A day has a ROSTER (what was planned) and a TIMESHEET
@@ -132,14 +131,11 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
         if (targetWorkerIds.length > 200) throw badRequest('VALIDATION_FAILED', 'Too many workers selected.');
 
         const source = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
-        const sourceSegs = (await query(
-            `SELECT ss.segment_type, ss.roster_in, ss.roster_out, ss.roster_hours, ss.notes, ss.has_break
-               FROM shift_segments ss JOIN daily_records dr ON dr.id = ss.record_id
-              WHERE dr.org_id = $1 AND dr.employee_id = $2 AND dr.record_date = $3
-                AND (ss.roster_in IS NOT NULL OR ss.roster_hours > 0)`,
-            [ctx.orgId, source.id, source_date]
-        )).rows;
-        if (sourceSegs.length === 0) throw badRequest('NOTHING_TO_COPY', 'That day has no rostered segments to copy.');
+        const sourceRec = await query('SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [ctx.orgId, source.id, source_date]);
+        const sourceShifts = sourceRec.rows.length
+            ? rowsToDay((await query('SELECT * FROM shift_segments WHERE record_id = $1', [sourceRec.rows[0].id])).rows).roster
+            : [];
+        if (sourceShifts.length === 0) throw badRequest('NOTHING_TO_COPY', 'That day has no rostered segments to copy.');
 
         const settings = await loadBreakSettings(ctx.orgId);
         const copied: Array<{ employee_id: string; date: string }> = [];
@@ -155,31 +151,16 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
                 const fortnightStart = getFortnightStartIso(date);
                 if (await isTimesheetApproved(ctx.orgId, worker.id, fortnightStart)) { skip('APPROVED'); continue; }
                 if ((await getPeriodLock(ctx.orgId, worker.location_id, fortnightStart)).roster_locked) { skip('ROSTER_LOCKED'); continue; }
+                const worked = await query('SELECT has_actuals FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [ctx.orgId, worker.id, date]);
+                if (worked.rows[0]?.has_actuals) { skip('HAS_WORKED_HOURS'); continue; }
 
-                const day = normaliseDaySegments(
-                    sourceSegs.map((s: any) => ({ segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out, roster_hours: s.roster_hours, notes: s.notes, has_break: s.has_break })),
-                    breakRuleFor(settings, date)
-                );
-
-                const done = await withTransaction(async (tx) => {
-                    const recRes = await tx(
-                        `INSERT INTO daily_records (id, org_id, employee_id, record_date) VALUES ($1, $2, $3, $4)
-                         ON CONFLICT (org_id, employee_id, record_date) DO UPDATE SET record_date = EXCLUDED.record_date
-                         RETURNING id, has_actuals`,
-                        [crypto.randomUUID(), ctx.orgId, worker.id, date]
-                    );
-                    if (recRes.rows[0].has_actuals) return false;
-                    await tx('DELETE FROM shift_segments WHERE record_id = $1', [recRes.rows[0].id]);
-                    for (const seg of day.segments) {
-                        await tx(
-                            `INSERT INTO shift_segments (id, record_id, segment_type, roster_in, roster_out, roster_hours, notes, has_break)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                            [crypto.randomUUID(), recRes.rows[0].id, seg.segment_type, seg.roster_in, seg.roster_out, seg.roster_hours, seg.notes, seg.has_break]
-                        );
-                    }
-                    return true;
+                // Leave already on the target day (or approved for it) is kept; the copied shifts go around it.
+                const reason = await applyRosterKeepingLeave({
+                    orgId: ctx.orgId, worker, date, shifts: sourceShifts,
+                    approvedLeave: await loadApprovedLeave(ctx.orgId, worker.id, date, date),
+                    rule: breakRuleFor(settings, date),
                 });
-                if (done) copied.push({ employee_id: worker.id, date }); else skip('HAS_WORKED_HOURS');
+                if (reason) skip(reason); else copied.push({ employee_id: worker.id, date });
             }
         }
 
@@ -191,7 +172,7 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
 
 /**
  * POST /api/records/apply-break
- *   { employee_id, record_dates: string[], has_break: boolean }
+ *   { employee_id, record_dates: string[], has_break: boolean, break_mins?: number | null }
  *
  * Turns the unpaid break on or off for every existing segment of the given days ("Apply Break" /
  * "Apply Break to All Days" in the roster/timesheet editor). A day with nothing recorded yet has
@@ -204,6 +185,8 @@ router.post('/apply-break', requirePermission(Permission.ROSTERS_MANAGE), async 
         const ctx = req.auth!;
         const { employee_id, record_dates, has_break } = req.body || {};
         if (typeof has_break !== 'boolean') throw badRequest('VALIDATION_FAILED', 'has_break must be true or false.');
+        // Optional explicit length; absent/null = the organisation's break rule.
+        const breakMins = has_break ? readBreakMins(req.body?.break_mins, 'break_mins') : null;
         if (!Array.isArray(record_dates) || record_dates.length === 0 || record_dates.length > 31 || !record_dates.every(isIsoDate)) {
             throw badRequest('VALIDATION_FAILED', 'record_dates must be a list of 1-31 dates.');
         }
@@ -228,7 +211,7 @@ router.post('/apply-break', requirePermission(Permission.ROSTERS_MANAGE), async 
                 if (existing.length === 0) { skip('NOTHING_TO_CHANGE'); continue; }
 
                 const view = rowsToDay(existing);
-                const flip = (list: typeof view.roster) => list.map(e => ({ ...e, has_break }));
+                const flip = (list: typeof view.roster) => list.map(e => (e.type === 'WORK' ? { ...e, has_break, break_mins: breakMins } : e));
                 const body = { scope: 'BOTH' as const, roster: flip(view.roster), timesheet: flip(view.timesheet), note: view.note };
                 await writeDayRecord({ orgId: ctx.orgId, worker, recordDate: date, body, rule: breakRuleFor(settings, date) });
                 applied.push(date);

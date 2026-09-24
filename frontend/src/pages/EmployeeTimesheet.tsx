@@ -123,6 +123,7 @@ export default function EmployeeTimesheet() {
                   key={iso}
                   dateIso={iso}
                   entries={day?.timesheet ?? []}
+                  rostered={day?.roster ?? []}
                   breakSettings={breakSettings}
                   mergeLeave={mergeLeave}
                   onCancel={() => setEditingDate(null)}
@@ -133,7 +134,7 @@ export default function EmployeeTimesheet() {
             return (
               <div key={iso} className={`flex items-center justify-between gap-4 px-4 py-3 ${weekend ? 'bg-[var(--panel-subtle)]' : ''}`}>
                 <div className="text-sm font-medium text-[var(--text)] w-32 shrink-0">{dayLabel(iso)}</div>
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 space-y-0.5">
                   {day && day.timesheet.length > 0 ? (
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                       {day.timesheet.map((e, i) => (
@@ -146,6 +147,9 @@ export default function EmployeeTimesheet() {
                     </div>
                   ) : (
                     <span className="text-sm text-[var(--muted)]">Nothing recorded</span>
+                  )}
+                  {day && day.roster.length > 0 && (
+                    <RosterComparison roster={day.roster} timesheet={day.timesheet} />
                   )}
                 </div>
                 {editable && (
@@ -166,20 +170,44 @@ export default function EmployeeTimesheet() {
   );
 }
 
-function DayRow({ dateIso, entries, breakSettings, mergeLeave, onCancel, onSaved }: {
+/** How the day was rostered, and whether what was worked matches it — the roster itself is read-only here. */
+function RosterComparison({ roster, timesheet }: { roster: Entry[]; timesheet: Entry[] }) {
+  const same = (a: Entry[], b: Entry[]) =>
+    a.length === b.length && a.every((e, i) => e.type === b[i].type && e.start === b[i].start && e.finish === b[i].finish && (e.start || e.hours === b[i].hours));
+  const status = timesheet.length === 0 ? null : same(roster, timesheet) ? 'match' : 'differs';
+  return (
+    <p className="text-xs text-[var(--muted)]">
+      Rostered {roster.map(e => `${e.type !== 'WORK' ? `${TYPE_LABEL[e.type]} ` : ''}${entryWhen(e)}`).join(', ')}
+      {status === 'match' && <span className="ml-1.5 font-semibold text-[var(--success)]">· matches</span>}
+      {status === 'differs' && <span className="ml-1.5 font-semibold text-[var(--warn)]">· differs from roster</span>}
+    </p>
+  );
+}
+
+/**
+ * Editing one day's worked time. Only Normal Work can be entered here: leave is requested on the
+ * Leave tab (and approved by a manager), so leave already recorded on the day is shown read-only
+ * and is always kept by the server — saving never removes it, and work that overlaps it is refused.
+ */
+function DayRow({ dateIso, entries, rostered, breakSettings, mergeLeave, onCancel, onSaved }: {
   dateIso: string;
   entries: Entry[];
+  rostered: Entry[];
   breakSettings: BreakSettings;
   mergeLeave: boolean;
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const [lines, setLines] = useState<DraftLine[]>(() => linesFor(entries));
+  const leave = entries.filter(e => e.type !== 'WORK');
+  const rosteredLeave = rostered.filter(e => e.type !== 'WORK');
+  const [lines, setLines] = useState<DraftLine[]>(() => linesFor(entries.filter(e => e.type === 'WORK')));
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const rule = useMemo(() => breakRuleFor(breakSettings, dateIso), [breakSettings, dateIso]);
   const check = checkLines(lines, mergeLeave);
-  const preview = previewDayHours(lines.map(lineToEntry), rule, mergeLeave);
+  // The day's break threshold counts the kept leave too, exactly as the server will.
+  const fullPreview = previewDayHours([...leave, ...lines.map(lineToEntry)], rule, mergeLeave);
+  const preview = { ...fullPreview, perEntry: fullPreview.perEntry.slice(leave.length) };
 
   const save = async () => {
     if (check.first || saving) return;
@@ -203,11 +231,17 @@ function DayRow({ dateIso, entries, breakSettings, mergeLeave, onCancel, onSaved
           <X className="w-4 h-4" />
         </button>
       </div>
-      <TimeLines id={`emp-ts-${dateIso}`} name="Worked" lines={lines} onChange={setLines} preview={preview} issues={check.issues} autoFocus />
+      {(leave.length > 0 || rosteredLeave.length > 0) && (
+        <p className="text-xs text-[var(--muted)] bg-[var(--panel)] border border-[var(--border)] rounded-lg px-3 py-2">
+          Leave on this day (kept as is): {[...leave, ...rosteredLeave.filter(r => !leave.some(l => l.type === r.type && l.start === r.start && l.finish === r.finish))]
+            .map(e => `${TYPE_LABEL[e.type]} ${entryWhen(e)}`).join(', ')}. Ask your manager if it’s wrong.
+        </p>
+      )}
+      <TimeLines id={`emp-ts-${dateIso}`} name="Worked" lines={lines} onChange={setLines} preview={preview} issues={check.issues} autoFocus breakRule={rule} types={['WORK']} />
       {serverError && <p role="alert" className="text-xs font-semibold text-[var(--danger)]">{serverError}</p>}
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-[var(--muted)]">
-          Total {formatHours(preview.total)}{preview.breakMins > 0 && <> · incl. {preview.breakMins} min unpaid break</>}
+          Total {formatHours(fullPreview.total)}{fullPreview.breakMins > 0 && <> · incl. {fullPreview.breakMins} min unpaid break</>}
         </p>
         <div className="flex gap-2">
           <button type="button" onClick={onCancel} disabled={saving} className={buttonClass.secondary}>Cancel</button>

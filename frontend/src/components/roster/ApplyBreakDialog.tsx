@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Dialog, buttonClass } from './Dialog';
-import { apiErrorMessage } from './api';
+import { SKIP_REASON_LABEL, apiErrorMessage } from './api';
 import { dayLabel, dayOfMonth, isWeekendIso, weekdayShort } from './dates';
+import { BREAK_LENGTHS, breakChoiceLabel, breakFromChoice, type BreakChoice } from './day';
 
 interface ApplyBreakDialogProps {
   /** "Apply Break" starts every day unticked; "Apply Break to All Days" starts every day ticked. */
@@ -10,16 +11,9 @@ interface ApplyBreakDialogProps {
   days: string[];
   onClose: () => void;
   /** Calls POST /records/apply-break and resolves with { applied, skipped }. */
-  onConfirm: (recordDates: string[], hasBreak: boolean) => Promise<{ applied: string[]; skipped: Array<{ date: string; reason: string }> }>;
+  onConfirm: (recordDates: string[], brk: { has_break: boolean; break_mins: number | null }) => Promise<{ applied: string[]; skipped: Array<{ date: string; reason: string }> }>;
   onApplied: () => void;
 }
-
-const SKIP_REASON_LABEL: Record<string, string> = {
-  NOTHING_TO_CHANGE: 'nothing recorded',
-  TIMESHEET_ALREADY_APPROVED: 'timesheet approved',
-  ROSTER_LOCKED: 'roster locked',
-  TIMESHEET_LOCKED: 'timesheet locked',
-};
 
 /**
  * "Apply Break" / "Apply Break to All Days": tick the days that should have the unpaid break
@@ -28,7 +22,8 @@ const SKIP_REASON_LABEL: Record<string, string> = {
  */
 export default function ApplyBreakDialog({ startAllChecked, worker, days, onClose, onConfirm, onApplied }: ApplyBreakDialogProps) {
   const [chosen, setChosen] = useState<Set<number>>(() => new Set(startAllChecked ? days.map((_, i) => i) : []));
-  const [hasBreak, setHasBreak] = useState(true);
+  const [choice, setChoice] = useState<BreakChoice>('standard');
+  const hasBreak = choice !== 'none';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ applied: string[]; skipped: Array<{ date: string; reason: string }> } | null>(null);
@@ -45,7 +40,7 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
     setError(null);
     try {
       const chosenDates = [...chosen].sort((a, b) => a - b).map(i => days[i]);
-      const res = await onConfirm(chosenDates, hasBreak);
+      const res = await onConfirm(chosenDates, breakFromChoice(choice));
       setResult(res);
       if (res.skipped.length === 0) onApplied();
     } catch (err) {
@@ -82,20 +77,19 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
         </div>
       }
     >
-      <fieldset className="mb-3">
-        <legend className="text-xs font-semibold text-[var(--text)] mb-1.5">Break</legend>
-        <div className="grid grid-cols-2 gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]">
-          {[{ value: true, label: 'Has a break' }, { value: false, label: 'No break' }].map(o => (
-            <label
-              key={String(o.value)}
-              className="flex items-center justify-center text-center min-h-11 md:min-h-9 px-2 rounded-lg text-xs font-semibold text-[var(--muted)] cursor-pointer select-none has-[:checked]:bg-[var(--panel)] has-[:checked]:text-[var(--text)] has-[:checked]:shadow-sm has-[:checked]:ring-1 has-[:checked]:ring-[var(--border)]"
-            >
-              <input type="radio" name="apply-break-value" className="sr-only" checked={hasBreak === o.value} onChange={() => setHasBreak(o.value)} />
-              {o.label}
-            </label>
+      <label className="block mb-3">
+        <span className="block text-xs font-semibold text-[var(--text)] mb-1.5">Break for the chosen days</span>
+        <select
+          value={choice}
+          onChange={e => setChoice(e.target.value as BreakChoice)}
+          className="w-full min-h-11 md:min-h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] text-sm md:text-xs text-[var(--text)] cursor-pointer"
+        >
+          {(['standard', ...BREAK_LENGTHS.map(m => `${m}`), 'none'] as BreakChoice[]).map(c => (
+            <option key={c} value={c}>{breakChoiceLabel(c)}</option>
           ))}
-        </div>
-      </fieldset>
+        </select>
+        <span className="block mt-1 text-[11px] text-[var(--muted)]">Applies to the Normal Work shifts on each chosen day, rostered and worked. Leave is never changed.</span>
+      </label>
 
       <div className="flex flex-wrap gap-1 mb-2">
         <button type="button" className={`${buttonClass.quiet} max-md:h-11`} onClick={() => setChosen(new Set(days.map((_, i) => i)))}>All days</button>

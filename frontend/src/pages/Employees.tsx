@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Building2,
   CalendarDays,
+  Coffee,
   FileSpreadsheet,
   Mail,
   Phone,
@@ -25,6 +26,9 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import PortalAccessModal, { type PortalStatus } from '../components/PortalAccessModal';
+import {
+  BREAK_LENGTHS, DEFAULT_BREAK_SETTINGS, breakChoiceLabel, breakChoiceOf, breakFromChoice, type BreakChoice, type BreakSettings,
+} from '../components/roster/day';
 
 const SEGMENT_TYPES = [
   { value: 'WORK', label: 'Normal Work' },
@@ -44,6 +48,7 @@ interface TemplateRow {
   roster_out: string | null;
   roster_hours: number | string | null;
   has_break?: boolean;
+  break_mins?: number | null;
 }
 
 interface Worker {
@@ -530,6 +535,7 @@ interface DraftSegment {
   /** Only used for untimed segments (e.g. a leave day entered as hours); timed segments are calculated by the server. */
   roster_hours: number;
   has_break: boolean;
+  break_mins: number | null;
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'incomplete' | 'error';
@@ -551,6 +557,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
           roster_out: (t.roster_out || '').slice(0, 5),
           roster_hours: Number(t.roster_hours) || 0,
           has_break: t.has_break !== false,
+          break_mins: t.break_mins ?? null,
         }))
     )
   );
@@ -570,10 +577,10 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
       setSaveState('incomplete');
       return;
     }
-    type TemplatePayload = { day_index: number; segment_type: string; roster_in?: string; roster_out?: string; roster_hours?: number; has_break: boolean };
+    type TemplatePayload = { day_index: number; segment_type: string; roster_in?: string; roster_out?: string; roster_hours?: number; has_break: boolean; break_mins?: number | null };
     const templates = list.flatMap((day, dayIndex) =>
       day.flatMap((s): TemplatePayload[] => {
-        if (s.roster_in && s.roster_out) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out, has_break: s.has_break }];
+        if (s.roster_in && s.roster_out) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_in: s.roster_in, roster_out: s.roster_out, has_break: s.has_break, break_mins: s.has_break ? s.break_mins : null }];
         if (s.roster_hours > 0) return [{ day_index: dayIndex, segment_type: s.segment_type, roster_hours: s.roster_hours, has_break: s.has_break }];
         return [];
       })
@@ -617,12 +624,42 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
   const changeSegment = (dayIndex: number, key: number, field: 'segment_type' | 'roster_in' | 'roster_out', value: string) =>
     update(days.map((day, i) => (i === dayIndex ? day.map(s => (s.key === key ? { ...s, [field]: value } : s)) : day)));
 
-  const toggleSegmentBreak = (dayIndex: number, key: number, hasBreak: boolean) =>
-    update(days.map((day, i) => (i === dayIndex ? day.map(s => (s.key === key ? { ...s, has_break: hasBreak } : s)) : day)));
+  // ── Breaks ─────────────────────────────────────────────────────────────────────────────────
+  // The unpaid break is a property of the day (the server deducts it at most once a day), so it is
+  // set per day here and stored on each of that day's Normal Work shifts. Leave is never touched.
+  const hasWorkShift = (day: DraftSegment[]) => day.some(s => s.segment_type === 'WORK' && s.roster_in && s.roster_out);
+  const dayBreak = (day: DraftSegment[]): BreakChoice => {
+    const work = day.filter(s => s.segment_type === 'WORK');
+    const withBreak = work.find(s => s.has_break);
+    return withBreak ? breakChoiceOf(true, withBreak.break_mins) : 'none';
+  };
+  const withBreak = (day: DraftSegment[], choice: BreakChoice) => {
+    const brk = breakFromChoice(choice);
+    return day.map(s => (s.segment_type === 'WORK' ? { ...s, ...brk } : s));
+  };
+  const setDayBreak = (dayIndex: number, choice: BreakChoice) =>
+    update(days.map((day, i) => (i === dayIndex ? withBreak(day, choice) : day)));
+  const [bulkBreak, setBulkBreak] = useState<BreakChoice>('standard');
+  const applyBreakToAll = (choice: BreakChoice) => update(days.map(day => (hasWorkShift(day) ? withBreak(day, choice) : day)));
+  const workingDays = days.filter(hasWorkShift).length;
+  const daysWithBreak = days.filter(day => hasWorkShift(day) && dayBreak(day) !== 'none').length;
+
+  const [breakSettings, setBreakSettings] = useState<BreakSettings>(DEFAULT_BREAK_SETTINGS);
+  useEffect(() => {
+    api.get('/organisation/me').then(res => setBreakSettings({
+      break_mins_weekday: Number(res.data.data.break_mins_weekday ?? DEFAULT_BREAK_SETTINGS.break_mins_weekday),
+      break_mins_weekend: Number(res.data.data.break_mins_weekend ?? DEFAULT_BREAK_SETTINGS.break_mins_weekend),
+      break_threshold_hours: Number(res.data.data.break_threshold_hours ?? DEFAULT_BREAK_SETTINGS.break_threshold_hours),
+    })).catch(() => { /* the labels fall back to the defaults */ });
+  }, []);
+  const ruleFor = (dayIndex: number) => {
+    const weekend = dayIndex % 7 === 0 || dayIndex % 7 === 6;
+    return { breakMins: weekend ? breakSettings.break_mins_weekend : breakSettings.break_mins_weekday, thresholdHours: breakSettings.break_threshold_hours };
+  };
 
   const addSegment = (dayIndex: number) =>
     setDays(days.map((day, i) => (i === dayIndex
-      ? [...day, { key: nextKey(), segment_type: 'WORK', roster_in: '', roster_out: '', roster_hours: 0, has_break: true }]
+      ? [...day, { key: nextKey(), segment_type: 'WORK', roster_in: '', roster_out: '', roster_hours: 0, ...breakFromChoice(day.length ? dayBreak(day) : 'standard') }]
       : day)));
 
   const removeSegment = (dayIndex: number, key: number) =>
@@ -654,6 +691,42 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
         {error && (
           <div className="p-3 rounded-md text-xs bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)]">{error}</div>
         )}
+
+        <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--panel-subtle)] space-y-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-[var(--text)]">
+            <Coffee className="w-4 h-4 text-[var(--primary)]" aria-hidden="true" /> Breaks
+            <span className="font-normal text-[var(--muted)]">
+              {workingDays === 0 ? 'Add shifts first' : `Break on ${daysWithBreak} of ${workingDays} working day${workingDays === 1 ? '' : 's'}`}
+            </span>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
+            <select
+              aria-label="Break to apply"
+              value={bulkBreak === 'none' ? 'standard' : bulkBreak}
+              onChange={e => setBulkBreak(e.target.value as BreakChoice)}
+              className="min-h-11 sm:min-h-9 px-2 rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-sm sm:text-xs text-[var(--text)] cursor-pointer"
+            >
+              {(['standard', ...BREAK_LENGTHS.map(m => `${m}`)] as BreakChoice[]).map(c => (
+                <option key={c} value={c}>{breakChoiceLabel(c, { breakMins: breakSettings.break_mins_weekday, thresholdHours: breakSettings.break_threshold_hours })}</option>
+              ))}
+            </select>
+            <Button
+              variant="primary"
+              size="sm"
+              className="min-h-11 sm:min-h-0"
+              disabled={workingDays === 0}
+              onClick={() => applyBreakToAll(bulkBreak === 'none' ? 'standard' : bulkBreak)}
+            >
+              Apply break to all days
+            </Button>
+            <Button variant="ghost" size="sm" className="min-h-11 sm:min-h-0" disabled={daysWithBreak === 0} onClick={() => applyBreakToAll('none')}>
+              Remove from all days
+            </Button>
+          </div>
+          <p className="text-[11px] text-[var(--muted)]">
+            Applies to every day with a Normal Work shift. Untick a day below to leave it without a break. Leave shifts never have a break taken off.
+          </p>
+        </div>
 
         <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-4">
           {[0, 1].map(week => (
@@ -696,17 +769,6 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
                             {!segment.roster_in && !segment.roster_out && segment.roster_hours > 0 && (
                               <Badge size="sm" title="Entered as hours without times">{segment.roster_hours}h, no times</Badge>
                             )}
-                            {segment.roster_in && segment.roster_out && segment.segment_type === 'WORK' && (
-                              <label className="flex items-center gap-1 text-[11px] text-[var(--muted)] cursor-pointer" title="Whether the org's unpaid break rule applies to this shift">
-                                <input
-                                  type="checkbox"
-                                  checked={segment.has_break}
-                                  onChange={e => toggleSegmentBreak(dayIndex, segment.key, e.target.checked)}
-                                  className="h-3.5 w-3.5 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
-                                />
-                                Break
-                              </label>
-                            )}
                             <button
                               type="button"
                               onClick={() => removeSegment(dayIndex, segment.key)}
@@ -718,6 +780,19 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
                             </button>
                           </div>
                         ))}
+                      </div>
+                      <div className="flex items-center gap-2 sm:w-56 shrink-0 sm:justify-end">
+                        {hasWorkShift(segments) ? (
+                          <DayBreakControl
+                            dayName={DAY_NAMES[offset]}
+                            value={dayBreak(segments)}
+                            rule={ruleFor(dayIndex)}
+                            fallback={bulkBreak === 'none' ? 'standard' : bulkBreak}
+                            onChange={choice => setDayBreak(dayIndex, choice)}
+                          />
+                        ) : (
+                          <span className="text-[11px] text-[var(--muted)] sm:text-right">No shift, no break</span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -743,6 +818,44 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** One day's break in the default roster: a tick to apply/remove it, and its length while applied. */
+function DayBreakControl({ dayName, value, rule, fallback, onChange }: {
+  dayName: string;
+  value: BreakChoice;
+  rule: { breakMins: number; thresholdHours: number };
+  /** What ticking an unticked day applies (the break chosen in the Breaks bar). */
+  fallback: BreakChoice;
+  onChange: (choice: BreakChoice) => void;
+}) {
+  const on = value !== 'none';
+  return (
+    <div className={`flex items-center gap-1.5 rounded-md border px-2 min-h-11 sm:min-h-8 ${on ? 'border-[var(--primary)]/40 bg-[var(--primary-light)]' : 'border-[var(--border)]'}`}>
+      <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer whitespace-nowrap">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={e => onChange(e.target.checked ? fallback : 'none')}
+          aria-label={`Break on ${dayName}`}
+          className="h-4 w-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
+        />
+        <span className={on ? 'text-[var(--primary)]' : 'text-[var(--muted)]'}>{on ? 'Break' : 'No break'}</span>
+      </label>
+      {on && (
+        <select
+          aria-label={`Break length on ${dayName}`}
+          value={value}
+          onChange={e => onChange(e.target.value as BreakChoice)}
+          className="min-w-0 max-w-[9.5rem] bg-transparent text-[11px] text-[var(--text)] outline-none cursor-pointer"
+        >
+          {(['standard', ...BREAK_LENGTHS.map(m => `${m}`)] as BreakChoice[])
+            .concat(['standard', ...BREAK_LENGTHS.map(m => `${m}`)].includes(value) ? [] : [value])
+            .map(c => <option key={c} value={c}>{breakChoiceLabel(c, rule)}</option>)}
+        </select>
+      )}
+    </div>
   );
 }
 

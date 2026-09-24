@@ -3,8 +3,8 @@ import { AlertCircle, Plus, Trash2 } from 'lucide-react';
 import SmartTimeInput from '../SmartTimeInput';
 import { inputClass } from './Dialog';
 import {
-  ENTRY_TYPES, MAX_LINES, TYPE_LABEL, blankLine, formatHours, formatTime, isEntryType, isUntouched,
-  type DraftLine, type HoursPreview,
+  BREAK_LENGTHS, ENTRY_TYPES, MAX_LINES, TYPE_LABEL, blankLine, breakChoiceLabel, breakChoiceOf, breakFromChoice, formatHours, formatTime, isEntryType, isUntouched,
+  type BreakChoice, type BreakRule, type DraftLine, type EntryType, type HoursPreview,
 } from './day';
 
 interface TimeLinesProps {
@@ -18,6 +18,10 @@ interface TimeLinesProps {
   issues: (string | null)[];
   /** Put the cursor in the first line when the editor opens. */
   autoFocus?: boolean;
+  /** The day's break rule, to label the "Standard" break choice. */
+  breakRule?: BreakRule;
+  /** The types a line may have (default: all). The employee portal only offers Normal Work. */
+  types?: readonly EntryType[];
 }
 
 const fieldClass = `${inputClass} h-11 md:h-9 text-base md:text-xs`;
@@ -29,7 +33,7 @@ const selectClass = `${fieldClass} min-w-0 flex-1 md:flex-none md:w-36 cursor-po
  * normal day. "Add time" starts the next line where the last one finished and puts the cursor on its
  * finish. A line can instead be hours only (whole-day leave such as 7.6 h LWIP).
  */
-export default function TimeLines({ id, name, lines, onChange, preview, issues, autoFocus = false }: TimeLinesProps) {
+export default function TimeLines({ id, name, lines, onChange, preview, issues, autoFocus = false, breakRule, types = ENTRY_TYPES }: TimeLinesProps) {
   const inputs = useRef(new Map<string, HTMLInputElement>());
   const addRef = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<string | null>(null);
@@ -112,7 +116,7 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
                   onChange={e => { if (isEntryType(e.target.value)) patch(line.key, { type: e.target.value }); }}
                   className={selectClass}
                 >
-                  {ENTRY_TYPES.map(t => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
+                  {types.map(t => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
                 </select>
 
                 <div className="order-last md:order-none basis-full md:basis-auto flex items-center gap-2 min-w-0">
@@ -169,21 +173,12 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
                 </div>
 
                 {!line.hoursOnly && line.type === 'WORK' && (
-                  <label
-                    className="order-last md:order-none flex items-center gap-1.5 h-11 md:h-9 px-1 shrink-0 text-[11px] text-[var(--muted)] cursor-pointer whitespace-nowrap"
-                    title={
-                      (line.has_break ? 'The unpaid break rule may apply to this shift' : 'This shift is exempt from the unpaid break rule')
-                      + ' — shared by its rostered and worked hours, since it describes the shift itself.'
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={line.has_break}
-                      onChange={e => patch(line.key, { has_break: e.target.checked })}
-                      className="h-4 w-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
-                    />
-                    Break
-                  </label>
+                  <BreakSelect
+                    label={`${name} break, line ${n}`}
+                    value={breakChoiceOf(line.has_break, line.break_mins)}
+                    rule={breakRule}
+                    onChange={choice => patch(line.key, breakFromChoice(choice))}
+                  />
                 )}
                 <button
                   type="button"
@@ -270,5 +265,33 @@ function HoursInput({ value, onChange, label, invalid, describedBy, ref }: {
       }}
       className={`${fieldClass} w-24 md:w-20 text-right tabular-nums`}
     />
+  );
+}
+
+/**
+ * The break for one Normal Work shift, as one choice: the organisation's standard rule, an
+ * explicit length (always deducted), or no break. Each part of the day (rostered / worked) keeps
+ * its own, so a break taken differently from the roster is recorded as it actually happened.
+ */
+export function BreakSelect({ label, value, rule, onChange, className = '' }: {
+  label: string;
+  value: BreakChoice;
+  rule?: BreakRule;
+  onChange: (choice: BreakChoice) => void;
+  className?: string;
+}) {
+  const choices: BreakChoice[] = ['standard', ...BREAK_LENGTHS.map(m => `${m}` as BreakChoice), 'none'];
+  // A stored length that isn't one of the presets still shows (and round-trips) correctly.
+  if (!choices.includes(value)) choices.splice(1, 0, value);
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      onChange={e => onChange(e.target.value as BreakChoice)}
+      title="Unpaid break for this shift"
+      className={`${fieldClass} order-last md:order-none shrink-0 w-auto cursor-pointer px-2 ${value === 'none' ? 'text-[var(--muted)]' : ''} ${className}`}
+    >
+      {choices.map(c => <option key={c} value={c}>{breakChoiceLabel(c, rule)}</option>)}
+    </select>
   );
 }
