@@ -429,7 +429,7 @@ Each feature lists what exists now and what is required.
 
 ### 7.13 Authentication and security features
 
-- [CURRENT] Email + password (bcrypt), organisation-specific login URL `/login/:slug`, generic `/login` with organisation picker, public workspace-finder page `/portal-access`, email one-time-code 2FA (optional per user), suspicious-login email verification, password reset, 15-minute inactivity timeout with warning, 24-hour absolute session, server-side session revocation and "sign out other sessions", login history, rate limiting (5 attempts / 15 min, in-memory), hidden platform gate.
+- [CURRENT] Email + password (bcrypt), organisation-specific login URL `/login/:slug` as the **only** sign-in page (the generic `/login` and its organisation picker were removed 2026-09-24: `/login` is a "page not found" and `POST /api/auth/login` requires `organisation_slug`), email one-time-code 2FA (optional per user), suspicious-login email verification, password reset, 15-minute inactivity timeout with warning, 24-hour absolute session, server-side session revocation and "sign out other sessions", login history, rate limiting (5 attempts / 15 min, in-memory), hidden platform gate.
 - [REQUIRED] See §11.
 
 ---
@@ -497,7 +497,7 @@ Correct landing page (employee schedule, branch dashboard, admin overview, payro
   - the public workspace-finder (`/portal-access` slug entry, `/find-organisation`, `/signin`);
   - the authenticated organisation search (`GET /api/organisation/discover`);
   - the public organisation lookup (`GET /api/organisation/lookup/:slug`). It currently returns the org id, the current `portal_slug` (which defeats regeneration), branch count and entry mode (D-23).
-- [PROPOSED] Replace the generic `/login` organisation picker with an "Email me my sign-in link" form. It emails the user the private URLs of organisations they belong to, with an identical response whether or not the email exists.
+- [DONE 2026-09-24] The generic `/login` organisation picker is removed (no replacement page yet). [PROPOSED] An "Email me my sign-in link" form. It emails the user the private URLs of organisations they belong to, with an identical response whether or not the email exists.
 - [PROPOSED] Each organisation has an `entry_code`: random, ≥ 128 bits, rotatable by the Owner. Rotation invalidates the old code immediately.
   - `/o/<entry_code>` renders a **generic** SimpleHours sign-in page. No organisation name, logo or other data is shown before authentication.
   - The organisation is resolved server-side from the code **and** the user's membership after the password is verified.

@@ -96,7 +96,7 @@ Railway PostgreSQL (private network *.railway.internal, TLS off internally)
 |---|---|---|
 | Passwords | bcryptjs, cost 10 | `services/auth.ts` |
 | Password policy | ≥ 8 chars, letters + digits (reset, employee invite claim); location invite accept ≥ 8 only; **no strength check** on org claim-invite admin password | `routes/auth.ts`, `routes/platform.ts`, `routes/locations.ts` |
-| Tenant login | `POST /api/auth/login {email, password, organisation_slug | organisation_id}`; slug matches `portal_slug` **or** human `slug`; membership in `organisation_members` or an active `employees` row required | `routes/auth.ts` |
+| Tenant login | `POST /api/auth/login {email, password, organisation_slug}` — the slug (the organisation's random `portal_slug`) is required; there is no sign-in by `organisation_id` and no organisation picker. Access is then resolved server-side (`resolveAccess`). Password-reset tokens carry the issuing `org_id` so a completed reset returns to that portal. | `routes/auth.ts` |
 | Generic login | Same endpoint without org → uses legacy `users.org_id`; frontend then shows an organisation picker and calls `switch-organisation` | `routes/auth.ts`, `pages/Login.tsx` |
 | Platform login | `POST /api/auth/platform-login`; requires `users.role = 'Platform Admin'`; UI hidden at `/platform-gate` | `routes/auth.ts` |
 | 2FA | Optional per user; 6-digit email code, SHA-256 hashed, 10-min expiry, 5 attempts; intermediate JWT with `scope: '2fa_pending'` (10 min) rejected by `requireAuth` | `routes/auth.ts` |

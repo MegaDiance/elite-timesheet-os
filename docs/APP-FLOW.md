@@ -393,7 +393,7 @@ Every export writes an audit event. Printable HTML escapes all interpolated valu
 | Revoked from another device | — | `SESSION_REVOKED` | Re-login with message |
 | Membership removed / user deactivated | — | sessions revoked for that org (member removal [CURRENT] revokes sessions) | Re-login shows generic error |
 
-**Current:** [CURRENT] sidebar Sign out does **not** call `/api/auth/logout` (D-14); timeout redirects to generic `/login` rather than the org URL; multiple tabs synchronise via `storage` events.
+**Current:** [CURRENT 2026-09-24] Sign out calls `/api/auth/logout` (the server revokes the session) and then does a full page load of the organisation's own `/login/<slug>?reason=logout` (or the home page if no portal is remembered). Inactivity timeout, revoked sessions and any 401 do the same with their own reason. `/login` itself is not a sign-in page.
 
 ---
 
