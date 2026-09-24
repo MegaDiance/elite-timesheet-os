@@ -145,6 +145,29 @@ export async function listAccessibleOrganisations(userId: string): Promise<Array
     return res.rows;
 }
 
+/**
+ * A login is global (one person, one account), so a password reset changes it everywhere. Before
+ * an Owner or Branch Admin of THIS organisation issues a reset link for someone's login, the login
+ * must have no access they are not entitled to hand out: it must not own any organisation, and
+ * must have no access in any other organisation. `allowBranchAdminHere` is false when the caller is
+ * resetting an employee login, so a Branch Admin can never reset the login of another admin of the
+ * same organisation through a worker record either. Throws 409 otherwise.
+ */
+export async function assertResettableLogin(userId: string, orgId: string, opts: { allowBranchAdminHere: boolean }): Promise<void> {
+    const res = await query(
+        `SELECT EXISTS (SELECT 1 FROM organisations WHERE owner_user_id = $1) AS owns_any,
+                EXISTS (SELECT 1 FROM branch_admins WHERE user_id = $1 AND org_id <> $2) AS admin_elsewhere,
+                EXISTS (SELECT 1 FROM branch_admins WHERE user_id = $1 AND org_id = $2) AS admin_here,
+                EXISTS (SELECT 1 FROM employees WHERE user_id = $1 AND org_id <> $2) AS employee_elsewhere`,
+        [userId, orgId]
+    );
+    const r = res.rows[0];
+    if (r.owns_any || r.admin_elsewhere || r.employee_elsewhere || (!opts.allowBranchAdminHere && r.admin_here)) {
+        throw new HttpError(409, 'ACCOUNT_HAS_OTHER_ACCESS',
+            'This login is also used for other access, so a reset link can’t be created for it here. The person can reset it themselves with “Forgot password?” on their sign-in page.');
+    }
+}
+
 export function hasPermission(ctx: AccessContext, permission: Permission): boolean {
     return ROLE_PERMISSIONS[ctx.role].has(permission);
 }

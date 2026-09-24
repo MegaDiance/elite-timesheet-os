@@ -3,10 +3,10 @@ import crypto from 'crypto';
 import { query, withTransaction } from '../services/db';
 import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { AccessContext, HttpError, badRequest, isUuid, notFound, writeAudit } from '../services/policy';
+import { assertResettableLogin, AccessContext, HttpError, badRequest, isUuid, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
 import { sendTransactionalEmail, buildBranchAdminInviteEmailTemplate, isEmailSendingEnabled } from '../services/emailService';
-import {
+import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
     isStrongPassword, isValidEmail, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
@@ -101,10 +101,14 @@ router.post('/invitations/accept', checkRateLimit, async (req: RateLimitedReques
 
         if (existingUser) {
             // The invitation attaches access to an existing account only once that account has authenticated.
+            // Failures count against the account itself, exactly like the sign-in page.
+            const accountKey = accountRateLimitKey(invitation.email);
+            if (isRateLimited(accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
             const ok = existingUser.is_active && existingUser.password_hash
                 && await comparePassword(password, existingUser.password_hash);
             if (!ok) {
                 recordFailedAttempt(req.rateLimitKey);
+                recordFailedAttempt(accountKey);
                 return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Enter the current password for this account to accept the invitation.' } });
             }
         } else {
@@ -378,6 +382,7 @@ router.post('/:userId/reset-password-link', async (req: AuthRequest, res: Respon
             [ctx.orgId, targetUserId]
         );
         if (admin.rows.length === 0) throw notFound('Branch Admin');
+        await assertResettableLogin(targetUserId, ctx.orgId, { allowBranchAdminHere: true });
 
         const token = newSecretToken();
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [targetUserId]);

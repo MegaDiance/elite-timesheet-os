@@ -232,6 +232,7 @@ export default function Layout() {
         { label: 'Schedule', path: '/my/schedule', icon: <Calendar className="w-5 h-5 mb-0.5" /> },
         ...(canSubmitTimesheets ? [{ label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-5 h-5 mb-0.5" /> }] : []),
         { label: 'History', path: '/my/history', icon: <Clock className="w-5 h-5 mb-0.5" /> },
+        { label: 'Leave', path: '/my/leave', icon: <CalendarDays className="w-5 h-5 mb-0.5" /> },
       ]
     : [
         { label: 'Home', path: '/dashboard', permission: 'branch.view', icon: <Home className="w-5 h-5 mb-0.5" /> },

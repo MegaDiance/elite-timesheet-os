@@ -83,6 +83,7 @@ const rows: Row[] = [
     { name: 'POST /employees (in Melbourne)', method: 'post', path: () => '/api/employees', body: (w) => ({ full_name: 'New Worker', location_id: w.abc.melbourne }), expect: { owner: 201, sarah: 201, greg: 403, xavier: 404, anon: 401 } },
     { name: 'PUT /employees/:mel', method: 'put', path: (w) => `/api/employees/${w.workers.mel}`, body: () => ({ full_name: 'Mel Worker', contracted_hours: 60 }), expect: MEL_BRANCH_SCOPED },
     { name: 'POST /employees/:mel/templates', method: 'post', path: (w) => `/api/employees/${w.workers.mel}/templates`, body: () => ({ templates: [{ day_index: 1, roster_in: '09:00', roster_out: '17:00' }] }), expect: MEL_BRANCH_SCOPED },
+    { name: 'POST /employees/:mel/templates/apply-break', method: 'post', path: (w) => `/api/employees/${w.workers.mel}/templates/apply-break`, body: () => ({ day_indexes: [1, 2], has_break: true, break_mins: 30 }), expect: MEL_BRANCH_SCOPED },
     { name: 'POST /employees/:mel/deactivate', method: 'post', path: (w) => `/api/employees/${w.workers.mel}/deactivate`, expect: MEL_BRANCH_SCOPED },
     { name: 'POST /employees/:mel/reactivate', method: 'post', path: (w) => `/api/employees/${w.workers.mel}/reactivate`, expect: MEL_BRANCH_SCOPED },
     { name: 'DELETE /employees/:mel', method: 'delete', path: (w) => `/api/employees/${w.workers.mel}`, expect: MEL_BRANCH_SCOPED },
@@ -97,6 +98,8 @@ const rows: Row[] = [
         // Every caller who may see the worker gets "nothing to copy" (400) on an empty day.
         expect: { owner: 400, sarah: 400, greg: 403, xavier: 404, anon: 401 },
     },
+    { name: 'POST /records/apply-break (mel)', method: 'post', path: () => '/api/records/apply-break', body: (w) => ({ employee_id: w.workers.mel, record_dates: ['2026-03-30'], has_break: false }), expect: MEL_BRANCH_SCOPED },
+    { name: 'POST /roster/auto-roster (one worker: mel)', method: 'post', path: () => '/api/roster/auto-roster', body: (w) => ({ start_date: PERIOD, employee_id: w.workers.mel }), expect: MEL_BRANCH_SCOPED },
     { name: 'POST /roster/auto-roster (melbourne)', method: 'post', path: () => '/api/roster/auto-roster', body: (w) => ({ start_date: PERIOD, location_id: w.abc.melbourne }), expect: MEL_FILTER },
     { name: 'POST /roster/auto-log (melbourne)', method: 'post', path: () => '/api/roster/auto-log', body: (w) => ({ start_date: PERIOD, location_id: w.abc.melbourne }), expect: MEL_FILTER },
     { name: 'GET /submissions?location_id=melbourne', method: 'get', path: (w) => `/api/submissions?start_date=${PERIOD}&location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
@@ -107,6 +110,10 @@ const rows: Row[] = [
         body: (w) => ({ location_id: w.abc.melbourne, start_date: PERIOD, roster_locked: true, password: PASSWORD }),
         expect: MEL_BRANCH_SCOPED,
     },
+
+    // Leave requests and employee portal accounts
+    { name: 'GET /leave-requests?location_id=melbourne', method: 'get', path: (w) => `/api/leave-requests?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
+    { name: 'POST /employee-accounts/:mel/reset-password-link', method: 'post', path: (w) => `/api/employee-accounts/${w.workers.mel}/reset-password-link`, expect: MEL_BRANCH_SCOPED },
 
     // Reports and dashboard
     { name: 'GET /reports/payroll?location_id=melbourne', method: 'get', path: (w) => `/api/reports/payroll?start_date=${PERIOD}&location_id=${w.abc.melbourne}`, expect: MEL_FILTER },

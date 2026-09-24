@@ -3,10 +3,10 @@ import crypto from 'crypto';
 import { query, withTransaction } from '../services/db';
 import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { AccessContext, HttpError, badRequest, isUuid, loadWorker, notFound, writeAudit } from '../services/policy';
+import { assertResettableLogin, resolveAccess, AccessContext, HttpError, badRequest, isUuid, loadWorker, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
 import { sendTransactionalEmail, buildEmployeeInviteEmailTemplate, isEmailSendingEnabled } from '../services/emailService';
-import {
+import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
     isStrongPassword, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
@@ -84,10 +84,14 @@ router.post('/invitations/accept', checkRateLimit, async (req: RateLimitedReques
 
         if (existingUser) {
             // The invitation attaches portal access to an existing account only once that account has authenticated.
+            // Failures count against the account itself, exactly like the sign-in page.
+            const accountKey = accountRateLimitKey(invitation.email);
+            if (isRateLimited(accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
             const ok = existingUser.is_active && existingUser.password_hash
                 && await comparePassword(password, existingUser.password_hash);
             if (!ok) {
                 recordFailedAttempt(req.rateLimitKey);
+                recordFailedAttempt(accountKey);
                 return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Enter the current password for this account to accept the invitation.' } });
             }
             // One login maps to at most one worker record app-wide.
@@ -273,6 +277,7 @@ router.post('/:employeeId/reset-password-link', requirePermission(Permission.WOR
         const ctx = req.auth!;
         const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.employeeId);
         if (!worker.user_id) throw badRequest('NO_PORTAL_ACCESS', 'This worker does not have portal access yet.');
+        await assertResettableLogin(worker.user_id, ctx.orgId, { allowBranchAdminHere: false });
 
         const token = newSecretToken();
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [worker.user_id]);
@@ -306,7 +311,9 @@ router.delete('/:employeeId', requirePermission(Permission.WORKERS_MANAGE), asyn
 
         const userId = worker.user_id;
         await query('UPDATE employees SET user_id = NULL WHERE id = $1', [worker.id]);
-        await revokeUserSessionsInOrganisation(userId, ctx.orgId);
+        // Only end their sessions here if this worker link was their only access to the organisation —
+        // removing portal access must never sign out the same login's Owner/Branch Admin sessions.
+        if (!(await resolveAccess(userId, ctx.orgId))) await revokeUserSessionsInOrganisation(userId, ctx.orgId);
 
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'EMPLOYEE_ACCOUNT_REVOKED', entityType: 'employee', entityId: worker.id, targetUserId: userId, branchId: worker.location_id });
         res.json({ success: true, message: 'Employee portal access removed.' });

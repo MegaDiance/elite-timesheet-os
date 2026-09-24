@@ -82,6 +82,14 @@ describe('reviewing a request (approve/reject)', () => {
         expect((await review(w.tokens.greg, created.body.data.id, { decision: 'approve' })).status).toBe(403);
     });
 
+    it("another organisation's owner cannot see or review it (404, existence not confirmed)", async () => {
+        const created = await createRequest(w.tokens.melEmployee, { leave_type: 'Sick', start_date: MONDAY, end_date: MONDAY, hours: 8 });
+        expect((await review(w.tokens.xavier, created.body.data.id, { decision: 'approve' })).status).toBe(404);
+        const list = await request(app).get('/api/leave-requests').set(bearer(w.tokens.xavier));
+        expect(list.body.data).toEqual([]);
+        expect((await sql('SELECT status FROM leave_requests WHERE id = $1', [created.body.data.id])).rows[0].status).toBe('Pending');
+    });
+
     it('rejecting records a reason and never touches shift_segments', async () => {
         const created = await createRequest(w.tokens.melEmployee, { leave_type: 'Sick', start_date: MONDAY, end_date: MONDAY, hours: 8 });
         const res = await review(w.tokens.owner, created.body.data.id, { decision: 'reject', rejection_reason: 'Short-staffed that day' });

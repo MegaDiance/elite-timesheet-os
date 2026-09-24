@@ -22,13 +22,15 @@ router.get('/', async (req: AuthRequest, res: Response) => {
         const status = typeof req.query.status === 'string' ? req.query.status : undefined;
 
         const params: any[] = [ctx.orgId, branchIds];
-        let sql = `SELECT lr.id, lr.employee_id, e.full_name AS employee_name, lr.location_id, l.name AS location_name,
+        // Scoped by the worker's CURRENT branch (as every other worker list is), not the branch stored
+        // on the request when it was made: after a worker moves, their requests move with them.
+        let sql = `SELECT lr.id, lr.employee_id, e.full_name AS employee_name, e.location_id, l.name AS location_name,
                           lr.leave_type, lr.start_date, lr.end_date, lr.start_time, lr.end_time, lr.hours, lr.reason,
                           lr.status, lr.reviewed_by, lr.reviewed_at, lr.rejection_reason, lr.created_at
                      FROM leave_requests lr
-                     JOIN employees e ON e.id = lr.employee_id
-                     JOIN locations l ON l.id = lr.location_id
-                    WHERE lr.org_id = $1 AND lr.location_id = ANY($2::uuid[])`;
+                     JOIN employees e ON e.id = lr.employee_id AND e.org_id = lr.org_id
+                     JOIN locations l ON l.id = e.location_id
+                    WHERE lr.org_id = $1 AND e.location_id = ANY($2::uuid[])`;
         if (status) {
             params.push(status);
             sql += ` AND lr.status = $${params.length}`;

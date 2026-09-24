@@ -33,6 +33,26 @@ export function checkRateLimit(req: RateLimitedRequest, res: Response, next: Nex
     next();
 }
 
+/**
+ * The same per-account key /auth/login uses. Any endpoint that checks an account's password
+ * (e.g. accepting an invitation as an existing account) must count its failures against this key,
+ * so it can never be used to guess a password faster than the sign-in page allows — whatever
+ * `email` value the request body carries.
+ */
+export const accountRateLimitKey = (email: string) => `email:${email.trim().toLowerCase()}`;
+
+export function isRateLimited(key: string): boolean {
+    const attempts = rateLimits.get(key);
+    if (!attempts) return false;
+    if (Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
+        rateLimits.delete(key);
+        return false;
+    }
+    return attempts.count >= MAX_ATTEMPTS;
+}
+
+export const TOO_MANY_ATTEMPTS = { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in 15 minutes.' } };
+
 /** Counts every call (not only failures). For unauthenticated endpoints that send email. */
 export function throttle(req: RateLimitedRequest, res: Response, next: NextFunction) {
     checkRateLimit(req, res, () => {

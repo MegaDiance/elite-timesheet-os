@@ -91,6 +91,7 @@ function ToggleRow({ label, description, checked, saving, disabled, onChange }: 
     <label className={`flex items-start gap-3 p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] ${disabled ? 'opacity-60' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
+        aria-label={label}
         checked={checked}
         disabled={disabled || saving}
         onChange={e => onChange(e.target.checked)}
