@@ -78,6 +78,22 @@ npm test
 
 ---
 
+## 🧰 Available Skills
+
+### Caveman (`/caveman`)
+- **Purpose:** Development communication / token efficiency.
+- **Use during:** Implementation, debugging, code review and development sessions where concise output is useful.
+- **Installed at:** user level, `~/.claude/skills/caveman` (from `mattpocock/skills`). Turn off with "stop caveman" or "normal mode".
+- **Never compress away** (write these out in full, even in caveman mode): security findings, failed tests, authentication problems, permission problems, database changes, migration issues, deployment failures, and important implementation decisions. Caveman never replaces the Mandatory Verification Protocol above.
+
+### Brag (`/brag:brag`, `/brag:brag-slim`)
+- **Purpose:** Product/demo presentation — short launch/demo videos (roster workflow, dashboard, employee and mobile experience, finished UI).
+- **Use during:** Marketing and presentation work, only after functionality has been implemented and browser-tested.
+- **Do not** use Brag as a development or testing tool, or to implement SimpleHours functionality. It writes only to `brag-output/` and needs Node 22+, FFmpeg and `npx hyperframes` when run.
+- **Installed at:** plugin `brag@brag` (marketplace `latent-spaces/brag`), local scope for this project — enabled in `.claude/settings.local.json`.
+
+---
+
 ## 🤖 SUBAGENT WORKFLOW PROTOCOL
 
 When working on features or complex tasks:
