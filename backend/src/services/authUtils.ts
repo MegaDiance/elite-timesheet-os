@@ -105,11 +105,6 @@ export function newSecretToken(): { raw: string; hash: string } {
     return { raw, hash: sha256Hex(raw) };
 }
 
-/** Identifier in an organisation's private sign-in link. An entry point only — it grants nothing. */
-export function newPortalSlug(): string {
-    return crypto.randomBytes(12).toString('hex');
-}
-
 export function newSixDigitCode(): { code: string; hash: string } {
     const code = (100000 + crypto.randomInt(900000)).toString();
     return { code, hash: sha256Hex(code) };

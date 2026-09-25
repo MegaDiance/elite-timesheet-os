@@ -4,6 +4,7 @@ import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
+import { friendlyError } from '../services/errors';
 
 interface AuditEntry {
   id: string;
@@ -79,7 +80,7 @@ export default function Audit() {
       const res = await api.get('/audit');
       setLogs(res.data.data || []);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'The audit log could not be loaded.');
+      setError(friendlyError(err, 'The audit log could not be loaded.'));
     } finally {
       setLoading(false);
     }

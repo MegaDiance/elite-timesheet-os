@@ -4,6 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Lock, CheckCircle2, AlertCircle, Info } from 'lucide-react';
+import { friendlyError } from '../../services/errors';
 
 interface LockPasswordsModalProps {
   isOpen: boolean;
@@ -68,7 +69,7 @@ export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
       setForm(EMPTY_FORM);
       setTimeout(onClose, 1200);
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'The lock passwords could not be updated.', type: 'error' });
+      setMessage({ text: friendlyError(err, 'The lock passwords could not be updated.'), type: 'error' });
     } finally {
       setSaving(false);
     }

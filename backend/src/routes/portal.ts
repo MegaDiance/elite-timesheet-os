@@ -203,10 +203,14 @@ router.post('/timesheet', async (req: AuthRequest, res: Response) => {
     }
 });
 
-/** GET /api/portal/history?start_date&end_date — approval status of the employee's own past fortnights. */
+/**
+ * GET /api/portal/history?start_date&end_date — approval status and worked hours of the employee's
+ * own past fortnights. This is timesheet data, so it follows the same organisation switch.
+ */
 router.get('/history', async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
+        await assertEmployeeTimesheetsEnabled(ctx.orgId);
         const { start, end } = readRange(req, MAX_HISTORY_RANGE_DAYS);
         const fortnights: string[] = [];
         let cursor = getFortnightStartIso(start);

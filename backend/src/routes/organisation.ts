@@ -4,28 +4,28 @@ import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { badRequest, forbidden, isUuid, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
-import { RateLimitedRequest, checkRateLimit, recordFailedAttempt, newPortalSlug, publicBaseUrl } from '../services/authUtils';
+import { RateLimitedRequest, checkRateLimit, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
+import { currentPortalLink, issuePortalLink, parseExpiry, resolvePortalToken } from '../services/portalLink';
 
 const router = Router();
 
+export const LINK_INVALID = { success: false, error: { code: 'LINK_INVALID', message: 'This sign-in link is not valid. Ask your manager for your organisation\'s sign-in link.' } };
+export const LINK_EXPIRED = { success: false, error: { code: 'LINK_EXPIRED', message: 'This sign-in link has expired. Ask your manager for the new sign-in link.' } };
+
 /**
  * GET /api/organisation/lookup/:slug  (public)
- * Lets the private sign-in page show which organisation it belongs to. Resolves by the random
- * portal_slug only and returns the organisation's name only — no ids, counts or settings.
+ * Lets the private sign-in page show which organisation it belongs to. Resolves by the token's
+ * hash only and returns the organisation's name only — no ids, counts or settings. Unknown,
+ * malformed and revoked links are one response; failures count towards the per-IP limit.
  */
 router.get('/lookup/:slug', checkRateLimit, async (req: RateLimitedRequest, res: Response) => {
     try {
-        const slug = String(req.params.slug || '').trim().toLowerCase();
-        const result = await query(
-            'SELECT name FROM organisations WHERE is_active = true AND portal_slug = $1',
-            [slug]
-        );
-        const org = result.rows[0];
-        if (!org) {
+        const link = await resolvePortalToken(req.params.slug);
+        if (link.status !== 'valid') {
             recordFailedAttempt(req.rateLimitKey);
-            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'This sign-in link is not valid.' } });
+            return link.status === 'expired' ? res.status(410).json(LINK_EXPIRED) : res.status(404).json(LINK_INVALID);
         }
-        res.json({ success: true, data: { name: org.name } });
+        res.json({ success: true, data: { name: link.name } });
     } catch (err) {
         sendError(res, err, 'ORGANISATION LOOKUP ERROR');
     }
@@ -36,7 +36,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const result = await query(
-            `SELECT id, name, portal_slug,
+            `SELECT id, name,
                     break_mins_weekday, break_mins_weekend, break_threshold_hours,
                     employees_can_submit_timesheets, automatically_merge_leave_with_roster, leave_requests_require_approval,
                     roster_lock_password_hash IS NOT NULL AS has_roster_lock_password,
@@ -46,6 +46,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         );
         const org = result.rows[0];
         const isOwner = ctx.role === 'OWNER';
+        const link = isOwner ? await currentPortalLink(ctx.orgId) : null;
 
         res.json({
             success: true,
@@ -53,8 +54,10 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
                 id: org.id,
                 name: org.name,
                 is_owner: isOwner,
-                portal_slug: isOwner ? org.portal_slug : undefined,
-                portal_url: isOwner ? `${publicBaseUrl()}/login/${org.portal_slug}` : undefined,
+                portal_slug: link?.token,
+                portal_url: link ? `${publicBaseUrl()}${link.path}` : undefined,
+                portal_link_expires_at: link?.expiresAt,
+                portal_link_expired: link?.expired,
                 break_mins_weekday: Number(org.break_mins_weekday ?? 30),
                 break_mins_weekend: Number(org.break_mins_weekend ?? 0),
                 break_threshold_hours: Number(org.break_threshold_hours ?? 6),
@@ -133,20 +136,51 @@ router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => 
     }
 });
 
-/** Replaces the private sign-in link. The previous link stops resolving immediately. */
+/**
+ * POST /api/organisation/regenerate-portal-url  { expires_at?: ISO date | null }
+ * Replaces the private sign-in link, optionally with an expiry. The previous link stops working
+ * immediately (this is how a link is revoked).
+ */
 router.post('/regenerate-portal-url', requireAuth, requirePermission(Permission.SECURITY_MANAGE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const newSlug = newPortalSlug();
-        await query('UPDATE organisations SET portal_slug = $1 WHERE id = $2', [newSlug, ctx.orgId]);
-        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'PORTAL_URL_REGENERATED', entityType: 'organisation', entityId: ctx.orgId, details: 'Private sign-in link regenerated' });
+        const expiresAt = parseExpiry(req.body?.expires_at) ?? null;
+        const link = await issuePortalLink(ctx.orgId, expiresAt);
+        await writeAudit({
+            orgId: ctx.orgId, actorId: ctx.userId, action: 'PORTAL_URL_REGENERATED', entityType: 'organisation', entityId: ctx.orgId,
+            details: `Private sign-in link regenerated${link.expiresAt ? `, expires ${link.expiresAt}` : ', no expiry'}`
+        });
         res.json({
             success: true,
-            data: { portal_slug: newSlug, portal_url: `${publicBaseUrl()}/login/${newSlug}` },
+            data: { portal_slug: link.token, portal_url: `${publicBaseUrl()}${link.path}`, portal_link_expires_at: link.expiresAt },
             message: 'The sign-in link has been regenerated. The previous link no longer works.'
         });
     } catch (err) {
         sendError(res, err, 'REGENERATE PORTAL URL ERROR');
+    }
+});
+
+/**
+ * PUT /api/organisation/portal-link  { expires_at: ISO date | null }
+ * Sets or clears the expiry of the current link without changing the link itself.
+ */
+router.put('/portal-link', requireAuth, requirePermission(Permission.SECURITY_MANAGE), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const expiresAt = parseExpiry(req.body?.expires_at);
+        if (expiresAt === undefined) throw badRequest('VALIDATION_FAILED', 'Choose an expiry date, or none.');
+        await query('UPDATE organisations SET portal_link_expires_at = $1 WHERE id = $2', [expiresAt ? expiresAt.toISOString() : null, ctx.orgId]);
+        await writeAudit({
+            orgId: ctx.orgId, actorId: ctx.userId, action: 'PORTAL_LINK_EXPIRY_CHANGED', entityType: 'organisation', entityId: ctx.orgId,
+            newValue: expiresAt ? expiresAt.toISOString() : 'never'
+        });
+        res.json({
+            success: true,
+            data: { portal_link_expires_at: expiresAt ? expiresAt.toISOString() : null },
+            message: expiresAt ? 'The sign-in link now has an expiry date.' : 'The sign-in link no longer expires.'
+        });
+    } catch (err) {
+        sendError(res, err, 'PORTAL LINK EXPIRY ERROR');
     }
 });
 

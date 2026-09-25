@@ -17,6 +17,7 @@ import {
   XCircle,
   AlertTriangle
 } from 'lucide-react';
+import { friendlyError } from '../../services/errors';
 
 interface SessionItem {
   id: string;
@@ -89,7 +90,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         setError('Your sign-in activity could not be loaded.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Your sign-in activity could not be loaded.');
+      setError(friendlyError(err, 'Your sign-in activity could not be loaded.'));
     } finally {
       setLoading(false);
     }
@@ -108,7 +109,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         setError(res.data?.error?.message || 'That session could not be signed out.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'That session could not be signed out.');
+      setError(friendlyError(err, 'That session could not be signed out.'));
     } finally {
       setRevokingId(null);
     }
@@ -127,7 +128,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         setError(res.data?.error?.message || 'Your other devices could not be signed out.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Your other devices could not be signed out.');
+      setError(friendlyError(err, 'Your other devices could not be signed out.'));
     } finally {
       setRevokingAllOthers(false);
     }

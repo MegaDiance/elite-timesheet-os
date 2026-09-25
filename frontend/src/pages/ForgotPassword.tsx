@@ -6,6 +6,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Clock, ArrowLeft, Mail, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { friendlyError } from '../services/errors';
 
 const SLUG_RE = /^[a-z0-9-]{1,64}$/;
 
@@ -33,7 +34,7 @@ export default function ForgotPassword() {
       setMessage(res.data?.message || 'If an account exists for that email, we\u2019ve sent it a link to reset the password.');
     } catch (err: any) {
       setStatus('error');
-      setMessage(err.response?.data?.error?.message || 'We couldn\u2019t send a reset link right now. Please try again.');
+      setMessage(friendlyError(err, 'We couldn\u2019t send a reset link right now. Please try again.'));
     }
   };
 

@@ -5,6 +5,7 @@ import { portalLoginPath } from '../services/portal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Clock, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { friendlyError } from '../services/errors';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -83,7 +84,7 @@ export default function ResetPassword() {
         setDoneWithoutPortal(true);
       }
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'We couldn\u2019t reset your password. The link may have expired.');
+      setError(friendlyError(err, 'We couldn\u2019t reset your password. The link may have expired.'));
     } finally {
       setIsSubmitting(false);
     }

@@ -7,6 +7,7 @@ import { storeSession } from '../../hooks/useAccess';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
+import { friendlyError } from '../../services/errors';
 
 /**
  * Confirms a sign-in from a new device or location. The request is always bound to one challenge:
@@ -40,7 +41,7 @@ export default function VerifyLogin() {
       return;
     }
     if (body?.data?.token) {
-      storeSession(body.data.token);
+      storeSession(body.data.token, body.data.portal_path);
       setSuccess(true);
       navigate('/app', { replace: true });
       return;
@@ -55,7 +56,7 @@ export default function VerifyLogin() {
       const res = await api.post('/auth/verify-login', payload);
       handleResponse(res.data);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'This verification request is invalid or has expired. Please sign in again.');
+      setError(friendlyError(err, 'This verification request is invalid or has expired. Please sign in again.'));
     } finally {
       setLoading(false);
     }
@@ -91,7 +92,7 @@ export default function VerifyLogin() {
       const res = await api.post('/auth/verify-2fa', { temp_token: tempToken, code: twoFactorCode.trim() });
       handleResponse(res.data);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'That code didn’t work. Please try again.');
+      setError(friendlyError(err, 'That code didn’t work. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -106,7 +107,7 @@ export default function VerifyLogin() {
       const res = await api.post('/auth/resend-2fa', { temp_token: tempToken });
       setNotice(res.data?.message || 'A new code has been sent to your email.');
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'We couldn’t send a new code. Please sign in again.');
+      setError(friendlyError(err, 'We couldn’t send a new code. Please sign in again.'));
     } finally {
       setResending(false);
     }

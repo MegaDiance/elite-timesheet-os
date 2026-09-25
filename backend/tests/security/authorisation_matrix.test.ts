@@ -120,6 +120,8 @@ const rows: Row[] = [
     { name: 'GET /reports/export/csv', method: 'get', path: () => `/api/reports/export/csv?start_date=${PERIOD}`, expect: EVERYONE },
     { name: 'GET /dashboard/today', method: 'get', path: () => '/api/dashboard/today', expect: EVERYONE },
     { name: 'GET /dashboard/today?location_id=melbourne', method: 'get', path: (w) => `/api/dashboard/today?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
+    { name: 'GET /dashboard/attention', method: 'get', path: () => '/api/dashboard/attention', expect: EVERYONE },
+    { name: 'GET /dashboard/attention?location_id=melbourne', method: 'get', path: (w) => `/api/dashboard/attention?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
 
     // Noticeboard
     { name: 'GET /announcements', method: 'get', path: () => '/api/announcements', expect: EVERYONE },

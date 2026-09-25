@@ -1,6 +1,7 @@
 import { query, withTransaction } from './db';
 import { addDays, fmtISO, parseIsoDateUtc } from './periodUtils';
 import { HttpError, writeAudit } from './policy';
+import { lockWorkerPeriod } from './periodLocks';
 import {
     BreakRule, DayEntry, SEGMENT_TYPES, SegmentType, breakRuleFor, isWeekendDate, loadBreakSettings, mergeLeaveIntoRoster, rowsToDay, writeDayRecord,
 } from './segments';
@@ -78,19 +79,24 @@ function targetDayIndexes(selectedDays?: number[]): number[] {
 }
 
 /** Workers in scope whose period can still be changed: active, not approved, and in a branch that is not locked. */
-async function editableWorkers(scope: BulkScope, lockColumn: 'roster_locked' | 'timesheet_locked') {
-    const res = await query(
-        `SELECT e.id
+async function editableWorkerRows(scope: BulkScope, lockColumn: 'roster_locked' | 'timesheet_locked', run: typeof query = query) {
+    const res = await run(
+        `SELECT e.id, e.location_id
            FROM employees e
           WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
             AND ($4::uuid[] IS NULL OR e.id = ANY($4::uuid[]))
             AND NOT EXISTS (SELECT 1 FROM timesheet_submissions ts
                              WHERE ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3 AND ts.status = 'Approved')
             AND NOT EXISTS (SELECT 1 FROM fortnight_locks fl
-                             WHERE fl.org_id = e.org_id AND fl.location_id = e.location_id AND fl.start_date = $3 AND fl.${lockColumn} = true)`,
+                             WHERE fl.org_id = e.org_id AND fl.location_id = e.location_id AND fl.start_date = $3 AND fl.${lockColumn} = true)
+          ORDER BY e.id`,
         [scope.orgId, scope.branchIds, scope.fortnightStartIso, scope.employeeIds ?? null]
     );
-    return res.rows.map((r: any) => r.id as string);
+    return res.rows as Array<{ id: string; location_id: string }>;
+}
+
+async function editableWorkers(scope: BulkScope, lockColumn: 'roster_locked' | 'timesheet_locked') {
+    return (await editableWorkerRows(scope, lockColumn)).map(r => r.id);
 }
 
 interface ApprovedLeave {
@@ -217,11 +223,18 @@ export async function autoRosterAll(scope: BulkScope): Promise<BulkRosterResult>
  */
 export async function autoLogAll(scope: BulkScope): Promise<{ workers: number }> {
     const fortnightStart = parseIsoDateUtc(scope.fortnightStartIso);
-    const workerIds = await editableWorkers(scope, 'timesheet_locked');
     const dates = targetDayIndexes(scope.selectedDays).map(i => fmtISO(addDays(fortnightStart, i)));
+    let workerIds: string[] = [];
 
-    if (workerIds.length > 0 && dates.length > 0) {
-        await withTransaction(async (tx) => {
+    await withTransaction(async (tx) => {
+        // Take each candidate's worker-period lock (in id order, so concurrent bulk runs cannot
+        // deadlock), then re-read who is still editable inside the transaction: a worker approved
+        // or a branch locked a moment ago is never written.
+        for (const w of await editableWorkerRows(scope, 'timesheet_locked')) {
+            await lockWorkerPeriod(tx, scope.orgId, w.id, w.location_id, scope.fortnightStartIso);
+        }
+        workerIds = (await editableWorkerRows(scope, 'timesheet_locked', tx)).map(w => w.id);
+        if (workerIds.length > 0 && dates.length > 0) {
             const updated = await tx(
                 `UPDATE shift_segments ss
                     SET actual_in = ss.roster_in, actual_out = ss.roster_out, actual_hours = ss.roster_hours, actual_segment_type = ss.segment_type,
@@ -236,8 +249,8 @@ export async function autoLogAll(scope: BulkScope): Promise<{ workers: number }>
             );
             const recordIds = Array.from(new Set(updated.rows.map((r: any) => r.record_id)));
             if (recordIds.length > 0) await tx('UPDATE daily_records SET has_actuals = true WHERE id = ANY($1::uuid[])', [recordIds]);
-        });
-    }
+        }
+    });
 
     await writeAudit({ orgId: scope.orgId, actorId: scope.actorId, action: 'AUTO_LOG', details: `Copied roster to worked hours for the fortnight starting ${scope.fortnightStartIso} (${workerIds.length} workers)` });
     return { workers: workerIds.length };

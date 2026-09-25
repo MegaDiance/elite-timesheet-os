@@ -5,6 +5,7 @@ import { comparePassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, loadBranch, resolveBranchFilter, writeAudit } from '../services/policy';
 import { isFortnightStart } from '../services/periodUtils';
+import { lockBranchPeriod } from '../services/periodLocks';
 
 /**
  * Pay-period locks. A lock belongs to ONE branch and ONE fortnight:
@@ -67,6 +68,7 @@ router.post('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthReq
         if (!passwordOk) throw new HttpError(403, 'INVALID_PASSWORD', 'That password is not correct. The lock was not changed.');
 
         const result = await withTransaction(async (tx) => {
+            await lockBranchPeriod(tx, ctx.orgId, branch.id, start_date);
             const before = (await tx(
                 'SELECT roster_locked, timesheet_locked FROM fortnight_locks WHERE org_id = $1 AND location_id = $2 AND start_date = $3 FOR UPDATE',
                 [ctx.orgId, branch.id, start_date]

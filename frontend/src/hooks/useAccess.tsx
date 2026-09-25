@@ -26,7 +26,7 @@ export interface Branch {
 
 export interface Access {
   user: { id: string; email: string; full_name: string | null; two_factor_enabled: boolean };
-  organisation: { id: string; name: string; portal_slug: string };
+  organisation: { id: string; name: string };
   role: Role;
   permissions: Permission[];
   branches: Branch[];
@@ -68,7 +68,6 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       const res = await api.get('/auth/me');
       current.current = res.data.data;
       setAccess(res.data.data);
-      rememberPortal(res.data.data.organisation.portal_slug);
     } catch {
       current.current = null;
       setAccess(null);
@@ -116,8 +115,13 @@ export function useAccess(): AccessValue {
   return value;
 }
 
-/** Stores the session token from a successful sign-in response and loads the account's access. */
-export function storeSession(token: string) {
+/**
+ * Stores the session token from a successful sign-in (or organisation switch) response and loads
+ * the account's access. `portalPath` is that organisation's sign-in page, remembered so sign-out
+ * and timeouts return there. The server only includes it in sign-in responses.
+ */
+export function storeSession(token: string, portalPath?: string | null) {
+  rememberPortal(portalPath);
   localStorage.setItem('token', token);
   localStorage.setItem('session_last_active', Date.now().toString());
   window.dispatchEvent(new Event('auth-change'));

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess, ROLE_LABEL } from '../hooks/useAccess';
+import { rememberPortal } from '../services/portal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -30,12 +31,15 @@ import { TwoFactorModal } from '../components/modals/TwoFactorModal';
 import { AccountSecurityModal } from '../components/modals/AccountSecurityModal';
 import { LockPasswordsModal } from '../components/modals/LockPasswordsModal';
 import { BreakSettingsModal } from '../components/modals/BreakSettingsModal';
+import { friendlyError } from '../services/errors';
 
 interface OrganisationSettings {
   id: string;
   name: string;
   portal_slug?: string;
   portal_url?: string;
+  portal_link_expires_at?: string | null;
+  portal_link_expired?: boolean;
   break_mins_weekday: number;
   break_mins_weekend: number;
   break_threshold_hours: number;
@@ -55,7 +59,7 @@ interface BranchAdminOption {
 
 type TabId = 'account' | 'organisation' | 'workforce' | 'security' | 'ownership';
 
-const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+const errorMessage = friendlyError;
 
 function SectionHeader({ icon, title, description, action }: {
   icon: React.ReactNode;
@@ -143,6 +147,8 @@ export default function Settings() {
   const [showBreakModal, setShowBreakModal] = useState(false);
   const [showLockModal, setShowLockModal] = useState(false);
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
+  const [expiryDraft, setExpiryDraft] = useState('');
+  const [savingExpiry, setSavingExpiry] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -275,15 +281,31 @@ export default function Settings() {
     setRegenerating(true);
     try {
       const res = await api.post('/organisation/regenerate-portal-url');
-      const { portal_slug, portal_url } = res.data.data;
-      setOrg(prev => (prev ? { ...prev, portal_slug, portal_url } : prev));
-      localStorage.setItem('last_org_slug', portal_slug);
+      const { portal_slug, portal_url, portal_link_expires_at } = res.data.data;
+      setOrg(prev => (prev ? { ...prev, portal_slug, portal_url, portal_link_expires_at, portal_link_expired: false } : prev));
+      rememberPortal(portal_slug);
       toast.success(res.data?.message || 'A new sign-in link has been created.');
       setShowRegenerateModal(false);
     } catch (err: any) {
       toast.error(errorMessage(err, 'The sign-in link could not be regenerated.'));
     } finally {
       setRegenerating(false);
+    }
+  };
+
+  const handleSaveExpiry = async (date: string | null) => {
+    setSavingExpiry(true);
+    try {
+      // A chosen date means "works until the end of that day" in the owner's own time zone.
+      const expires_at = date ? new Date(`${date}T23:59:59`).toISOString() : null;
+      const res = await api.put('/organisation/portal-link', { expires_at });
+      setOrg(prev => (prev ? { ...prev, portal_link_expires_at: res.data.data.portal_link_expires_at, portal_link_expired: false } : prev));
+      setExpiryDraft('');
+      toast.success(res.data?.message || 'Saved.');
+    } catch (err: any) {
+      toast.error(errorMessage(err, 'The expiry date could not be saved.'));
+    } finally {
+      setSavingExpiry(false);
     }
   };
 
@@ -531,7 +553,7 @@ export default function Settings() {
               <SectionHeader
                 icon={<Lock className="w-4 h-4" />}
                 title="Private sign-in link"
-                description="Your organisation's own sign-in page. Share it only with your Branch Admins."
+                description="Your organisation's own sign-in page. Share it only with your team. It is the only way to sign in to SimpleHours."
               />
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <div className="flex-1 min-w-0 px-3.5 py-2.5 rounded-lg bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] select-all truncate">
@@ -556,9 +578,40 @@ export default function Settings() {
                   Regenerate
                 </Button>
               </div>
+              {org?.portal_link_expired && (
+                <p role="alert" className="text-sm text-[var(--danger)] bg-[var(--danger-light)] rounded-md p-3">
+                  This link has expired, so nobody can sign in with it. Choose a new expiry date or regenerate the link, then share it again.
+                </p>
+              )}
+              <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-[var(--text)]">
+                    {org?.portal_link_expires_at
+                      ? `${org.portal_link_expired ? 'Expired' : 'Works until'} ${new Date(org.portal_link_expires_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`
+                      : 'This link does not expire'}
+                  </p>
+                  <label htmlFor="link-expiry" className="text-xs text-[var(--muted)]">Set an expiry date (optional)</label>
+                  <input
+                    id="link-expiry"
+                    type="date"
+                    min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                    value={expiryDraft}
+                    onChange={e => setExpiryDraft(e.target.value)}
+                    className="mt-1 w-full sm:w-56 h-10 px-3 rounded-lg bg-[var(--input-bg)] border border-[var(--border)] text-sm text-[var(--text)]"
+                  />
+                </div>
+                <Button variant="outline" size="md" onClick={() => handleSaveExpiry(expiryDraft)} disabled={!expiryDraft || savingExpiry} loading={savingExpiry}>
+                  Save expiry date
+                </Button>
+                {org?.portal_link_expires_at && (
+                  <Button variant="ghost" size="md" onClick={() => handleSaveExpiry(null)} disabled={savingExpiry}>
+                    Remove expiry
+                  </Button>
+                )}
+              </div>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
                 Knowing the link does not give anyone access: people still need an account in {access.organisation.name}.
-                If the link has been shared too widely, regenerate it and send the new one to your Branch Admins.
+                If the link has been shared too widely, regenerate it (the old link stops working straight away) and send the new one to your team.
               </p>
             </Card>
 

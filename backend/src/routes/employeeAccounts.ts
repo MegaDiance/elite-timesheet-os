@@ -10,6 +10,7 @@ import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
     isStrongPassword, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
+import { usablePortalPath } from '../services/portalLink';
 
 /**
  * Employee portal accounts.
@@ -26,6 +27,7 @@ import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
  * turned off, the link is handed back to the inviter to copy and share, exactly as branch admin
  * invitations already work.
  */
+
 const router = Router();
 
 const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
@@ -34,7 +36,7 @@ const INVALID_INVITE = { success: false, error: { code: 'INVALID_INVITATION', me
 async function findOpenInvitation(rawToken: unknown) {
     if (typeof rawToken !== 'string' || !rawToken.trim()) return null;
     const res = await query(
-        `SELECT i.*, o.name AS organisation_name, o.portal_slug, e.full_name AS employee_name
+        `SELECT i.*, o.name AS organisation_name, e.full_name AS employee_name
            FROM employee_invitations i
            JOIN organisations o ON o.id = i.org_id AND o.is_active = true
            JOIN employees e ON e.id = i.employee_id
@@ -144,7 +146,7 @@ router.post('/invitations/accept', checkRateLimit, async (req: RateLimitedReques
         });
 
         // No session is issued here. The person signs in through the organisation's sign-in page.
-        res.json({ success: true, data: { login_path: `/login/${invitation.portal_slug}` }, message: 'Invitation accepted. You can now sign in.' });
+        res.json({ success: true, data: { login_path: await usablePortalPath(invitation.org_id) }, message: 'Invitation accepted. You can now sign in.' });
     } catch (err) {
         sendError(res, err, 'EMPLOYEE INVITATION ACCEPT ERROR');
     }
@@ -185,7 +187,7 @@ router.post('/:employeeId/invitations', requirePermission(Permission.WORKERS_MAN
         if (worker.user_id) throw new HttpError(409, 'ALREADY_LINKED', 'This worker already has portal access.');
         if (!worker.email) throw badRequest('VALIDATION_FAILED', 'This worker needs an email address before they can be invited.');
 
-        const orgRes = await query('SELECT name, portal_slug FROM organisations WHERE id = $1', [ctx.orgId]);
+        const orgRes = await query('SELECT name FROM organisations WHERE id = $1', [ctx.orgId]);
 
         const token = newSecretToken();
         const invitationId = crypto.randomUUID();

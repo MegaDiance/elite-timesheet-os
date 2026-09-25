@@ -28,6 +28,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { TableSkeleton } from '../components/ui/Skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { useToast } from '../components/ui/Toast';
+import { friendlyError } from '../services/errors';
 
 interface BranchAdmin {
   id: string;
@@ -48,7 +49,7 @@ interface Invitation {
   branches: Array<{ id: string; name: string }>;
 }
 
-const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+const errorMessage = friendlyError;
 
 /** A single-use secure link the Owner must copy and share themselves (email is off). */
 function CopyLinkModal({ link, onClose }: { link: { title: string; description: string; url: string } | null; onClose: () => void }) {

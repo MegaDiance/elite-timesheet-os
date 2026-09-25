@@ -17,7 +17,7 @@ import BulkResultDialog, { type BulkResult, type ResultProblem } from '../compon
 import { Dialog, buttonClass } from '../components/roster/Dialog';
 import { DayLines, PART_STYLE, PUBLIC_HOLIDAY_CLASS, PlannedWorkedKey, PublicHolidayBadge, WEEKEND_CLASS, describeDay, type DayContent } from '../components/roster/DayBox';
 import {
-  SKIP_REASON_LABEL, apiErrorCode, apiErrorMessage, downloadPayrollCsv, openPayrollPrint,
+  skipReason, apiErrorCode, apiErrorMessage, downloadPayrollCsv, openPayrollPrint,
   type BulkApproveResult, type CopyDayRequest, type CopyDayResult, type LockRow, type TimesheetRow, type TimesheetStatus, type Worker,
 } from '../components/roster/api';
 import {
@@ -280,7 +280,7 @@ export default function Roster() {
         const res = await api.post('/records/copy-day', job);
         const data = res.data.data as CopyDayResult;
         copied += data.copied.length;
-        problems.push(...data.skipped.map(s => ({ label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`, detail: SKIP_REASON_LABEL[s.reason] ?? s.reason })));
+        problems.push(...data.skipped.map(s => ({ label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`, detail: skipReason(s.reason) })));
       } catch (err) {
         problems.push({
           label: `${nameOf(job.employee_id)} · ${job.target_dates.map(d => dayLabel(d)).join(', ')}`,
@@ -325,7 +325,7 @@ export default function Roster() {
           title: 'Apply default roster',
           summary: applied > 0 ? `Default roster applied to ${applied} day${applied === 1 ? '' : 's'} for ${who}.` : 'No days were changed.',
           problemHeading: 'Kept as they were',
-          problems: skipped.map(s => ({ label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`, detail: SKIP_REASON_LABEL[s.reason] ?? s.reason })),
+          problems: skipped.map(s => ({ label: `${nameOf(s.employee_id)} · ${dayLabel(s.date)}`, detail: skipReason(s.reason) })),
           anyDone: applied > 0,
         });
       } else {

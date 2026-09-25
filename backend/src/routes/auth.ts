@@ -11,6 +11,7 @@ import {
     RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit,
     isStrongPassword, sha256Hex, hashesEqual, newSecretToken, newSixDigitCode, publicBaseUrl, maskEmail
 } from '../services/authUtils';
+import { resolvePortalToken, usablePortalPath } from '../services/portalLink';
 
 const router = Router();
 
@@ -19,13 +20,10 @@ const dummyPasswordHash = hashPassword(crypto.randomUUID());
 
 const INVALID_CREDENTIALS = { success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.' } };
 
+/** The organisation a private sign-in link belongs to — only while that link is valid and unexpired. */
 async function findOrganisationBySlug(slug: string): Promise<{ id: string } | null> {
-    const clean = slug.trim().toLowerCase();
-    const res = await query(
-        'SELECT id FROM organisations WHERE is_active = true AND portal_slug = $1',
-        [clean]
-    );
-    return res.rows[0] || null;
+    const link = await resolvePortalToken(slug);
+    return link.status === 'valid' ? { id: link.orgId } : null;
 }
 
 /**
@@ -36,11 +34,11 @@ async function findOrganisationBySlug(slug: string): Promise<{ id: string } | nu
  */
 async function portalLoginPath(userId: string, preferredOrgId: string | null): Promise<string | null> {
     if (preferredOrgId && await resolveAccess(userId, preferredOrgId)) {
-        const org = await query('SELECT portal_slug FROM organisations WHERE id = $1 AND is_active = true', [preferredOrgId]);
-        if (org.rows[0]?.portal_slug) return `/login/${org.rows[0].portal_slug}`;
+        const path = await usablePortalPath(preferredOrgId);
+        if (path) return path;
     }
     const orgs = await listAccessibleOrganisations(userId);
-    return orgs.length === 1 && orgs[0].portal_slug ? `/login/${orgs[0].portal_slug}` : null;
+    return orgs.length === 1 ? usablePortalPath(orgs[0].id) : null;
 }
 
 /** Issues the email one-time code and the short-lived token for the second login step. */
@@ -76,13 +74,13 @@ async function describeAccess(userId: string, orgId: string) {
     if (!access) return null;
     const [userRes, orgRes, branchRes] = await Promise.all([
         query('SELECT id, email, full_name, two_factor_enabled FROM users WHERE id = $1', [userId]),
-        query('SELECT id, name, portal_slug, employees_can_submit_timesheets FROM organisations WHERE id = $1', [orgId]),
+        query('SELECT id, name, employees_can_submit_timesheets FROM organisations WHERE id = $1', [orgId]),
         query('SELECT id, name, address, timezone, is_active FROM locations WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name ASC', [orgId, access.branchIds]),
     ]);
     const org = orgRes.rows[0];
     return {
         user: userRes.rows[0],
-        organisation: { id: org.id, name: org.name, portal_slug: org.portal_slug },
+        organisation: { id: org.id, name: org.name },
         role: access.role,
         permissions: Array.from(ROLE_PERMISSIONS[access.role]),
         branches: branchRes.rows,
@@ -106,8 +104,10 @@ async function completeLogin(user: any, orgId: string, clientInfo: ClientInfo, a
         details: `Signed in from ${clientInfo.approxLocation}`, ip: clientInfo.ip
     });
 
-    const description = await describeAccess(user.id, orgId);
-    return { token: generateToken({ sub: user.id, sid: session.sessionId }), ...description };
+    // The sign-in page for this organisation, so the browser can return here after sign-out or a
+    // timeout. Only given to someone who has just signed in to (or switched to) this organisation.
+    const [description, portalPath] = await Promise.all([describeAccess(user.id, orgId), usablePortalPath(orgId)]);
+    return { token: generateToken({ sub: user.id, sid: session.sessionId }), ...description, portal_path: portalPath };
 }
 
 /**

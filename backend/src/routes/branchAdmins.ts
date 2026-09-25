@@ -10,6 +10,7 @@ import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
     isStrongPassword, isValidEmail, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
+import { usablePortalPath } from '../services/portalLink';
 
 /**
  * Branch Admin accounts.
@@ -28,6 +29,7 @@ import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
  * copy and share it themselves. The link is exactly as secure either way: random, single-use,
  * expiring, revocable, and a fresh invite or resend always invalidates the previous one.
  */
+
 const router = Router();
 
 const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
@@ -36,7 +38,7 @@ const INVALID_INVITE = { success: false, error: { code: 'INVALID_INVITATION', me
 async function findOpenInvitation(rawToken: unknown) {
     if (typeof rawToken !== 'string' || !rawToken.trim()) return null;
     const res = await query(
-        `SELECT i.*, o.name AS organisation_name, o.portal_slug
+        `SELECT i.*, o.name AS organisation_name
            FROM branch_admin_invitations i
            JOIN organisations o ON o.id = i.org_id AND o.is_active = true
           WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()`,
@@ -159,7 +161,7 @@ router.post('/invitations/accept', checkRateLimit, async (req: RateLimitedReques
         });
 
         // No session is issued here. The person signs in through the organisation's sign-in page.
-        res.json({ success: true, data: { login_path: `/login/${invitation.portal_slug}` }, message: 'Invitation accepted. You can now sign in.' });
+        res.json({ success: true, data: { login_path: await usablePortalPath(invitation.org_id) }, message: 'Invitation accepted. You can now sign in.' });
     } catch (err) {
         sendError(res, err, 'INVITATION ACCEPT ERROR');
     }

@@ -15,7 +15,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { initDB, query, withTransaction } from '../services/db';
 import { hashPassword } from '../services/auth';
-import { isStrongPassword, isValidEmail, newPortalSlug } from '../services/authUtils';
+import { isStrongPassword, isValidEmail } from '../services/authUtils';
+import { issuePortalLink } from '../services/portalLink';
 
 dotenv.config();
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -49,23 +50,23 @@ async function main() {
     }
 
     const orgName = (process.env.SEED_ORGANISATION_NAME || 'Demo Organisation').trim();
-    const portalSlug = newPortalSlug();
     const passwordHash = await hashPassword(ownerPassword);
 
-    await withTransaction(async (tx) => {
+    const loginPath = await withTransaction(async (tx) => {
         const userRes = await tx(
             'INSERT INTO users (email, password_hash, is_active) VALUES ($1, $2, true) RETURNING id',
             [ownerEmail, passwordHash]
         );
         const orgRes = await tx(
-            'INSERT INTO organisations (name, portal_slug, owner_user_id, is_active) VALUES ($1, $2, $3, true) RETURNING id',
-            [orgName, portalSlug, userRes.rows[0].id]
+            'INSERT INTO organisations (name, owner_user_id, is_active) VALUES ($1, $2, true) RETURNING id',
+            [orgName, userRes.rows[0].id]
         );
         await tx('INSERT INTO locations (org_id, name) VALUES ($1, $2)', [orgRes.rows[0].id, 'Main Branch']);
+        return (await issuePortalLink(orgRes.rows[0].id, null, tx)).path;
     });
 
     console.log(`[BOOTSTRAP] Created organisation "${orgName}" owned by ${ownerEmail}.`);
-    console.log(`[BOOTSTRAP] Sign in at /login/${portalSlug}`);
+    console.log(`[BOOTSTRAP] Sign in at ${loginPath}`);
 }
 
 main()

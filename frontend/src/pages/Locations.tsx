@@ -23,6 +23,7 @@ import { Modal } from '../components/ui/Modal';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
+import { friendlyError } from '../services/errors';
 
 interface BranchItem {
   id: string;
@@ -84,7 +85,7 @@ export default function Locations() {
       const res = await api.get('/locations', { params: { include_inactive: 'true' } });
       setBranches(res.data.data || []);
     } catch (err: any) {
-      setLoadError(err.response?.data?.error?.message || 'Branches could not be loaded.');
+      setLoadError(friendlyError(err, 'Branches could not be loaded.'));
     } finally {
       setLoading(false);
     }
@@ -138,7 +139,7 @@ export default function Locations() {
       setShowForm(false);
       afterChange();
     } catch (err: any) {
-      setFormError(err.response?.data?.error?.message || 'The branch could not be saved.');
+      setFormError(friendlyError(err, 'The branch could not be saved.'));
     } finally {
       setSaving(false);
     }
@@ -151,7 +152,7 @@ export default function Locations() {
       toast.success(res.data?.message || `Branch "${branch.name}" reactivated.`);
       afterChange();
     } catch (err: any) {
-      toast.error(err.response?.data?.error?.message || 'The branch could not be reactivated.');
+      toast.error(friendlyError(err, 'The branch could not be reactivated.'));
     } finally {
       setTogglingId(null);
     }

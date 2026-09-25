@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
 import { ShieldCheck, ShieldAlert, KeyRound, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { friendlyError } from '../../services/errors';
 
 interface TwoFactorModalProps {
   isOpen: boolean;
@@ -62,7 +63,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
         setMessage({ text: res.data?.error?.message || 'The code could not be sent.', type: 'error' });
       }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'The code could not be sent.', type: 'error' });
+      setMessage({ text: friendlyError(err, 'The code could not be sent.'), type: 'error' });
     } finally {
       setActionLoading(false);
     }
@@ -93,7 +94,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
         setMessage({ text: res.data?.error?.message || 'Verification failed.', type: 'error' });
       }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'Two-step verification could not be turned on. Check the code and your password.', type: 'error' });
+      setMessage({ text: friendlyError(err, 'Two-step verification could not be turned on. Check the code and your password.'), type: 'error' });
     } finally {
       setActionLoading(false);
     }
@@ -120,7 +121,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
         setMessage({ text: res.data?.error?.message || 'Two-step verification could not be turned off.', type: 'error' });
       }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'Incorrect password.', type: 'error' });
+      setMessage({ text: friendlyError(err, 'Incorrect password.'), type: 'error' });
     } finally {
       setActionLoading(false);
     }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Dialog, buttonClass } from './Dialog';
-import { SKIP_REASON_LABEL, apiErrorMessage } from './api';
+import { skipReason, apiErrorMessage } from './api';
 import { dayLabel, dayOfMonth, isWeekendIso, weekdayShort } from './dates';
 import { BREAK_LENGTHS, breakChoiceLabel, breakFromChoice, type BreakChoice } from './day';
 
@@ -62,7 +62,7 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
           {result && (
             <p className="text-xs text-[var(--muted)]" aria-live="polite">
               {result.applied.length} day{result.applied.length === 1 ? '' : 's'} updated
-              {result.skipped.length > 0 && `; ${result.skipped.length} skipped (${result.skipped.map(s => `${dayLabel(s.date)}: ${SKIP_REASON_LABEL[s.reason] ?? s.reason}`).join(', ')})`}
+              {result.skipped.length > 0 && `; ${result.skipped.length} skipped (${result.skipped.map(s => `${dayLabel(s.date)}: ${skipReason(s.reason)}`).join(', ')})`}
             </p>
           )}
           <p className="text-xs text-[var(--muted)]" aria-live="polite">{chosen.size} of {days.length} days chosen</p>

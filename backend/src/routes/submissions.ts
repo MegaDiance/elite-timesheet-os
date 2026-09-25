@@ -1,10 +1,10 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { query } from '../services/db';
+import { query, withTransaction } from '../services/db';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, loadWorker, resolveBranchFilter, writeAudit } from '../services/policy';
 import { addDays, fmtISO, isFortnightStart, parseIsoDateUtc } from '../services/periodUtils';
-import { getPeriodLock, timesheetLockedError } from '../services/periodLocks';
+import { getPeriodLock, lockWorkerPeriod, timesheetLockedError } from '../services/periodLocks';
 
 /**
  * Timesheet approval.
@@ -65,26 +65,33 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
     }
 });
 
-/** Authorises against the worker's own branch and refuses when that branch's period is locked. */
-async function loadEditableWorker(req: AuthRequest, workerId: unknown, startDate: string) {
+/**
+ * Authorises against the worker's own branch, then runs `change` in a transaction that holds the
+ * worker-period lock (the same one day saves take) and refuses when the branch period is locked.
+ */
+async function changeSubmission<T>(req: AuthRequest, workerId: unknown, startDate: string,
+    change: (tx: (text: string, params?: any[]) => Promise<any>, worker: any) => Promise<T>) {
     const ctx = req.auth!;
     const worker = await loadWorker(ctx, Permission.TIMESHEETS_MANAGE, workerId);
-    if ((await getPeriodLock(ctx.orgId, worker.location_id, startDate)).timesheet_locked) throw timesheetLockedError();
-    return worker;
+    const result = await withTransaction(async (tx) => {
+        await lockWorkerPeriod(tx, ctx.orgId, worker.id, worker.location_id, startDate);
+        if ((await getPeriodLock(ctx.orgId, worker.location_id, startDate, tx)).timesheet_locked) throw timesheetLockedError();
+        return change(tx, worker);
+    });
+    return { worker, result };
 }
 
 async function approve(req: AuthRequest, workerId: unknown, startDate: string) {
     const ctx = req.auth!;
-    const worker = await loadEditableWorker(req, workerId, startDate);
-    const saved = await query(
+    const { worker, result: saved } = await changeSubmission(req, workerId, startDate, (tx, w) => tx(
         `INSERT INTO timesheet_submissions (id, org_id, employee_id, start_date, status, reviewed_by, reviewed_at)
          VALUES ($1, $2, $3, $4, 'Approved', $5, NOW())
          ON CONFLICT (org_id, employee_id, start_date) DO UPDATE
             SET status = 'Approved', reviewed_by = EXCLUDED.reviewed_by, reviewed_at = NOW()
           WHERE timesheet_submissions.status <> 'Approved'
          RETURNING id`,
-        [crypto.randomUUID(), ctx.orgId, worker.id, startDate, ctx.userId]
-    );
+        [crypto.randomUUID(), ctx.orgId, w.id, startDate, ctx.userId]
+    ));
     if (saved.rows.length === 0) throw new HttpError(409, 'ALREADY_APPROVED', 'This timesheet has already been approved.');
     await writeAudit({
         orgId: ctx.orgId, actorId: ctx.userId, action: 'TIMESHEET_APPROVED', entityType: 'timesheet_submissions', entityId: saved.rows[0].id,
@@ -132,12 +139,11 @@ router.post('/reopen', requirePermission(Permission.TIMESHEETS_MANAGE), async (r
     try {
         const ctx = req.auth!;
         const startDate = readStartDate(req.body?.start_date);
-        const worker = await loadEditableWorker(req, req.body?.employee_id, startDate);
-        const reopened = await query(
+        const { worker, result: reopened } = await changeSubmission(req, req.body?.employee_id, startDate, (tx, w) => tx(
             `UPDATE timesheet_submissions SET status = 'Draft', reviewed_by = $1, reviewed_at = NOW()
               WHERE org_id = $2 AND employee_id = $3 AND start_date = $4 AND status = 'Approved' RETURNING id`,
-            [ctx.userId, ctx.orgId, worker.id, startDate]
-        );
+            [ctx.userId, ctx.orgId, w.id, startDate]
+        ));
         if (reopened.rows.length === 0) throw new HttpError(409, 'NOT_APPROVED', 'This timesheet is not approved.');
         await writeAudit({
             orgId: ctx.orgId, actorId: ctx.userId, action: 'TIMESHEET_REOPENED', entityType: 'timesheet_submissions', entityId: reopened.rows[0].id,

@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
 import { storeSession } from '../../hooks/useAccess';
+import { friendlyError } from '../../services/errors';
 
 interface OrganisationBrand {
   name: string;
@@ -44,7 +45,8 @@ export const OrgLogin: React.FC = () => {
 
   // Organisation named by the private sign-in link
   const [brand, setBrand] = useState<OrganisationBrand | null>(null);
-  const [lookupState, setLookupState] = useState<'loading' | 'ready' | 'invalid'>('loading');
+  const [lookupState, setLookupState] = useState<'loading' | 'ready' | 'invalid' | 'expired' | 'unavailable'>('loading');
+  const [lookupAttempt, setLookupAttempt] = useState(0);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -72,21 +74,19 @@ export const OrgLogin: React.FC = () => {
       })
       .catch(err => {
         if (cancelled) return;
-        // Only a 404 means the link is wrong; otherwise show the form without the organisation's name.
-        if (err?.response?.status === 404) {
-          setLookupState('invalid');
-        } else {
-          setBrand(null);
-          setLookupState('ready');
-        }
+        // The form is only ever shown for a link the server has confirmed. Anything else — wrong,
+        // expired, rate-limited or unreachable — shows a message instead of a sign-in form.
+        const status = err?.response?.status;
+        setBrand(null);
+        setLookupState(status === 404 ? 'invalid' : status === 410 ? 'expired' : 'unavailable');
       });
     return () => { cancelled = true; };
-  }, [slug]);
+  }, [slug, lookupAttempt]);
 
   const failureMessage = (err: any): string => {
     const status = err?.response?.status;
     if (status === 429 || status === 503) {
-      return err.response.data?.error?.message || 'Sign-in is unavailable right now. Please try again in a few minutes.';
+      return friendlyError(err, 'Sign-in is unavailable right now. Please try again in a few minutes.');
     }
     if (!err?.response) return 'We couldn’t reach SimpleHours. Check your connection and try again.';
     return GENERIC_FAILURE;
@@ -106,7 +106,7 @@ export const OrgLogin: React.FC = () => {
       return;
     }
     if (body?.data?.token) {
-      storeSession(body.data.token);
+      storeSession(body.data.token, body.data.portal_path);
       // /app sends each role to its own home (employees to their schedule, managers to the dashboard).
       navigate('/app', { replace: true });
       return;
@@ -154,7 +154,7 @@ export const OrgLogin: React.FC = () => {
         setStep('credentials');
         setPassword('');
       }
-      setError(err?.response?.data?.error?.message || 'That code didn’t work. Please try again.');
+      setError(friendlyError(err, 'That code didn’t work. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -168,7 +168,7 @@ export const OrgLogin: React.FC = () => {
       const res = await api.post('/auth/resend-2fa', { temp_token: tempToken });
       setNotice(res.data?.message || 'A new code has been sent to your email.');
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || 'We couldn’t send a new code. Please sign in again.');
+      setError(friendlyError(err, 'We couldn’t send a new code. Please sign in again.'));
     } finally {
       setResending(false);
     }
@@ -192,26 +192,42 @@ export const OrgLogin: React.FC = () => {
     );
   }
 
-  if (lookupState === 'invalid') {
+  if (lookupState !== 'ready') {
+    const copy = {
+      invalid: {
+        title: 'This sign-in link isn’t valid',
+        body: 'Check that you copied the whole link. If it still doesn’t work, ask your manager for your organisation’s sign-in link.',
+      },
+      expired: {
+        title: 'This sign-in link has expired',
+        body: 'Your organisation has replaced this link. Ask your manager for the new sign-in link.',
+      },
+      unavailable: {
+        title: 'We couldn’t check this sign-in link',
+        body: 'This is usually a connection problem, or too many attempts in a short time. Wait a moment, then try again.',
+      },
+    }[lookupState];
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[var(--bg)]">
         <Card className="max-w-md w-full p-8 text-center space-y-4">
           <div className="w-12 h-12 rounded-full bg-[var(--danger-light)] text-[var(--danger)] flex items-center justify-center mx-auto">
-            <AlertCircle className="w-6 h-6" />
+            <AlertCircle className="w-6 h-6" aria-hidden="true" />
           </div>
-          <h1 className="text-xl font-bold text-[var(--text)]">This sign-in link isn't valid</h1>
-          <p className="text-xs text-[var(--muted)] leading-relaxed">
-            Check the link your organisation gave you. If it still doesn’t work, ask your manager or organisation owner for the current sign-in link.
-          </p>
-          <Link to="/" className="block pt-2">
-            <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
-          </Link>
+          <h1 className="text-xl font-bold text-[var(--text)]">{copy.title}</h1>
+          <p className="text-sm text-[var(--muted)] leading-relaxed">{copy.body}</p>
+          {lookupState === 'unavailable' ? (
+            <Button variant="primary" size="md" className="w-full" onClick={() => setLookupAttempt(n => n + 1)}>Try again</Button>
+          ) : (
+            <Link to="/" className="block pt-2">
+              <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
+            </Link>
+          )}
         </Card>
       </div>
     );
   }
 
-  const title = brand ? brand.name : 'Sign in';
+  const title = brand?.name || 'Sign in';
 
   return (
     <div className="min-h-screen flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 bg-[var(--bg)] text-[var(--text)]">

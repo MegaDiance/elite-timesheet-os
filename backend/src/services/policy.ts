@@ -120,9 +120,9 @@ export async function resolveAccess(userId: string, orgId: string): Promise<{ ro
 }
 
 /** Organisations a user can sign in to, with the role they hold in each. */
-export async function listAccessibleOrganisations(userId: string): Promise<Array<{ id: string; name: string; portal_slug: string | null; role: Role }>> {
+export async function listAccessibleOrganisations(userId: string): Promise<Array<{ id: string; name: string; role: Role }>> {
     const res = await query(
-        `SELECT o.id, o.name, o.portal_slug,
+        `SELECT o.id, o.name,
                 CASE
                     WHEN o.owner_user_id = $1 THEN 'OWNER'
                     WHEN EXISTS (SELECT 1 FROM branch_admins ba

@@ -5,9 +5,11 @@
  * remembered they go to the public home page instead — never to a page that lists organisations.
  */
 const KEY = 'last_org_slug';
-const SLUG_RE = /^[a-z0-9-]{1,64}$/;
+const SLUG_RE = /^[a-z0-9-]{8,128}$/;
 
-export function rememberPortal(slug: string | null | undefined) {
+/** Accepts the link token or its path (`/login/<token>`, as the sign-in response returns it). */
+export function rememberPortal(slugOrPath: string | null | undefined) {
+  const slug = slugOrPath?.replace(/^\/login\//, '').toLowerCase();
   try {
     if (slug && SLUG_RE.test(slug)) localStorage.setItem(KEY, slug);
   } catch {

@@ -3,7 +3,7 @@ import { Copy } from 'lucide-react';
 import api from '../../services/apiClient';
 import { ResultSummary } from './BulkResultDialog';
 import { buttonClass } from './Dialog';
-import { SKIP_REASON_LABEL, apiErrorCode, apiErrorMessage, type CopyDayResult } from './api';
+import { skipReason, apiErrorCode, apiErrorMessage, type CopyDayResult } from './api';
 import { dayLabel, dayOfMonth, isWeekendIso, weekdayShort } from './dates';
 
 interface CopyDayPanelProps {
@@ -179,7 +179,7 @@ export default function CopyDayPanel({
             anyDone={result.copied.length > 0}
             problems={result.skipped.map(s => ({
               label: `${names.get(s.employee_id) ?? 'Worker'} · ${dayLabel(s.date)}`,
-              detail: SKIP_REASON_LABEL[s.reason] ?? s.reason,
+              detail: skipReason(s.reason),
             }))}
           />
         </div>

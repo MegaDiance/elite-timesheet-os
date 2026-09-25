@@ -11,6 +11,7 @@
 import crypto from 'crypto';
 import { hashPassword, generateToken } from '../../src/services/auth';
 import { createSession } from '../../src/services/sessionService';
+import { issuePortalLink } from '../../src/services/portalLink';
 import { sql } from './testDb';
 
 export const PASSWORD = 'Password123';
@@ -30,13 +31,14 @@ export async function createUser(email: string, fullName?: string): Promise<{ id
     return res.rows[0];
 }
 
+/** `portalSlug` is the organisation's private sign-in link token, issued the same way production does. */
 export async function createOrganisation(name: string, ownerId: string): Promise<{ id: string; portalSlug: string }> {
-    const portalSlug = crypto.randomBytes(12).toString('hex');
     const res = await sql(
-        'INSERT INTO organisations (name, portal_slug, owner_user_id, is_active) VALUES ($1, $2, $3, true) RETURNING id',
-        [name, portalSlug, ownerId]
+        'INSERT INTO organisations (name, owner_user_id, is_active) VALUES ($1, $2, true) RETURNING id',
+        [name, ownerId]
     );
-    return { id: res.rows[0].id, portalSlug };
+    const link = await issuePortalLink(res.rows[0].id);
+    return { id: res.rows[0].id, portalSlug: link.token };
 }
 
 export async function createBranch(orgId: string, name: string): Promise<string> {

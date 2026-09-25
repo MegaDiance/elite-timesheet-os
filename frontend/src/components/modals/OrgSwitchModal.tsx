@@ -8,7 +8,6 @@ import { ROLE_LABEL, type Role } from '../../hooks/useAccess';
 export interface OrganisationChoice {
   id: string;
   name: string;
-  portal_slug: string | null;
   role: Role;
   is_current: boolean;
 }

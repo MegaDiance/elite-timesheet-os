@@ -3,7 +3,7 @@ import { query, withTransaction } from './db';
 import { parseSmartTime } from './timeParser';
 import { badRequest, HttpError } from './policy';
 import { getFortnightStartIso } from './periodUtils';
-import { getPeriodLock, isTimesheetApproved, rosterLockedError, timesheetLockedError } from './periodLocks';
+import { getPeriodLock, isTimesheetApproved, lockWorkerPeriod, rosterLockedError, timesheetLockedError } from './periodLocks';
 
 /**
  * The one segment model shared by the roster, roster templates and timesheets.
@@ -499,14 +499,18 @@ export async function writeDayRecord(params: {
 }): Promise<NormalisedSegment[]> {
     const { orgId, worker, recordDate, body, rule } = params;
     const fortnightStart = getFortnightStartIso(recordDate);
-    if (await isTimesheetApproved(orgId, worker.id, fortnightStart)) {
-        throw new HttpError(423, 'TIMESHEET_ALREADY_APPROVED', 'This timesheet is approved. Reopen it before changing shifts or hours.');
-    }
-    const lock = await getPeriodLock(orgId, worker.location_id, fortnightStart);
     const orgRes = await query('SELECT automatically_merge_leave_with_roster FROM organisations WHERE id = $1', [orgId]);
     const mergeLeave = orgRes.rows[0]?.automatically_merge_leave_with_roster === true;
 
     return withTransaction(async (tx) => {
+        // Approval and lock state are read inside the transaction, after taking the worker-period
+        // lock, so an approval or branch lock committed a moment earlier is always seen.
+        await lockWorkerPeriod(tx, orgId, worker.id, worker.location_id, fortnightStart);
+        if (await isTimesheetApproved(orgId, worker.id, fortnightStart, tx)) {
+            throw new HttpError(423, 'TIMESHEET_ALREADY_APPROVED', 'This timesheet is approved. Reopen it before changing shifts or hours.');
+        }
+        const lock = await getPeriodLock(orgId, worker.location_id, fortnightStart, tx);
+
         const recRes = await tx(
             `INSERT INTO daily_records (id, org_id, employee_id, record_date) VALUES ($1, $2, $3, $4)
              ON CONFLICT (org_id, employee_id, record_date) DO UPDATE SET record_date = EXCLUDED.record_date

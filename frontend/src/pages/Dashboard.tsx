@@ -30,6 +30,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import { formatFortnightLabel } from '../utils/fortnight';
 import { STATUS_VARIANT, type DayStatus } from '../components/roster/DayBox';
+import { friendlyError } from '../services/errors';
 
 const SEGMENT_LABEL: Record<string, string> = {
   WORK: 'Normal Work',
@@ -103,7 +104,7 @@ interface DashboardData {
   branch_status: BranchStatus[];
   scheduled_today: ScheduledWorker[];
   pending_timesheets: PendingTimesheet[];
-  organisation: { name: string; sign_in_link: string; branch_admins: number } | null;
+  organisation: { name: string; sign_in_link: string | null; branch_admins: number } | null;
 }
 
 const QUICK_LINKS = [
@@ -176,7 +177,7 @@ export default function Dashboard() {
         if (!cancelled) setData(res.data.data);
       })
       .catch(err => {
-        if (!cancelled) setError(err.response?.data?.error?.message || 'The dashboard could not be loaded.');
+        if (!cancelled) setError(friendlyError(err, 'The dashboard could not be loaded.'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -316,19 +317,25 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="md:col-span-2 p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-2">
               <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Private sign-in link</div>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <div className="flex-1 min-w-0 px-3 py-2 rounded-md bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] truncate select-all">
-                  {data.organisation.sign_in_link}
+              {data.organisation.sign_in_link ? (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <div className="flex-1 min-w-0 px-3 py-2 rounded-md bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] truncate select-all">
+                    {data.organisation.sign_in_link}
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => handleCopyLink(data.organisation!.sign_in_link!)}
+                    leftIcon={<Copy className="w-3.5 h-3.5" />}
+                  >
+                    Copy link
+                  </Button>
                 </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => handleCopyLink(data.organisation!.sign_in_link)}
-                  leftIcon={<Copy className="w-3.5 h-3.5" />}
-                >
-                  Copy link
-                </Button>
-              </div>
+              ) : (
+                <p role="alert" className="text-sm text-[var(--danger)]">
+                  Your sign-in link has expired, so nobody can sign in. <Link to="/settings?tab=security" className="underline font-semibold">Renew it in Settings</Link>.
+                </p>
+              )}
               <p className="text-[11px] text-[var(--muted)]">Share it with your Branch Admins and any workers you give portal access. It’s the only place anyone signs in.</p>
             </div>
 

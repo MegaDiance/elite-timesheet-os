@@ -37,12 +37,17 @@ describe('organisation sign-up', () => {
         expect(done.status).toBe(201);
         expect(done.body.data.token).toBeUndefined();
 
-        const org = (await sql("SELECT o.portal_slug, u.email FROM organisations o JOIN users u ON u.id = o.owner_user_id WHERE o.name = 'New Clinic'")).rows[0];
+        const org = (await sql("SELECT o.portal_slug, o.portal_slug_hash, o.portal_slug_enc, u.email FROM organisations o JOIN users u ON u.id = o.owner_user_id WHERE o.name = 'New Clinic'")).rows[0];
         expect(org.email).toBe('founder@new.test');
-        expect(done.body.data.login_path).toBe(`/login/${org.portal_slug}`);
+        const linkToken = String(done.body.data.login_path).replace('/login/', '');
+        expect(linkToken).toMatch(/^[0-9a-f]{32}$/);
+        // The sign-in link is stored only as a hash (for lookup) and an encrypted copy — never in plain text.
+        expect(org.portal_slug).toBeNull();
+        expect(org.portal_slug_hash).toBe(crypto.createHash('sha256').update(linkToken).digest('hex'));
+        expect(org.portal_slug_enc).not.toContain(linkToken);
         expect((await sql("SELECT l.name FROM locations l JOIN organisations o ON o.id = l.org_id WHERE o.name = 'New Clinic'")).rows).toEqual([{ name: 'Carlton' }]);
 
-        const login = await request(app).post('/api/auth/login').send({ email: 'founder@new.test', password: 'Founder123', organisation_slug: org.portal_slug });
+        const login = await request(app).post('/api/auth/login').send({ email: 'founder@new.test', password: 'Founder123', organisation_slug: linkToken });
         expect(login.body.data.role).toBe('OWNER');
     });
 

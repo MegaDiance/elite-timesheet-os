@@ -5,6 +5,7 @@ import api from '../../services/apiClient';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
+import { friendlyError } from '../../services/errors';
 
 interface Invitation {
   email: string;
@@ -94,7 +95,8 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
       });
       const path: string = res.data?.data?.login_path || '';
       // Always the organisation's own sign-in link; there is no generic sign-in page to fall back to.
-      setLoginPath(/^\/login\/[a-z0-9-]+$/.test(path) ? path : '/');
+      // 'none' = accepted, but the organisation's link has expired (the owner must share a new one).
+      setLoginPath(/^\/login\/[a-z0-9-]+$/.test(path) ? path : 'none');
     } catch (err: any) {
       const code = err.response?.data?.error?.code;
       if (code === 'INVALID_INVITATION') {
@@ -102,7 +104,7 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
       } else if (code === 'INVALID_CREDENTIALS') {
         setError('That password isn’t right. Enter the current password for this SimpleHours account.');
       } else {
-        setError(err.response?.data?.error?.message || 'We couldn’t accept the invitation. Please try again.');
+        setError(friendlyError(err, 'We couldn’t accept the invitation. Please try again.'));
       }
     } finally {
       setSubmitting(false);
@@ -161,11 +163,17 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
             ? `You can now see your schedule for ${invitation.organisation_name}. Sign in to get started, and bookmark the sign-in page — it’s your organisation’s own link.`
             : `You can now manage ${(invitation.branches ?? []).join(', ')} for ${invitation.organisation_name}. Sign in to get started.`}
         </p>
-        <Link to={loginPath} className="block pt-2">
-          <Button variant="primary" size="md" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            Sign in to {invitation.organisation_name}
-          </Button>
-        </Link>
+        {loginPath === 'none' ? (
+          <p className="text-sm text-[var(--text)] bg-[var(--panel-subtle)] rounded-md p-3">
+            Your organisation’s sign-in link has been replaced. Ask your manager for the new link, then sign in there.
+          </p>
+        ) : (
+          <Link to={loginPath} className="block pt-2">
+            <Button variant="primary" size="md" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
+              Sign in to {invitation.organisation_name}
+            </Button>
+          </Link>
+        )}
       </Card>
     );
   }

@@ -7,8 +7,9 @@ import { badRequest, writeAudit } from '../services/policy';
 import { sendTransactionalEmail, buildOrganisationSetupEmailTemplate, isEmailDeliveryConfigured } from '../services/emailService';
 import {
     RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit,
-    isStrongPassword, isValidEmail, newPortalSlug, newSecretToken, publicBaseUrl, sha256Hex
+    isStrongPassword, isValidEmail, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
+import { issuePortalLink } from '../services/portalLink';
 
 /**
  * Organisation sign-up. This is how an Organisation Owner comes to exist:
@@ -140,13 +141,12 @@ router.post('/complete', checkRateLimit, async (req: RateLimitedRequest, res: Re
             }
 
             const orgId = crypto.randomUUID();
-            const portalSlug = newPortalSlug();
             await tx(
-                `INSERT INTO organisations (id, name, portal_slug, owner_user_id, is_active,
+                `INSERT INTO organisations (id, name, owner_user_id, is_active,
                                             break_mins_weekday, break_mins_weekend, break_threshold_hours,
                                             roster_lock_password_hash, timesheet_lock_password_hash)
-                 VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8, $9)`,
-                [orgId, orgName, portalSlug, userId,
+                 VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8)`,
+                [orgId, orgName, userId,
                     readNumber(body.break_mins_weekday, 30, 0, 240), readNumber(body.break_mins_weekend, 0, 0, 240), readNumber(body.break_threshold_hours, 6, 0, 24),
                     rosterLockHash, timesheetLockHash]
             );
@@ -154,7 +154,8 @@ router.post('/complete', checkRateLimit, async (req: RateLimitedRequest, res: Re
                 'INSERT INTO locations (id, org_id, name, address, timezone, is_active) VALUES ($1, $2, $3, $4, $5, true)',
                 [crypto.randomUUID(), orgId, branchName, branchAddress, branchTimezone]
             );
-            return { orgId, userId, portalSlug };
+            const link = await issuePortalLink(orgId, null, tx);
+            return { orgId, userId, loginPath: link.path };
         });
 
         if (!created) return res.status(400).json(INVALID_LINK);
@@ -163,7 +164,7 @@ router.post('/complete', checkRateLimit, async (req: RateLimitedRequest, res: Re
 
         res.status(201).json({
             success: true,
-            data: { login_path: `/login/${created.portalSlug}` },
+            data: { login_path: created.loginPath },
             message: 'Your organisation is ready. Sign in to continue.'
         });
     } catch (err) {

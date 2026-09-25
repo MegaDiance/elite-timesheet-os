@@ -3,6 +3,7 @@ import { query } from '../services/db';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { badRequest, hasPermission, isUuid, resolveBranchFilter } from '../services/policy';
 import { publicBaseUrl } from '../services/authUtils';
+import { usablePortalPath } from '../services/portalLink';
 import { addDays, fmtISO, getFortnightStart, isIsoDate } from '../services/periodUtils';
 
 /**
@@ -37,6 +38,41 @@ function readDate(value: unknown): string | null {
     }
     return value;
 }
+
+/**
+ * GET /api/dashboard/attention?location_id=
+ * Small counts for the navigation badges: timesheets still waiting for approval this pay period,
+ * and leave requests waiting for a decision — only for the branches the caller may act in, and
+ * leave only when the caller can review it.
+ */
+router.get('/attention', requirePermission(Permission.BRANCH_VIEW), async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const scope = resolveBranchFilter(ctx, Permission.BRANCH_VIEW, req.query.location_id);
+        const fortnightStart = fmtISO(getFortnightStart(todayInTimezone(null)));
+        const canReview = hasPermission(ctx, Permission.TIMESHEETS_MANAGE);
+        const [timesheets, leave] = await Promise.all([
+            canReview
+                ? query(
+                    `SELECT COUNT(*)::int AS n FROM employees e
+                      WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
+                        AND NOT EXISTS (SELECT 1 FROM timesheet_submissions ts
+                                         WHERE ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3 AND ts.status = 'Approved')`,
+                    [ctx.orgId, scope, fortnightStart])
+                : Promise.resolve({ rows: [{ n: 0 }] }),
+            canReview
+                ? query(
+                    `SELECT COUNT(*)::int AS n FROM leave_requests lr
+                       JOIN employees e ON e.id = lr.employee_id AND e.org_id = lr.org_id
+                      WHERE lr.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND lr.status = 'Pending'`,
+                    [ctx.orgId, scope])
+                : Promise.resolve({ rows: [{ n: 0 }] }),
+        ]);
+        res.json({ success: true, data: { timesheets_waiting: timesheets.rows[0].n, leave_pending: leave.rows[0].n, fortnight_start: fortnightStart } });
+    } catch (err) {
+        sendError(res, err, 'DASHBOARD ATTENTION ERROR');
+    }
+});
 
 /**
  * GET /api/dashboard/today?location_id=&date=
@@ -105,7 +141,7 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
             ),
             isOwnerView
                 ? query(
-                    `SELECT o.name, o.portal_slug,
+                    `SELECT o.name,
                             (SELECT COUNT(DISTINCT ba.user_id)::int FROM branch_admins ba WHERE ba.org_id = o.id) AS branch_admins
                        FROM organisations o
                       WHERE o.id = $1`,
@@ -191,10 +227,11 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
 
         // 3. Organisation card (Owner only). The link is built from server configuration.
         const org = orgRes?.rows[0];
+        const signInPath = org ? await usablePortalPath(ctx.orgId) : null;
         const organisation = org
             ? {
                 name: org.name,
-                sign_in_link: `${publicBaseUrl()}/login/${org.portal_slug}`,
+                sign_in_link: signInPath ? `${publicBaseUrl()}${signInPath}` : null,
                 branch_admins: org.branch_admins,
             }
             : null;

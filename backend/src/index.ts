@@ -20,6 +20,7 @@ import auditRoutes from './routes/audit';
 import announcementsRoutes from './routes/announcements';
 import dashboardRoutes from './routes/dashboard';
 import { initDB } from './services/db';
+import { classifyPage, sendPage } from './services/pageRoutes';
 import path from 'path';
 import fs from 'fs';
 
@@ -105,11 +106,12 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/announcements', announcementsRoutes);
 
 // Serve the built frontend from this same service (single-service deployment).
-// In local development Vite serves the frontend on :3000, so this is skipped.
+// In local development Vite serves the frontend on :3001, so there is usually no build here.
 const frontendDist = path.join(__dirname, '../../frontend/dist');
 const frontendIndex = path.join(frontendDist, 'index.html');
+const hasFrontendBuild = fs.existsSync(frontendIndex);
 
-if (fs.existsSync(frontendIndex)) {
+if (hasFrontendBuild) {
     app.use(express.static(frontendDist, {
         index: false,
         setHeaders: (res, filePath) => {
@@ -119,17 +121,24 @@ if (fs.existsSync(frontendIndex)) {
             }
         },
     }));
-
-    // Anything that is not an API call falls through to the SPA so client-side
-    // routes like /roster and /login/:slug work on a hard refresh.
-    app.use((req, res, next) => {
-        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-        if (req.path.startsWith('/api/') || req.path === '/health') return next();
-        res.sendFile(frontendIndex);
-    });
 } else {
     console.warn('[STARTUP] No frontend build found at frontend/dist - serving API only.');
 }
+
+// Browser page loads. The server decides which pages exist (see services/pageRoutes.ts): /login
+// and invalid private sign-in links are real 404s, not a client-side trick. Without a frontend
+// build the same statuses are returned with a minimal body, so they are testable in isolation.
+app.use(async (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    if (req.path.startsWith('/api/') || req.path === '/api' || req.path === '/health') return next();
+    try {
+        if (hasFrontendBuild) return await sendPage(req, res, frontendIndex);
+        const decision = await classifyPage(req);
+        res.status(decision.status).type('html').send('<!doctype html><title>SimpleHours</title>');
+    } catch (err) {
+        next(err);
+    }
+});
 
 // Unmatched API routes should be JSON, not HTML
 app.use('/api', (_req, res) => {

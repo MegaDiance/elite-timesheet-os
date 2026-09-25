@@ -29,6 +29,7 @@ import PortalAccessModal, { type PortalStatus } from '../components/PortalAccess
 import {
   BREAK_LENGTHS, DEFAULT_BREAK_SETTINGS, breakChoiceLabel, breakChoiceOf, breakFromChoice, type BreakChoice, type BreakSettings,
 } from '../components/roster/day';
+import { friendlyError } from '../services/errors';
 
 const SEGMENT_TYPES = [
   { value: 'WORK', label: 'Normal Work' },
@@ -66,7 +67,7 @@ interface Worker {
   portal_status: PortalStatus;
 }
 
-const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+const errorMessage = friendlyError;
 const isActiveWorker = (w: Worker) => w.is_active;
 
 function csvCell(value: unknown): string {

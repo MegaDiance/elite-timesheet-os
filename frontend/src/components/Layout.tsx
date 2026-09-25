@@ -35,6 +35,7 @@ import HelpChatbot from './HelpChatbot';
 import { useToast } from './ui/Toast';
 import { ROLE_LABEL, signOut, storeSession, useAccess, type Permission } from '../hooks/useAccess';
 import { forgetActiveBranches, useActiveBranch } from '../hooks/useActiveBranch';
+import { friendlyError } from '../services/errors';
 
 interface NavItem {
   label: string;
@@ -129,10 +130,10 @@ export default function Layout() {
       const res = await api.post('/auth/switch-organisation', { organisation_id: orgId });
       const token = res.data?.data?.token;
       if (!token) throw new Error('No session returned');
-      storeSession(token);
+      storeSession(token, res.data?.data?.portal_path);
       window.location.assign('/app');
     } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message || 'Could not switch organisation. Please try again.');
+      toast.error(friendlyError(err, 'Could not switch organisation. Please try again.'));
       setSwitching(false);
     }
   };
@@ -158,8 +159,10 @@ export default function Layout() {
       title: 'Main',
       items: [
         { label: 'Schedule', path: '/my/schedule', icon: <Calendar className="w-4 h-4" /> },
-        ...(canSubmitTimesheets ? [{ label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-4 h-4" /> }] : []),
-        { label: 'History', path: '/my/history', icon: <Clock className="w-4 h-4" /> },
+        ...(canSubmitTimesheets ? [
+          { label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-4 h-4" /> },
+          { label: 'History', path: '/my/history', icon: <Clock className="w-4 h-4" /> },
+        ] : []),
         { label: 'Leave', path: '/my/leave', icon: <CalendarDays className="w-4 h-4" /> },
       ],
     },
@@ -230,8 +233,10 @@ export default function Layout() {
   const bottomItems: Array<{ label: string; path: string; permission?: Permission; icon: ReactNode }> = isEmployee
     ? [
         { label: 'Schedule', path: '/my/schedule', icon: <Calendar className="w-5 h-5 mb-0.5" /> },
-        ...(canSubmitTimesheets ? [{ label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-5 h-5 mb-0.5" /> }] : []),
-        { label: 'History', path: '/my/history', icon: <Clock className="w-5 h-5 mb-0.5" /> },
+        ...(canSubmitTimesheets ? [
+          { label: 'Timesheet', path: '/my/timesheet', icon: <CheckSquare className="w-5 h-5 mb-0.5" /> },
+          { label: 'History', path: '/my/history', icon: <Clock className="w-5 h-5 mb-0.5" /> },
+        ] : []),
         { label: 'Leave', path: '/my/leave', icon: <CalendarDays className="w-5 h-5 mb-0.5" /> },
       ]
     : [

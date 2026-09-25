@@ -4,6 +4,7 @@ import api from '../services/apiClient';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { useToast } from '../components/ui/Toast';
+import { friendlyError } from '../services/errors';
 
 interface ReactionSummary {
   emoji: string;
@@ -45,7 +46,7 @@ type PendingDelete = { kind: 'post'; postId: string } | { kind: 'reply'; postId:
 
 const COMMON_EMOJIS = ['👍', '❤️', '🎉', '👏', '🚀', '👀'];
 
-const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+const errorMessage = friendlyError;
 
 export default function Announcements() {
   const toast = useToast();

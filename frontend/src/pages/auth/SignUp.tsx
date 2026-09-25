@@ -5,6 +5,7 @@ import api from '../../services/apiClient';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
+import { friendlyError } from '../../services/errors';
 
 /**
  * First step of setting up an organisation: we email a single-use setup link. The response is the
@@ -29,7 +30,7 @@ export default function SignUp() {
       await api.post('/signup/request', { email: clean });
       setSentTo(clean);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'We couldn’t send your setup link. Please try again.');
+      setError(friendlyError(err, 'We couldn’t send your setup link. Please try again.'));
     } finally {
       setSubmitting(false);
     }

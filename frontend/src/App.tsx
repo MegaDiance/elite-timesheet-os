@@ -77,7 +77,8 @@ function EmployeeGuard({ requireTimesheets, children }: { requireTimesheets?: bo
   if (loading) return <Loading />;
   if (!access) return <Navigate to={portalLoginPath()} replace />;
   if (access.role !== 'EMPLOYEE') return <NoAccess />;
-  // Employee timesheets switched off: the page does not exist for this employee (the API refuses it too).
+  // Employee timesheets switched off: timesheet pages (the timesheet and its history) do not exist
+  // for this employee, and the API refuses them too.
   if (requireTimesheets && !access.employee_capabilities?.can_submit_timesheets) return <Navigate to="/my/schedule" replace />;
   return children;
 }
@@ -155,11 +156,12 @@ export default function App() {
           {/* Employee portal */}
           <Route path="/my/schedule" element={<EmployeeGuard><EmployeeSchedule /></EmployeeGuard>} />
           <Route path="/my/timesheet" element={<EmployeeGuard requireTimesheets><EmployeeTimesheet /></EmployeeGuard>} />
-          <Route path="/my/history" element={<EmployeeGuard><EmployeeHistory /></EmployeeGuard>} />
+          <Route path="/my/history" element={<EmployeeGuard requireTimesheets><EmployeeHistory /></EmployeeGuard>} />
           <Route path="/my/leave" element={<EmployeeGuard><EmployeeLeave /></EmployeeGuard>} />
-
-          <Route path="*" element={<Guard><NoAccess /></Guard>} />
         </Route>
+
+        {/* Anything else is not a page — the server answers these with a 404 as well. */}
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );

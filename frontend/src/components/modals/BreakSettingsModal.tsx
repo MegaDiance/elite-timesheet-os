@@ -4,6 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { friendlyError } from '../../services/errors';
 
 interface BreakSettingsModalProps {
   isOpen: boolean;
@@ -40,7 +41,7 @@ export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, 
         });
       }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.error?.message || 'The current break rules could not be loaded.', type: 'error' });
+      setMessage({ text: friendlyError(err, 'The current break rules could not be loaded.'), type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -60,7 +61,7 @@ export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, 
       }, 1000);
     } catch (err: any) {
       setMessage({
-        text: err.response?.data?.error?.message || 'The break rules could not be saved.',
+        text: friendlyError(err, 'The break rules could not be saved.'),
         type: 'error',
       });
     } finally {

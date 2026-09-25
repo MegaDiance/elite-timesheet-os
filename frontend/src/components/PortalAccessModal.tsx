@@ -4,6 +4,7 @@ import api from '../services/apiClient';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { useToast } from './ui/Toast';
+import { friendlyError } from '../services/errors';
 
 export type PortalStatus = 'none' | 'invited' | 'active';
 
@@ -15,7 +16,7 @@ interface PortalWorker {
   portal_status: PortalStatus;
 }
 
-const errorMessage = (err: any, fallback: string): string => err?.response?.data?.error?.message || fallback;
+const errorMessage = friendlyError;
 
 /**
  * Gives one worker a login to the employee portal, or takes it away. Everything here is a call to
