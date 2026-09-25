@@ -33,7 +33,7 @@ Each flow uses the same structure:
 
 | Step | Detail |
 |---|---|
-| 1 | Visitor browses Overview, Features, Pricing. [CURRENT] |
+| 1 | Visitor browses Overview, Features, Pricing. [CURRENT] The Overview's "How it works" is a short product tour with example data (UI-UX-DESIGN §15a); like the rest of the public site it makes no API calls. [CURRENT 2026-09-26] |
 | 2 | No sign-in search. A small "Sign in" link explains: "Use the sign-in link your organisation gave you" and offers "Email me my sign-in link". [PROPOSED] |
 | 3 | "Email me my sign-in link": visitor enters email → `POST /api/auth/login-links` → server looks up active memberships for that email and emails the private `/o/<entry_code>` links → **same response regardless of whether the email exists**. [PROPOSED] Rate-limited per IP and email. |
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Building2, Clock3, EyeOff, KeyRound, Link2, ScrollText, ServerCog, UserRound } from 'lucide-react';
+import { ArrowRight, Building2, Clock3, EyeOff, KeyRound, Link2, PlayCircle, ScrollText, ServerCog, UserRound } from 'lucide-react';
 import { CtaLink, Eyebrow, Point, SectionIntro } from './ui';
 import {
   BranchAccessIllustration,
@@ -8,6 +8,8 @@ import {
   RosterIllustration,
   TimesheetDayIllustration,
 } from './illustrations';
+import { ProductTour } from './tour/ProductTour';
+import { loadTourPlayer } from './tour/loadPlayer';
 
 /**
  * The public home page. Static content only: it never calls the API or reads account data,
@@ -16,25 +18,6 @@ import {
 
 const container = 'mx-auto max-w-7xl px-4 sm:px-6 lg:px-8';
 const sectionPad = 'py-16 sm:py-24';
-
-const STEPS = [
-  {
-    title: 'Set up',
-    body: 'Create your organisation and its branches, add your workers and invite your Branch Admins.',
-  },
-  {
-    title: 'Roster',
-    body: 'Plan each fortnight from every worker’s default roster, then adjust the days that are different.',
-  },
-  {
-    title: 'Record hours',
-    body: 'Enter the hours actually worked beside what was rostered, including any part-day leave.',
-  },
-  {
-    title: 'Approve and export',
-    body: 'Approve each worker’s timesheet, lock the pay period and export the report for payroll.',
-  },
-];
 
 const SECURITY = [
   {
@@ -116,36 +99,16 @@ function Hero() {
               Get started
               <ArrowRight aria-hidden="true" className="h-4 w-4" />
             </CtaLink>
+            {/* Fetches the tour's player as soon as the visitor shows interest, so it's ready on arrival. */}
+            <CtaLink to="#how-it-works" size="lg" variant="secondary" onPointerEnter={loadTourPlayer} onFocus={loadTourPlayer}>
+              <PlayCircle aria-hidden="true" className="h-4 w-4" />
+              Watch how it works
+            </CtaLink>
           </div>
         </div>
       </div>
 
       <RosterIllustration className="mt-12 sm:mt-16" />
-    </section>
-  );
-}
-
-function HowItWorks() {
-  return (
-    <section aria-labelledby="how-title" className="border-t border-[var(--border)] bg-[var(--panel)]">
-      <div className={`${container} ${sectionPad}`}>
-        <SectionIntro id="how-title" title="How it works" className="max-w-2xl">
-          <p>Set up once. Then every fortnight follows the same four steps.</p>
-        </SectionIntro>
-
-        <ol className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
-          {STEPS.map((step, i) => (
-            <li key={step.title} className="border-t-2 border-[var(--border-hover)] pt-5">
-              <span className="flex items-center gap-2 font-mono text-sm font-semibold text-[var(--text)]/70">
-                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--primary)]" />
-                Step {i + 1}
-              </span>
-              <h3 className="mt-2 text-lg font-semibold text-[var(--text)]">{step.title}</h3>
-              <p className="mt-2 text-[15px] leading-relaxed text-[var(--text)]/75">{step.body}</p>
-            </li>
-          ))}
-        </ol>
-      </div>
     </section>
   );
 }
@@ -416,7 +379,7 @@ export const Home: React.FC = () => {
   return (
     <>
       <Hero />
-      <HowItWorks />
+      <ProductTour />
       <Rosters />
       <Timesheets />
       <Branches />

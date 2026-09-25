@@ -38,7 +38,7 @@ npm run dev
 ```bash
 docker compose up -d db-test   # disposable PostgreSQL 16 used by the test suite
 npm run typecheck              # backend tsc + frontend tsc/vite build
-npm test                       # backend tests, run against a database built from the migrations
+npm test                       # frontend unit tests (Node's test runner), then backend tests against a database built from the migrations
 npm run lint --workspace=frontend
 ```
 

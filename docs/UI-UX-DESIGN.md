@@ -412,6 +412,14 @@ The principle: someone who has never used a roster or timesheet system can work 
 - Shown once per person (`users.tutorial_version`), on their home page; restart from Help or "Show me around". Escape ends it (unless a dialog is open).
 - Pages mark tour targets with `data-tour="…"` (workspace, roster-controls, roster-cell, time-line, break-controls, add-line, save-day, timesheet-status, daily-nav, schedule-today, leave-form, my-timesheet). Keep these when changing those screens.
 
+### Homepage product tour (`pages/public/tour/*`) [CURRENT 2026-09-26]
+- "How it works" on `/` is a silent, captioned walk through one fortnight in 7 steps (about 54 s): set up the organisation → branches and Branch Admins → workers → roster → hours worked with part-day leave → approve and lock → payroll report. The hero's "Watch how it works" jumps to it.
+- Drawn in HTML from the app's own pieces (`DayLines`, `TimesheetStatusBadge`, `Badge`, `previewDayHours`, the roster date formatters) and the app's own words, so it follows the theme and stays sharp. **When a screen's labels change, update `scenes.tsx` to match.** Everything shown is the made-up organisation in `demoData.ts` (example.com addresses, a masked sign-in link), and the page says so.
+- Loading: the player is its own chunk (about 12 KB gzipped), fetched only when the section is within 400 px of the screen or a visitor points at the hero link. A placeholder of the same size holds its place; if the chunk can't load, the tour is shown as text.
+- Playback: starts by itself only when half of it is visible and the visitor hasn't asked for reduced motion; pauses when scrolled away or the tab is hidden and carries on when back, unless the visitor paused it; stops at the end (Replay / Get started). Controls: play/pause, restart, previous/next, a button per step, captions on/off, and "Read the tour as text". It has no sound, so there is no mute control.
+- Reduced motion: nothing moves or autoplays; each step shows its finished screen. The picture is hidden from screen readers; captions, the transcript and a status message on step changes carry the same story.
+- Tests: `frontend/tests/tour.test.ts` (playback state machine, script, example data) — `npm test --workspace=frontend`.
+
 ### Help, errors and empty states
 - Help (`components/ContextHelpModal.tsx`): the walkthrough plus short answers written for the person's role. The keyword chatbot was removed.
 - `HelpTip` (`components/ui/HelpTip.tsx`): a "?" beside a label, opened by click or tap, for status, locks, breaks, leave types, branch access and the sign-in link.
