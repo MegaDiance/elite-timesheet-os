@@ -185,7 +185,7 @@ export default function VerifyLogin() {
                     Verify and sign in
                   </Button>
                   <div className="flex justify-end text-xs">
-                    <button type="button" onClick={handleResend} disabled={resending} className="text-[var(--primary)] hover:underline disabled:opacity-50">
+                    <button type="button" onClick={handleResend} disabled={resending} className="text-[var(--primary-text)] hover:underline disabled:opacity-50">
                       {resending ? 'Sending…' : 'Send a new code'}
                     </button>
                   </div>

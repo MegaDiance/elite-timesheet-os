@@ -25,7 +25,7 @@ export interface Branch {
 }
 
 export interface Access {
-  user: { id: string; email: string; full_name: string | null; two_factor_enabled: boolean };
+  user: { id: string; email: string; full_name: string | null; two_factor_enabled: boolean; tutorial_version?: number | null };
   organisation: { id: string; name: string };
   role: Role;
   permissions: Permission[];

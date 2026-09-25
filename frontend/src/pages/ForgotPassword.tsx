@@ -43,7 +43,7 @@ export default function ForgotPassword() {
       <div className="w-full max-w-md space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center mx-auto">
+          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center mx-auto">
             <Clock className="w-5 h-5" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">

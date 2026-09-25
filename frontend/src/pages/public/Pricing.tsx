@@ -67,7 +67,7 @@ export const Pricing: React.FC = () => {
         <ul className="mt-6 grid gap-x-8 gap-y-4 text-[15px] leading-relaxed md:grid-cols-2">
           {INCLUDED.map(item => (
             <li key={item} className="flex gap-3">
-              <span aria-hidden="true" className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--primary-light)] text-[var(--primary)]">
+              <span aria-hidden="true" className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--primary-light)] text-[var(--primary-text)]">
                 <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
               </span>
               <span className="text-[var(--text)]/75">{item}</span>

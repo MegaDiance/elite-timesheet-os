@@ -95,7 +95,7 @@ export default function ResetPassword() {
       <div className="w-full max-w-md space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center mx-auto">
+          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center mx-auto">
             <Clock className="w-5 h-5" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
@@ -109,7 +109,7 @@ export default function ResetPassword() {
         <Card className="p-6 sm:p-8 space-y-5">
           {checkingToken ? (
             <div className="text-center py-10 space-y-3">
-              <Clock className="w-6 h-6 animate-spin text-[var(--primary)] mx-auto" />
+              <Clock className="w-6 h-6 animate-spin text-[var(--primary-text)] mx-auto" />
               <p className="text-xs font-medium text-[var(--muted)]">Checking your reset link…</p>
             </div>
           ) : doneWithoutPortal ? (
@@ -165,7 +165,7 @@ export default function ResetPassword() {
                   <button 
                     type="button" 
                     onClick={() => setShowPassword(!showPassword)}
-                    className="text-xs text-[var(--primary)] hover:underline focus:outline-none"
+                    className="text-xs text-[var(--primary-text)] hover:underline"
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>

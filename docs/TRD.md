@@ -96,14 +96,35 @@ Railway PostgreSQL (private network *.railway.internal, TLS off internally)
 |---|---|---|
 | Passwords | bcryptjs, cost 10 | `services/auth.ts` |
 | Password policy | ≥ 8 chars, letters + digits (reset, employee invite claim); location invite accept ≥ 8 only; **no strength check** on org claim-invite admin password | `routes/auth.ts`, `routes/platform.ts`, `routes/locations.ts` |
-| Tenant login | `POST /api/auth/login {email, password, organisation_slug}` — the slug (the organisation's random `portal_slug`) is required; there is no sign-in by `organisation_id` and no organisation picker. Access is then resolved server-side (`resolveAccess`). Password-reset tokens carry the issuing `org_id` so a completed reset returns to that portal. | `routes/auth.ts` |
-| Generic login | Same endpoint without org → uses legacy `users.org_id`; frontend then shows an organisation picker and calls `switch-organisation` | `routes/auth.ts`, `pages/Login.tsx` |
+| Tenant login | `POST /api/auth/login {email, password, organisation_slug}` — `organisation_slug` is the organisation's private sign-in link token (see §4.1a). It must resolve to a valid, unexpired link of an active organisation; there is no sign-in by `organisation_id` and no organisation picker. Access is then resolved server-side (`resolveAccess`). Every failure is the same 401. Password-reset tokens carry the issuing `org_id` so a completed reset returns to that organisation's link. | `routes/auth.ts`, `services/portalLink.ts` |
 | Platform login | `POST /api/auth/platform-login`; requires `users.role = 'Platform Admin'`; UI hidden at `/platform-gate` | `routes/auth.ts` |
 | 2FA | Optional per user; 6-digit email code, SHA-256 hashed, 10-min expiry, 5 attempts; intermediate JWT with `scope: '2fa_pending'` (10 min) rejected by `requireAuth` | `routes/auth.ts` |
 | Suspicious login | Risk check (unrecognised location **and** device after ≥ 2 prior logins) → emailed verification link/code; `x-test-simulate-suspicious` header forces it only when `NODE_ENV=test`; private/loopback IPs resolve to a hard-coded "Melbourne" location | `services/securityService.ts` |
 | Password reset | SHA-256 token, 1 h expiry, single use, enumeration-safe response; resets revoke sessions | `routes/auth.ts` |
 | Rate limiting | In-memory Map, 5 failures / 15 min per email or IP: login, verify-login, platform-login, reset-password; not forgot-password or invitation claim | `routes/auth.ts` |
 | JWT | HS256 `JWT_SECRET`; claims `id, email, organisation_id, location_id, role, session_id`; 24 h; production refuses a missing/default secret | `services/auth.ts` |
+
+### 4.1a Private sign-in link and page routing [CURRENT 2026-09-25]
+
+`/login` is intentionally **not** a public authentication entry point. People sign in only through their organisation's private link, `/login/<token>`.
+
+| Aspect | Behaviour | Source |
+|---|---|---|
+| Token | 128 random bits (`crypto.randomBytes(16)`, 32 hex chars). Grants nothing by itself: a password is still required and access is still resolved per user. | `services/portalLink.ts` |
+| Storage | Looked up only by SHA-256 hash (`organisations.portal_slug_hash`, unique). A copy is kept AES-256-GCM encrypted (`portal_slug_enc`, key derived with HKDF from `PORTAL_LINK_KEY`, else `JWT_SECRET`) so the Owner can see it again and invite/reset completions can point to it. No plain token is written. Legacy plain values (`portal_slug`, from before migration 706) still work through the backfilled hash and are moved to the encrypted column and cleared on first use. Rotating the key makes the encrypted copy unreadable; the link keeps working but the Owner must regenerate it to see it again. | `migrations/…706_private_link_hardening.js` |
+| Expiry | Optional, chosen by the Owner (`PUT /api/organisation/portal-link {expires_at}`, or on regenerate). NULL = never expires. Must be in the future, at most 5 years ahead. | `routes/organisation.ts` |
+| Revocation | `POST /api/organisation/regenerate-portal-url` replaces the token; the old one stops working at once. Deactivating the organisation disables it too. Both Owner-only (`security.manage`) and audited. | `routes/organisation.ts` |
+| Validation | Tokens outside `[a-z0-9-]{8,128}` are rejected before any query. Unknown, malformed, revoked, other-organisation and inactive-organisation tokens are one indistinguishable "invalid". Expired is reported separately so people know to ask for the new link. | `resolvePortalToken()` |
+| Page responses | The server decides which browser paths exist (`services/pageRoutes.ts`, kept in step with `App.tsx` by a test). Real pages → 200. `/login`, unknown paths and invalid `/login/<token>` → **404**; expired → **410**. Sign-in pages are `Cache-Control: no-store` and `X-Robots-Tag: noindex`. Invalid page loads count towards the same per-IP limit as the lookup API; once limited, even a valid link answers 404 without a lookup. | `index.ts`, `pageRoutes.ts` |
+| Lookup API | `GET /api/organisation/lookup/:slug` returns only `{name}` for a valid link; 404 `LINK_INVALID` / 410 `LINK_EXPIRED` otherwise; failures are rate-limited per IP. | `routes/organisation.ts` |
+| Exposure | The link is shown only to the Owner (`/organisation/me`, dashboard). `/auth/me` and `/auth/organisations` never contain it. The sign-in and organisation-switch responses include `portal_path` so the browser can return there after sign-out or a timeout. | `routes/auth.ts` |
+| Frontend | `OrgLogin` shows the form only after the server has confirmed the link; invalid, expired, rate-limited or unreachable lookups show a message (with "Try again" for the last two), never a form. `NotFound` mentions nothing about signing in. | `pages/auth/OrgLogin.tsx`, `pages/public/NotFound.tsx` |
+
+Tests: `backend/tests/security/private_login.test.ts`.
+
+### 4.1b Timesheet write serialisation [CURRENT 2026-09-25]
+
+Saving a day, approving, reopening and "copy roster to worked hours" take a transaction-scoped advisory lock per worker and pay period (`lockWorkerPeriod`), and lock/unlock of a branch period takes an exclusive lock on the period (`lockBranchPeriod`). The approval and lock state are then re-read inside the same transaction, so a save can never land after an approval or a lock that committed a moment earlier. Source: `services/periodLocks.ts`.
 
 ### 4.2 Defects [CURRENT]
 

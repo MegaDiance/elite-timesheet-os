@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, ChevronDown, Coffee, Copy, Eraser, Lock, MessageSquarePlus, Repeat } from 'lucide-react';
+import { AlertCircle, ChevronDown, Coffee, Copy, Eraser, Info, Lock, MessageSquarePlus, Repeat } from 'lucide-react';
 import api from '../../services/apiClient';
 import ApplyBreakDialog from './ApplyBreakDialog';
 import CopyDayPanel from './CopyDayPanel';
@@ -7,9 +7,11 @@ import { PART_STYLE, PartLines } from './DayBox';
 import { Dialog, buttonClass } from './Dialog';
 import TimeLines from './TimeLines';
 import { apiErrorMessage } from './api';
+import { HelpTip } from '../ui/HelpTip';
+import { tourSignal } from '../tour/tourSignals';
 import { dayLabel, todayIso } from './dates';
 import {
-  PART_HINT, PART_LABEL, breakRuleFor, checkLines, describeBreakRule, formatHours, lineToEntry, linesFor,
+  PART_HINT, PART_LABEL, breakRuleFor, checkLines, describeBreakRule, describeLeaveMerge, formatHours, lineToEntry, linesFor,
   linesToEntries, partKey, partTotal as savedTotal, previewDayHours, readSavedDay,
   type BreakSettings, type DayRecord, type DraftLine, type Entry, type Part, type Scope,
 } from './day';
@@ -77,8 +79,15 @@ export default function DayEditor({
   const [applyBreakMode, setApplyBreakMode] = useState<'some' | 'all' | null>(null);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const noteWasOpen = useRef(noteOpen);
+
+  // Tell a running walkthrough what the person is doing (no effect otherwise).
+  useEffect(() => {
+    tourSignal('day-editor-opened');
+    return () => tourSignal('day-editor-closed');
+  }, []);
 
   useEffect(() => {
     if (noteOpen && !noteWasOpen.current) noteRef.current?.focus();
@@ -100,6 +109,16 @@ export default function DayEditor({
       : workedChanged ? 'TIMESHEET'
         // A note on its own is saved with the unchanged roster (or, if that is locked, the unchanged timesheet).
         : noteChanged ? (rosterReadOnly ? 'TIMESHEET' : 'ROSTER') : null;
+
+  const allEntries = [...rosterEntries, ...workedEntries];
+  const hasTimedWork = allEntries.some(e => e.type === 'WORK' && e.start && e.finish);
+  const hasLeave = allEntries.some(e => e.type !== 'WORK');
+  useEffect(() => { if (hasTimedWork) tourSignal('shift-times-entered'); }, [hasTimedWork]);
+  useEffect(() => { if (hasLeave) tourSignal('leave-line-added'); }, [hasLeave]);
+
+  // Leave inside a shift, with merging on: say exactly how the shift will be saved.
+  const rosterMerge = mergeLeave && rosterChanged ? describeLeaveMerge(rosterEntries) : null;
+  const workedMerge = mergeLeave && workedChanged && !fresh ? describeLeaveMerge(workedEntries) : null;
 
   const rosterCheck = checkLines(rosterLines, mergeLeave);
   const workedCheck = checkLines(workedLines, mergeLeave);
@@ -158,6 +177,14 @@ export default function DayEditor({
     }
   };
 
+  const dirty = scope !== null;
+  /** Closing with unsaved changes asks once, in the footer — nothing is thrown away silently. */
+  const requestClose = () => {
+    if (saving) return;
+    if (dirty && !confirmDiscard) { setConfirmDiscard(true); return; }
+    onClose();
+  };
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (blockReason || saving) return;
@@ -167,6 +194,7 @@ export default function DayEditor({
   const changeLines = (part: Part) => (lines: DraftLine[]) => {
     (part === 'roster' ? setRosterLines : setWorkedLines)(lines);
     setServerError(null);
+    setConfirmDiscard(false);
   };
 
   const workedAsRostered = () => {
@@ -203,6 +231,13 @@ export default function DayEditor({
     if (part === 'timesheet' && timesheetLocked) return `Timesheets for ${branch} are locked for this pay period.`;
     return null;
   };
+
+  const mergeNotice = (text: string | null) => text && (
+    <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--text)] bg-[var(--primary-light)] rounded-lg px-3 py-2" role="status">
+      <Info className="w-3.5 h-3.5 shrink-0 mt-px text-[var(--primary-text)]" aria-hidden="true" />
+      <span><strong className="font-semibold">Leave splits the shift.</strong> {text} Your organisation merges leave with the roster (Settings → Workforce).</span>
+    </p>
+  );
 
   const renderPart = (part: Part) => {
     const readOnly = part === 'roster' ? rosterReadOnly : workedReadOnly;
@@ -266,6 +301,7 @@ export default function DayEditor({
             autoFocus={focusPart === part}
           />
         )}
+        {mergeNotice(part === 'roster' ? rosterMerge : workedMerge)}
       </section>
     );
   };
@@ -318,6 +354,7 @@ export default function DayEditor({
             issues={rosterCheck.issues}
             autoFocus={focusPart === 'fresh'}
           />
+          {mergeNotice(rosterMerge)}
         </section>
       </>
     );
@@ -327,7 +364,7 @@ export default function DayEditor({
     <Dialog
       title={`${worker.full_name} — ${dayLabel(dateIso, 'long')}`}
       description={`${worker.location_name ? `${worker.location_name} · ` : ''}${describeBreakRule(rule)}`}
-      onClose={onClose}
+      onClose={requestClose}
       closeDisabled={saving}
       size="lg"
       sheet
@@ -340,16 +377,26 @@ export default function DayEditor({
               {serverError}
             </p>
           )}
+          {confirmDiscard && (
+            <div role="alert" className="flex flex-wrap items-center justify-between gap-2 text-sm bg-[var(--warn-light)] border border-[var(--warn)]/30 rounded-lg px-3 py-2">
+              <span className="font-semibold text-[var(--text)]">You have changes that aren’t saved.</span>
+              <span className="flex gap-2">
+                <button type="button" onClick={() => setConfirmDiscard(false)} className={`${buttonClass.secondary} max-md:h-11`}>Keep editing</button>
+                <button type="button" onClick={onClose} className={`${buttonClass.danger} max-md:h-11`}>Discard changes</button>
+              </span>
+            </div>
+          )}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
             <p id={`${id}-reason`} aria-live="polite" className={`text-xs ${problem ? 'text-[var(--danger)] font-semibold' : 'text-[var(--muted)]'}`}>
               {blockReason ?? saveHint}
             </p>
             <div className="flex justify-end gap-2 shrink-0">
-              <button type="button" onClick={onClose} disabled={saving} className={`${buttonClass.secondary} max-md:flex-1 max-md:h-11`}>
+              <button type="button" onClick={requestClose} disabled={saving} className={`${buttonClass.secondary} max-md:flex-1 max-md:h-11`}>
                 {scope ? 'Cancel' : 'Close'}
               </button>
               <button
                 type="submit"
+                data-tour="save-day"
                 disabled={Boolean(blockReason) || saving}
                 aria-describedby={`${id}-reason`}
                 className={`${buttonClass.primary} max-md:flex-1 max-md:h-11`}
@@ -431,15 +478,24 @@ export default function DayEditor({
           )}
         </div>
 
-        {/* Apply the unpaid break rule across the fortnight for this worker */}
-        <div className="flex flex-wrap gap-1">
-          <button type="button" onClick={() => setApplyBreakMode('some')} className={`${buttonClass.quiet} max-md:h-11 -ml-2.5`} title="Choose which days of this fortnight have a break">
-            <Coffee className="w-3.5 h-3.5" aria-hidden="true" /> Apply Break…
-          </button>
-          <button type="button" onClick={() => setApplyBreakMode('all')} className={`${buttonClass.quiet} max-md:h-11`} title="Give every day a break, then untick exceptions">
-            <Coffee className="w-3.5 h-3.5" aria-hidden="true" /> Apply Break to All Days…
-          </button>
-        </div>
+        {/* Breaks: this day's break is on each work line above; these set it across the fortnight */}
+        <section data-tour="break-controls" aria-labelledby={`${id}-breaks`} className="rounded-xl border border-[var(--border)] p-3 space-y-2">
+          <h3 id={`${id}-breaks`} className="text-sm font-bold text-[var(--text)] flex items-center gap-1">
+            <Coffee className="w-4 h-4 text-[var(--muted)]" aria-hidden="true" /> Breaks
+            <HelpTip label="Breaks">
+              {describeBreakRule(rule)} “Standard” on a work line follows this rule; pick a length to set a fixed break for that shift, or “No break”. The break only ever comes off work, never leave.
+            </HelpTip>
+          </h3>
+          <p className="text-xs text-[var(--muted)]">This day’s break is set on each work line above. To set the same break on several days of {worker.full_name}’s fortnight:</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setApplyBreakMode('all')} disabled={approved} className={`${buttonClass.secondary} max-md:h-11`} title="Every day is ticked; untick the days that are different">
+              Apply break to all days…
+            </button>
+            <button type="button" onClick={() => setApplyBreakMode('some')} disabled={approved} className={`${buttonClass.quiet} max-md:h-11`} title="Choose which days of this fortnight get the break">
+              Choose days…
+            </button>
+          </div>
+        </section>
       </div>
 
       {applyBreakMode && (

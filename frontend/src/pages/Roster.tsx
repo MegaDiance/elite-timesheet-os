@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Mouse
 import { Link } from 'react-router-dom';
 import {
   CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Lock, LockOpen,
-  MousePointerClick, Plus, Printer, RotateCcw, Wand2,
+  MousePointerClick, Plus, Printer, RotateCcw, Search, Wand2, X,
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
@@ -26,10 +26,11 @@ import {
 import {
   DEFAULT_BREAK_SETTINGS, dayIsEmpty, formatHours, partTotal, readDay, type BreakSettings, type DayRecord,
 } from '../components/roster/day';
+import { TimesheetStatusBadge, TimesheetStatusHelp } from '../components/TimesheetStatus';
+import { HelpTip } from '../components/ui/HelpTip';
 
 const cellKey = (workerId: string, dateIso: string) => `${workerId}|${dateIso}`;
 const EMPTY_DAY: DayContent = { roster: [], timesheet: [], note: null };
-const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'> = { Draft: 'outline', Approved: 'success', Locked: 'warning' };
 const DAY_WIDTH = 116;
 const NAME_WIDTH = 184;
 const TOTAL_WIDTH = 128;
@@ -89,6 +90,9 @@ export default function Roster() {
   const [busy, setBusy] = useState<string | null>(null);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [mobileDayChoice, setMobileDay] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  /** The day just saved, highlighted for a moment so it's clear what changed. */
+  const [justSaved, setJustSaved] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const loadSeq = useRef(0);
 
@@ -174,9 +178,15 @@ export default function Roster() {
     return map;
   }, [records]);
 
+  const searchText = search.trim().toLowerCase();
+  const shownWorkers = useMemo(
+    () => (searchText ? workers.filter(w => `${w.full_name} ${w.department ?? ''}`.toLowerCase().includes(searchText)) : workers),
+    [workers, searchText],
+  );
+
   const groups = useMemo(() => {
     const multiBranch = new Set(workers.map(w => w.location_id)).size > 1;
-    const sorted = [...workers].sort((a, b) =>
+    const sorted = [...shownWorkers].sort((a, b) =>
       (multiBranch ? (a.location_name ?? '').localeCompare(b.location_name ?? '') : 0)
       || (a.department ?? '').localeCompare(b.department ?? '')
       || a.full_name.localeCompare(b.full_name));
@@ -187,7 +197,8 @@ export default function Roster() {
       else list.push({ branchId: w.location_id, workers: [w] });
     }
     return { multiBranch, list };
-  }, [workers]);
+  }, [workers, shownWorkers]);
+  const firstWorkerId = groups.list[0]?.workers[0]?.id;
 
   const selectedBranchLock = branchId ? lockByBranch.get(branchId) : undefined;
   const approvable = timesheets.filter(t => t.status === 'Draft' && !t.timesheet_locked);
@@ -393,6 +404,14 @@ export default function Roster() {
   };
 
   const onSaved = (workerId: string, dateIso: string, saved: DayContent) => {
+    const key = cellKey(workerId, dateIso);
+    setJustSaved(key);
+    window.setTimeout(() => setJustSaved(k => (k === key ? null : k)), 4000);
+    const parts = [
+      saved.roster.length ? `rostered ${formatHours(partTotal(saved.roster))}` : null,
+      saved.timesheet.length ? `worked ${formatHours(partTotal(saved.timesheet))}` : null,
+    ].filter(Boolean).join(', ');
+    toast.success(`Saved ${nameOf(workerId)}’s ${dayLabel(dateIso)}${parts ? `: ${parts}` : ' (now empty)'}.`);
     setRecords(rs => {
       const index = rs.findIndex(r => r.employee_id === workerId && r.record_date === dateIso);
       if (index >= 0) return rs.map((r, i) => (i === index ? { ...r, ...saved } : r));
@@ -453,15 +472,7 @@ export default function Roster() {
     const small = `text-[11px] font-semibold rounded-md border px-2 ${large ? 'h-11' : 'py-0.5'} disabled:opacity-50 cursor-pointer`;
     return (
       <span className={`flex items-center gap-1.5 ${large ? 'shrink-0' : 'flex-wrap'}`}>
-        <Badge
-          variant={STATUS_VARIANT[status]}
-          size="sm"
-          title={status === 'Locked' ? 'Approved, and timesheets are locked for this branch' : ts?.timesheet_locked ? 'Timesheets are locked for this branch' : undefined}
-        >
-          {status === 'Approved' && <Check className="w-2.5 h-2.5" aria-hidden="true" />}
-          {status === 'Locked' && <Lock className="w-2.5 h-2.5" aria-hidden="true" />}
-          {status}
-        </Badge>
+        <TimesheetStatusBadge status={status} />
         {canTimesheets && ts && status === 'Draft' && !ts.timesheet_locked && (
           <button
             type="button"
@@ -548,8 +559,8 @@ export default function Roster() {
               const heading = (
                 <span className="flex flex-col items-center leading-tight">
                   <span className="text-[10px] font-bold uppercase">{weekdayShort(iso)}</span>
-                  <span className={`text-sm font-bold ${isToday ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>{dayOfMonth(iso)}</span>
-                  {isToday && <span className="text-[9px] font-semibold text-[var(--primary)]">Today</span>}
+                  <span className={`text-sm font-bold ${isToday ? 'text-[var(--primary-text)]' : 'text-[var(--text)]'}`}>{dayOfMonth(iso)}</span>
+                  {isToday && <span className="text-[9px] font-semibold text-[var(--primary-text)]">Today</span>}
                 </span>
               );
               return (
@@ -606,22 +617,25 @@ export default function Roster() {
                       const empty = dayIsEmpty(day);
                       const isSelected = selected.has(cellKey(w.id, iso));
                       const holidayName = holidays.get(iso);
+                      const saved = justSaved === cellKey(w.id, iso);
                       return (
                         <td key={iso} className={`border-b border-r border-[var(--border)] p-1 align-top ${i === 7 ? 'border-l-2 border-l-[var(--divider-split)]' : ''} ${holidayName ? PUBLIC_HOLIDAY_CLASS : isWeekendIso(iso) ? WEEKEND_CLASS : ''}`}>
                           <button
                             type="button"
                             onClick={e => openDay(e, w.id, iso)}
+                            data-tour={w.id === firstWorkerId && i === 0 ? 'roster-cell' : undefined}
                             aria-pressed={selectMode ? isSelected : undefined}
                             aria-label={holidayName ? `${cellLabel(w, iso, day)}; public holiday: ${holidayName}` : cellLabel(w, iso, day)}
                             title={empty ? undefined : describeDay(day)}
                             className={`group relative w-full min-h-[3.25rem] rounded-lg p-1.5 text-left cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--primary)] ${
                               empty ? 'border border-dashed border-transparent hover:border-[var(--border-hover)]' : 'border border-[var(--border)] bg-[var(--panel-subtle)] hover:border-[var(--border-hover)]'
-                            } ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''}`}
+                            } ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''} ${saved ? 'ring-2 ring-[var(--success)]' : ''}`}
                           >
                             {holidayName && <PublicHolidayBadge name={holidayName} />}
                             {empty
-                              ? <Plus className="w-4 h-4 mx-auto mt-2.5 text-[var(--muted)] opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70" aria-hidden="true" />
+                              ? <Plus className="w-4 h-4 mx-auto mt-2.5 text-[var(--muted)] opacity-30 group-hover:opacity-80 group-focus-visible:opacity-80" aria-hidden="true" />
                               : <DayLines day={day} variant="compact" />}
+                            {saved && <span className="absolute -top-2 left-1 px-1 rounded bg-[var(--success)] text-white text-[9px] font-bold">Saved</span>}
                             {isSelected && selectedMark}
                           </button>
                         </td>
@@ -661,7 +675,7 @@ export default function Roster() {
                   }`}
                 >
                   <span className={`text-[10px] font-semibold uppercase ${active ? '' : 'text-[var(--muted)]'}`}>{weekdayShort(iso)}</span>
-                  <span className={`text-sm font-bold ${!active && iso === today ? 'text-[var(--primary)] underline underline-offset-2' : ''}`}>{dayOfMonth(iso)}</span>
+                  <span className={`text-sm font-bold ${!active && iso === today ? 'text-[var(--primary-text)] underline underline-offset-2' : ''}`}>{dayOfMonth(iso)}</span>
                 </button>
               );
             })}
@@ -699,11 +713,14 @@ export default function Roster() {
                   <button
                     type="button"
                     onClick={e => openDay(e, w.id, mobileDay)}
+                    data-tour={w.id === firstWorkerId ? 'roster-cell' : undefined}
                     aria-pressed={selectMode ? isSelected : undefined}
                     aria-label={cellLabel(w, mobileDay, day)}
-                    className={`relative w-full min-h-11 rounded-lg border p-3 text-left cursor-pointer bg-[var(--panel-subtle)] border-[var(--border)] focus-visible:outline-2 focus-visible:outline-[var(--primary)] ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''}`}
+                    className={`relative w-full min-h-11 rounded-lg border p-3 text-left cursor-pointer bg-[var(--panel-subtle)] border-[var(--border)] focus-visible:outline-2 focus-visible:outline-[var(--primary)] ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''} ${justSaved === cellKey(w.id, mobileDay) ? 'ring-2 ring-[var(--success)]' : ''}`}
                   >
-                    <DayLines day={day} variant="regular" />
+                    {dayIsEmpty(day)
+                      ? <span className="flex items-center gap-2 text-sm text-[var(--muted)]"><Plus className="w-4 h-4" aria-hidden="true" /> Add a shift or leave</span>
+                      : <DayLines day={day} variant="regular" />}
                     {isSelected && selectedMark}
                   </button>
                 </li>
@@ -727,13 +744,20 @@ export default function Roster() {
     );
   } else if (loading && workers.length === 0) {
     content = <p className="p-10 text-center text-sm text-[var(--muted)] rounded-xl border border-[var(--border)] bg-[var(--panel)]">Loading the roster…</p>;
+  } else if (workers.length > 0 && shownWorkers.length === 0) {
+    content = (
+      <div className="p-10 text-center space-y-3 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+        <p className="text-sm font-semibold text-[var(--text)]">No worker matches “{search.trim()}”.</p>
+        <p className="text-sm text-[var(--muted)]">Check the spelling, or look in another branch.</p>
+        <button type="button" onClick={() => setSearch('')} className={buttonClass.secondary}>Show all workers</button>
+      </div>
+    );
   } else if (workers.length === 0) {
     content = (
       <div className="p-10 text-center space-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
         <p className="text-sm font-semibold text-[var(--text)]">No workers in {filterName ?? 'your branches'} yet.</p>
-        <p className="text-xs text-[var(--muted)]">
-          Add workers on the <Link to="/workers" className="text-[var(--primary)] font-semibold hover:underline">Workers</Link> page to start rostering.
-        </p>
+        <p className="text-sm text-[var(--muted)]">The roster has one row per worker. Add your first worker, then come back to give them shifts.</p>
+        <Link to="/workers" className={`${buttonClass.primary} inline-flex`}>Add a worker</Link>
       </div>
     );
   } else {
@@ -741,54 +765,71 @@ export default function Roster() {
   }
 
   const busyText = busy ?? (loading && workers.length > 0 ? 'Refreshing…' : null);
+  const toolGroup = (label: string, children: ReactNode) => (
+    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] font-semibold text-[var(--muted)] mr-0.5">{label}</span>
+      {children}
+    </div>
+  );
   const tools = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        onClick={() => setFillMode('roster')}
-        disabled={Boolean(busy) || Boolean(selectedBranchLock?.roster_locked)}
-        className={tool}
-        title={selectedBranchLock?.roster_locked ? `The roster is locked for ${filterName}` : `Give ${scopeText} their default roster on days you choose`}
-      >
-        <Wand2 className="w-3.5 h-3.5" aria-hidden="true" /> Apply default rosters…
-      </button>
-      {canTimesheets && (
-        <button
-          type="button"
-          onClick={() => setFillMode('log')}
-          disabled={Boolean(busy) || Boolean(selectedBranchLock?.timesheet_locked)}
-          className={tool}
-          title={selectedBranchLock?.timesheet_locked ? `Timesheets are locked for ${filterName}` : `Record rostered times as worked for ${scopeText} on days you choose`}
-        >
-          <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" /> Copy roster to worked hours…
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-        aria-pressed={selectMode}
-        className={`${tool} ${selectMode ? '!bg-[var(--primary-light)] !text-[var(--primary)] !border-[var(--primary)]/40' : ''}`}
-        title="Select days to copy the roster from the day before (tip: shift-click a day)"
-      >
-        <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Select days
-      </button>
-
-      <span className="hidden md:block w-px h-6 bg-[var(--border)] mx-1" aria-hidden="true" />
-
-      {canTimesheets && (
-        <button
-          type="button"
-          onClick={() => setApproveAllOpen(true)}
-          disabled={Boolean(busy) || approvable.length === 0}
-          className={tool}
-          title={approvable.length === 0 ? 'No draft timesheets to approve' : 'Approve every draft timesheet shown'}
-        >
-          <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all waiting ({approvable.length})
-        </button>
-      )}
-      {canLock && lockButton('roster')}
-      {canLock && lockButton('timesheet')}
-      {canReports && (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      {toolGroup('Fill the fortnight', (
+        <>
+          <button
+            type="button"
+            onClick={() => setFillMode('roster')}
+            disabled={Boolean(busy) || Boolean(selectedBranchLock?.roster_locked)}
+            className={tool}
+            title={selectedBranchLock?.roster_locked ? `The roster is locked for ${filterName}` : `Give ${scopeText} their default roster on days you choose`}
+          >
+            <Wand2 className="w-3.5 h-3.5" aria-hidden="true" /> Apply default rosters…
+          </button>
+          {canTimesheets && (
+            <button
+              type="button"
+              onClick={() => setFillMode('log')}
+              disabled={Boolean(busy) || Boolean(selectedBranchLock?.timesheet_locked)}
+              className={tool}
+              title={selectedBranchLock?.timesheet_locked ? `Timesheets are locked for ${filterName}` : `Record rostered times as worked for ${scopeText} on days you choose`}
+            >
+              <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" /> Copy roster to worked hours…
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            aria-pressed={selectMode}
+            className={`${tool} ${selectMode ? '!bg-[var(--primary-light)] !text-[var(--primary-text)] !border-[var(--primary)]/40' : ''}`}
+            title="Select days to copy the roster from the day before (tip: shift-click a day)"
+          >
+            <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Copy days…
+          </button>
+        </>
+      ))}
+      {canTimesheets && toolGroup('Approve', (
+        <>
+          <button
+            type="button"
+            onClick={() => setApproveAllOpen(true)}
+            disabled={Boolean(busy) || approvable.length === 0}
+            className={tool}
+            title={approvable.length === 0 ? 'No draft timesheets to approve' : 'Approve every draft timesheet shown'}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all waiting ({approvable.length})
+          </button>
+          <TimesheetStatusHelp />
+        </>
+      ))}
+      {canLock && toolGroup('Lock', (
+        <>
+          {lockButton('roster')}
+          {lockButton('timesheet')}
+          <HelpTip label="Lock">
+            A lock stops changes for this branch and pay period. A roster lock still lets you record worked hours; a timesheet lock stops every timesheet change. Unlocking needs a password.
+          </HelpTip>
+        </>
+      ))}
+      {canReports && toolGroup('Export', (
         <>
           <button type="button" onClick={exportCsv} className={tool} title="Download the payroll CSV for this pay period and branch filter">
             <Download className="w-3.5 h-3.5" aria-hidden="true" /> CSV
@@ -797,8 +838,15 @@ export default function Roster() {
             <Printer className="w-3.5 h-3.5" aria-hidden="true" /> PDF
           </button>
         </>
-      )}
+      ))}
     </div>
+  );
+
+  const stepLabel = (n: number, text: string, htmlFor?: string) => (
+    <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--muted)] mb-1">
+      <span className="w-4 h-4 rounded-full bg-[var(--primary-light)] text-[var(--primary-text)] text-[10px] font-bold flex items-center justify-center" aria-hidden="true">{n}</span>
+      {text}
+    </label>
   );
 
   const editingWorker = editing ? workerById.get(editing.workerId) : undefined;
@@ -807,67 +855,100 @@ export default function Roster() {
 
   return (
     <div className={`flex flex-col gap-2 w-full ${narrow ? '' : 'h-[calc(100dvh-3.5rem)] min-h-[30rem]'}`}>
-      {/* Header: filter, pay period and tools */}
+      {/* Header: the three things to choose, then what to do */}
       <header className="shrink-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-[var(--text)] leading-tight">Roster</h1>
-            <p className="mt-1"><PlannedWorkedKey /></p>
+            <p className="text-xs text-[var(--muted)] mt-0.5">Plan shifts and record the hours people worked.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="roster-branch" className="sr-only">Branch</label>
-            <select
-              id="roster-branch"
-              value={branchId}
-              onChange={e => changeBranch(e.target.value)}
-              className="h-9 max-md:h-11 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-2.5 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
-            >
-              <option value="">All my branches</option>
-              {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
-            </select>
+          <div className="flex flex-wrap items-end gap-3" data-tour="roster-controls">
+            <div>
+              {stepLabel(1, 'Branch', 'roster-branch')}
+              <select
+                id="roster-branch"
+                value={branchId}
+                onChange={e => changeBranch(e.target.value)}
+                className="h-9 max-md:h-11 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-2.5 text-sm font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
+              >
+                <option value="">All my branches</option>
+                {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
+              </select>
+            </div>
 
-            <div className="flex items-center gap-0.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5">
-              <button type="button" onClick={() => changePeriod(shiftIso(startIso, -14))} className={`${buttonClass.quiet} max-md:h-10 max-md:w-10`} aria-label="Previous pay period">
-                <ChevronLeft className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <div className="relative">
-                <button type="button" onClick={openDatePicker} className={`${buttonClass.quiet} max-md:h-10 !text-[var(--text)] font-semibold whitespace-nowrap`} aria-label={`Pay period ${periodLabel(startIso)}. Choose a date to jump to its pay period`}>
-                  <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" />
-                  {periodLabel(startIso)}
+            <div>
+              {stepLabel(2, 'Pay period')}
+              <div className="flex items-center gap-0.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg p-0.5">
+                <button type="button" onClick={() => changePeriod(shiftIso(startIso, -14))} className={`${buttonClass.quiet} max-md:h-10 max-md:w-10`} aria-label="Previous pay period">
+                  <ChevronLeft className="w-4 h-4" aria-hidden="true" />
                 </button>
-                <input
-                  ref={dateInputRef}
-                  type="date"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  value={startIso}
-                  onChange={e => { if (e.target.value) changePeriod(getFortnightStartIso(e.target.value)); }}
-                  className="absolute inset-0 opacity-0 pointer-events-none"
-                />
+                <div className="relative">
+                  <button type="button" onClick={openDatePicker} className={`${buttonClass.quiet} max-md:h-10 !text-[var(--text)] font-semibold whitespace-nowrap`} aria-label={`Pay period ${periodLabel(startIso)}. Choose a date to jump to its pay period`}>
+                    <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" />
+                    {periodLabel(startIso)}
+                  </button>
+                  <input
+                    ref={dateInputRef}
+                    type="date"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    value={startIso}
+                    onChange={e => { if (e.target.value) changePeriod(getFortnightStartIso(e.target.value)); }}
+                    className="absolute inset-0 opacity-0 pointer-events-none"
+                  />
+                </div>
+                <button type="button" onClick={() => changePeriod(shiftIso(startIso, 14))} className={`${buttonClass.quiet} max-md:h-10 max-md:w-10`} aria-label="Next pay period">
+                  <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => changePeriod(currentFortnightIso())} className={`${buttonClass.quiet} max-md:h-10`}>Today</button>
               </div>
-              <button type="button" onClick={() => changePeriod(shiftIso(startIso, 14))} className={`${buttonClass.quiet} max-md:h-10 max-md:w-10`} aria-label="Next pay period">
-                <ChevronRight className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <button type="button" onClick={() => changePeriod(currentFortnightIso())} className={`${buttonClass.quiet} max-md:h-10`}>Today</button>
+            </div>
+
+            <div>
+              {stepLabel(3, 'Find a worker', 'roster-search')}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
+                <input
+                  id="roster-search"
+                  type="search"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Name or department"
+                  className="h-9 max-md:h-11 w-52 max-md:w-full pl-8 pr-8 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] placeholder:text-[var(--muted)] outline-none focus:border-[var(--primary)]"
+                />
+                {search && (
+                  <button type="button" onClick={() => setSearch('')} className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded text-[var(--muted)] hover:text-[var(--text)]" aria-label="Clear search">
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--panel-subtle)] px-3 py-2">
+          <p className="text-sm text-[var(--text)]">
+            <strong className="font-semibold">Click a day</strong> to add or change a shift, leave or a break.
+            <span className="text-[var(--muted)] hidden lg:inline"> Shift-click to select several days.</span>
+          </p>
+          <PlannedWorkedKey />
+        </div>
+
         {narrow ? (
           <details className="group rounded-lg border border-[var(--border)] bg-[var(--panel-subtle)]">
-            <summary className="min-h-11 px-3 flex items-center justify-between gap-2 text-xs font-semibold text-[var(--text)] cursor-pointer list-none">
-              Tools, approval and exports
+            <summary className="min-h-11 px-3 flex items-center justify-between gap-2 text-sm font-semibold text-[var(--text)] cursor-pointer list-none">
+              Fill, approve, lock and export
               <ChevronDown className="w-4 h-4 text-[var(--muted)] transition-transform group-open:rotate-180" aria-hidden="true" />
             </summary>
             <div className="p-2 pt-0">{tools}</div>
           </details>
         ) : tools}
-        <p role="status" className="text-xs font-semibold text-[var(--primary)] empty:hidden">{busyText}</p>
+        <p role="status" className="text-xs font-semibold text-[var(--primary-text)] empty:hidden">{busyText}</p>
       </header>
 
       {selectMode && (
         <div role="region" aria-label="Selected days" className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl bg-[var(--primary-light)] border border-[var(--primary)]/30 text-xs">
-          <MousePointerClick className="w-4 h-4 text-[var(--primary)]" aria-hidden="true" />
+          <MousePointerClick className="w-4 h-4 text-[var(--primary-text)]" aria-hidden="true" />
           <span className="font-semibold text-[var(--text)]" aria-live="polite">{selectedCells.length} day{selectedCells.length === 1 ? '' : 's'} selected</span>
           <span className="text-[var(--muted)] hidden lg:inline">Select days, or a date heading to select that day for everyone.</span>
           <span className="flex-1" />

@@ -30,9 +30,9 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addToast = useCallback((type: ToastType, message: string) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, message }]);
-    setTimeout(() => {
-      removeToast(id);
-    }, 4000);
+    // Long enough to read: longer messages stay longer, and problems stay longest.
+    const readingTime = Math.min(12000, 3500 + message.length * 50);
+    setTimeout(() => removeToast(id), type === 'error' || type === 'warning' ? readingTime + 3000 : readingTime);
   }, [removeToast]);
 
   const toast = {
@@ -45,36 +45,33 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      {/* Toast Notification Container */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`pointer-events-auto flex items-center justify-between gap-3 px-4 py-3 rounded-lg shadow-xl text-xs font-medium border animate-in slide-in-from-bottom-2 fade-in duration-200 ${
-              t.type === 'success'
-                ? 'bg-[var(--panel)] text-emerald-400 border-emerald-500/30'
-                : t.type === 'error'
-                ? 'bg-[var(--panel)] text-rose-400 border-rose-500/30'
-                : t.type === 'warning'
-                ? 'bg-[var(--panel)] text-amber-400 border-amber-500/30'
-                : 'bg-[var(--panel)] text-indigo-400 border-indigo-500/30'
-            }`}
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              {t.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />}
-              {t.type === 'error' && <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />}
-              {t.type === 'warning' && <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />}
-              {t.type === 'info' && <Info className="w-4 h-4 shrink-0 text-indigo-400" />}
-              <span className="truncate text-[var(--text)]">{t.message}</span>
-            </div>
-            <button
-              onClick={() => removeToast(t.id)}
-              className="p-1 hover:bg-[var(--panel-subtle)] rounded text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
+      {/* Above the phone navigation bar; announced to screen readers */}
+      <div className="fixed bottom-20 md:bottom-4 right-0 md:right-4 z-[65] flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 md:px-0">
+        {toasts.map((t) => {
+          const Icon = t.type === 'success' ? CheckCircle2 : t.type === 'error' ? AlertCircle : t.type === 'warning' ? AlertTriangle : Info;
+          const tone = t.type === 'success' ? 'var(--success)' : t.type === 'error' ? 'var(--danger)' : t.type === 'warning' ? 'var(--warn)' : 'var(--primary-text)';
+          return (
+            <div
+              key={t.id}
+              role={t.type === 'error' ? 'alert' : 'status'}
+              className="pointer-events-auto flex items-start justify-between gap-3 pl-4 pr-2 py-3 rounded-lg shadow-xl text-sm border border-[var(--border)] bg-[var(--panel)] animate-in slide-in-from-bottom-2 fade-in duration-200"
+              style={{ borderLeft: `4px solid ${tone}` }}
             >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
+              <div className="flex items-start gap-2.5 min-w-0">
+                <Icon className="w-4 h-4 shrink-0 mt-0.5" style={{ color: tone }} aria-hidden="true" />
+                <span className="text-[var(--text)] leading-snug">{t.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeToast(t.id)}
+                className="p-1.5 hover:bg-[var(--panel-subtle)] rounded text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
+                aria-label="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </ToastContext.Provider>
   );

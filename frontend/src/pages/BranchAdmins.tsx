@@ -118,7 +118,7 @@ function BranchChecklist({ branches, selected, onChange }: {
           <button
             type="button"
             onClick={() => onChange(allSelected ? [] : branches.map(b => b.id))}
-            className="text-[11px] font-semibold text-[var(--primary)] hover:underline cursor-pointer"
+            className="text-[11px] font-semibold text-[var(--primary-text)] hover:underline cursor-pointer"
           >
             {allSelected ? 'Clear all' : 'Select all'}
           </button>

@@ -191,7 +191,7 @@ export default function SetupOrganisation() {
           <div className="w-6 h-6 rounded-md bg-[var(--primary)] text-white flex items-center justify-center">
             <Clock className="w-3.5 h-3.5" />
           </div>
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--primary)]">SimpleHours set-up</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--primary-text)]">SimpleHours set-up</span>
         </div>
         {children}
       </div>
@@ -238,7 +238,7 @@ export default function SetupOrganisation() {
         </p>
         <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-left space-y-1">
           <div className="font-semibold text-[var(--text)]">Your organisation's private sign-in link</div>
-          <div className="font-mono text-[var(--primary)] break-all">{fullLink}</div>
+          <div className="font-mono text-[var(--primary-text)] break-all">{fullLink}</div>
           <div className="text-[var(--muted)]">Bookmark it. You and your Branch Admins sign in here.</div>
         </div>
         <Link to={loginPath} className="inline-block">
@@ -256,7 +256,7 @@ export default function SetupOrganisation() {
       <div className="border-b border-[var(--border)] pb-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center shrink-0">
               <StepIcon className="w-5 h-5" />
             </div>
             <div>
@@ -398,7 +398,7 @@ export default function SetupOrganisation() {
           <>
             <div className="p-4 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-3">
               <div className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5 text-[var(--primary)]" />
+                <Sliders className="w-3.5 h-3.5 text-[var(--primary-text)]" />
                 <span>Unpaid break</span>
               </div>
               <p className="text-[11px] text-[var(--muted)] leading-relaxed">
@@ -419,7 +419,7 @@ export default function SetupOrganisation() {
 
             <div className="p-4 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-2xl space-y-3">
               <div className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-[var(--primary)]" />
+                <Lock className="w-3.5 h-3.5 text-[var(--primary-text)]" />
                 <span>Lock passwords (optional)</span>
               </div>
               <p className="text-[11px] text-[var(--muted)] leading-relaxed">
@@ -446,7 +446,7 @@ export default function SetupOrganisation() {
                 />
                 <span className="space-y-0.5">
                   <span className="text-xs font-bold text-[var(--text)] flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--primary)]" /> Turn on two-step verification
+                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--primary-text)]" /> Turn on two-step verification
                   </span>
                   <span className="block text-[11px] text-[var(--muted)] leading-relaxed">
                     We'll email you a 6-digit code each time you sign in. You can change this later in Settings.

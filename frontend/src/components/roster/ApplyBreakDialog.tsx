@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 import { Dialog, buttonClass } from './Dialog';
 import { skipReason, apiErrorMessage } from './api';
 import { dayLabel, dayOfMonth, isWeekendIso, weekdayShort } from './dates';
@@ -16,7 +17,7 @@ interface ApplyBreakDialogProps {
 }
 
 /**
- * "Apply Break" / "Apply Break to All Days": tick the days that should have the unpaid break
+ * "Apply break to all days" / "Apply break to chosen days": tick the days that should have the unpaid break
  * rule applied (or, starting from every day ticked, untick the exceptions), for one worker's
  * fortnight. Mirrors DayPickerDialog's day-grid, scoped to a single worker instead of a branch.
  */
@@ -52,7 +53,8 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
 
   return (
     <Dialog
-      title={`${startAllChecked ? 'Apply Break to All Days' : 'Apply Break'} — ${worker.full_name}`}
+      title={`${startAllChecked ? 'Apply break to all days' : 'Apply break to chosen days'} · ${worker.full_name}`}
+      description={startAllChecked ? 'Every day is ticked. Untick the days that are different — those keep their current break.' : 'Tick the days that should get this break.'}
       onClose={onClose}
       closeDisabled={busy}
       size="md"
@@ -60,12 +62,33 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
         <div className="flex flex-col gap-2">
           {error && <p role="alert" className="text-xs font-semibold text-[var(--danger)]">{error}</p>}
           {result && (
+            <div className="text-sm" aria-live="polite">
+              <p className="font-semibold text-[var(--text)]">{result.applied.length} day{result.applied.length === 1 ? '' : 's'} updated.</p>
+              {(() => {
+                // Days with no shift are expected; say so once. Anything else is listed day by day.
+                const empty = result.skipped.filter(s => s.reason === 'NOTHING_TO_CHANGE' || s.reason === 'NO_SHIFT');
+                const problems = result.skipped.filter(s => !empty.includes(s));
+                return (
+                  <>
+                    {empty.length > 0 && <p className="text-[var(--muted)] mt-1">{empty.length} day{empty.length === 1 ? ' has' : 's have'} no work shift, so nothing changed there.</p>}
+                    {problems.length > 0 && (
+                      <>
+                        <p className="text-[var(--text)] font-semibold mt-1">Not changed:</p>
+                        <ul className="list-disc pl-5 text-[var(--muted)]">
+                          {problems.map(s => <li key={s.date}>{dayLabel(s.date)}: {skipReason(s.reason)}</li>)}
+                        </ul>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+          {!result && (
             <p className="text-xs text-[var(--muted)]" aria-live="polite">
-              {result.applied.length} day{result.applied.length === 1 ? '' : 's'} updated
-              {result.skipped.length > 0 && `; ${result.skipped.length} skipped (${result.skipped.map(s => `${dayLabel(s.date)}: ${skipReason(s.reason)}`).join(', ')})`}
+              {chosen.size} of {days.length} days chosen{chosen.size < days.length && chosen.size > 0 ? ` · ${days.length - chosen.size} left as they are` : ''}
             </p>
           )}
-          <p className="text-xs text-[var(--muted)]" aria-live="polite">{chosen.size} of {days.length} days chosen</p>
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
             <button type="button" onClick={result ? onApplied : onClose} disabled={busy} className={`${buttonClass.secondary} max-md:h-11`}>
               {result ? 'Done' : 'Cancel'}
@@ -108,11 +131,14 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
                   <label
                     key={d}
                     title={dayLabel(d)}
-                    className="flex flex-col items-center justify-center gap-0.5 min-h-11 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-1 py-1.5 text-[11px] text-[var(--muted)] cursor-pointer select-none has-[:checked]:border-[var(--primary)] has-[:checked]:bg-[var(--primary-light)] has-[:checked]:text-[var(--primary)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]"
+                    className="flex flex-col items-center justify-center gap-0.5 min-h-11 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-1 py-1.5 text-[11px] text-[var(--muted)] cursor-pointer select-none has-[:checked]:border-[var(--primary)] has-[:checked]:bg-[var(--primary-light)] has-[:checked]:text-[var(--primary-text)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]"
                   >
                     <input type="checkbox" className="sr-only" checked={chosen.has(i)} onChange={() => toggle(i)} aria-label={dayLabel(d)} />
                     <span className="font-semibold uppercase text-[10px]">{weekdayShort(d)}</span>
                     <span className="font-bold">{dayOfMonth(d)}</span>
+                    {chosen.has(i)
+                      ? <Check className="w-3 h-3" aria-hidden="true" />
+                      : <span className="text-[9px] leading-3" aria-hidden="true">no change</span>}
                   </label>
                 );
               })}

@@ -200,7 +200,7 @@ export default function Announcements() {
       {permissions.can_post && (
         <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-5 sm:p-6 shadow-sm">
           <h2 className="text-xs font-black text-[var(--text)] uppercase tracking-wider mb-3 flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-[var(--primary)]" />
+            <MessageSquare className="w-4 h-4 text-[var(--primary-text)]" />
             <span>Post a message</span>
           </h2>
           <form onSubmit={handleCreatePost} className="space-y-3">
@@ -260,7 +260,7 @@ export default function Announcements() {
                 {/* Author */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
                   <div className="flex items-center gap-2.5">
-                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[var(--panel-subtle)] text-[var(--primary)] border border-[var(--primary)]/20">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[var(--panel-subtle)] text-[var(--primary-text)] border border-[var(--primary)]/20">
                       {post.author_role || 'Team'}
                     </span>
                     <span className="font-bold text-xs text-[var(--text)]">{post.author_name}</span>
@@ -294,7 +294,7 @@ export default function Announcements() {
                         onClick={() => handleToggleReaction(post.id, r.emoji)}
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
                           r.user_reacted
-                            ? 'bg-[var(--primary-light)] text-[var(--primary)] border-[var(--primary)]/40 shadow-xs'
+                            ? 'bg-[var(--primary-light)] text-[var(--primary-text)] border-[var(--primary)]/40 shadow-xs'
                             : 'bg-[var(--panel-subtle)] text-[var(--text)] border-[var(--border)] hover:bg-[var(--glass-4)]'
                         }`}
                         title={r.users.join(', ')}
@@ -337,7 +337,7 @@ export default function Announcements() {
                     onClick={() => setExpandedThreads(prev => ({ ...prev, [post.id]: !prev[post.id] }))}
                     className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] font-semibold px-2.5 py-1 rounded-lg hover:bg-[var(--panel-subtle)] transition-colors cursor-pointer"
                   >
-                    <MessageSquare className="w-3.5 h-3.5 text-[var(--primary)]" />
+                    <MessageSquare className="w-3.5 h-3.5 text-[var(--primary-text)]" />
                     <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'Reply'}</span>
                   </button>
                 </div>
@@ -353,7 +353,7 @@ export default function Announcements() {
                               <div className="flex items-center gap-1.5">
                                 <span className="font-bold text-[var(--text)]">{reply.author_name}</span>
                                 {reply.author_role && (
-                                  <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/20">
+                                  <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-[var(--primary-light)] text-[var(--primary-text)] border border-[var(--primary)]/20">
                                     {reply.author_role}
                                   </span>
                                 )}

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Building2,
   CalendarDays,
   Coffee,
   FileSpreadsheet,
@@ -27,18 +26,11 @@ import { TableSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import PortalAccessModal, { type PortalStatus } from '../components/PortalAccessModal';
 import {
-  BREAK_LENGTHS, DEFAULT_BREAK_SETTINGS, breakChoiceLabel, breakChoiceOf, breakFromChoice, type BreakChoice, type BreakSettings,
+  BREAK_LENGTHS, DEFAULT_BREAK_SETTINGS, ENTRY_TYPES, TYPE_LABEL, breakChoiceLabel, breakChoiceOf, breakFromChoice, type BreakChoice, type BreakSettings,
 } from '../components/roster/day';
 import { friendlyError } from '../services/errors';
 
-const SEGMENT_TYPES = [
-  { value: 'WORK', label: 'Normal Work' },
-  { value: 'Sick', label: 'Sick Leave' },
-  { value: 'Annual', label: 'Annual Leave' },
-  { value: 'TIL', label: 'TIL' },
-  { value: 'LWIP', label: 'LWIP' },
-  { value: 'Other', label: 'Other' },
-];
+const SEGMENT_TYPES = ENTRY_TYPES.map(value => ({ value, label: TYPE_LABEL[value] }));
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -73,6 +65,26 @@ const isActiveWorker = (w: Worker) => w.is_active;
 function csvCell(value: unknown): string {
   const text = value === null || value === undefined ? '' : String(value);
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function WorkerContact({ worker }: { worker: Worker }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-[var(--muted)]">
+      {worker.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" aria-hidden="true" />{worker.email}</span>}
+      {worker.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" aria-hidden="true" />{worker.phone}</span>}
+      {!worker.email && !worker.phone && <span>No contact details</span>}
+    </div>
+  );
+}
+
+function WorkerBadges({ worker }: { worker: Worker }) {
+  return (
+    <div className="flex flex-wrap gap-1 shrink-0">
+      {isActiveWorker(worker) ? <Badge variant="success" size="sm">Active</Badge> : <Badge variant="default" size="sm">Deactivated</Badge>}
+      {worker.portal_status === 'active' && <Badge variant="info" size="sm">Can sign in</Badge>}
+      {worker.portal_status === 'invited' && <Badge variant="warning" size="sm">Invited</Badge>}
+    </div>
+  );
 }
 
 export default function Employees() {
@@ -198,8 +210,32 @@ export default function Employees() {
     ? branchFilter
     : activeBranches.length === 1 ? activeBranches[0].id : '';
 
+  /** Everyday actions stay visible; deactivate and delete sit behind "More" so they aren't hit by accident. */
+  const workerActions = (worker: Worker, large: boolean) => {
+    const active = isActiveWorker(worker);
+    const btn = `${large ? 'h-11 px-3 text-sm' : 'h-8 px-2.5 text-xs'} rounded-lg font-semibold border border-[var(--border)] bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--hover-row)] cursor-pointer inline-flex items-center`;
+    return (
+      <div className={`flex flex-wrap gap-1.5 ${large ? '' : 'justify-end'}`}>
+        <button type="button" onClick={() => setTemplateWorker(worker)} className={btn} aria-label={`Default roster for ${worker.full_name}`}>Default roster</button>
+        <button type="button" onClick={() => setPortalWorkerId(worker.id)} className={btn} aria-label={`Portal access for ${worker.full_name}`}>Portal access</button>
+        <button type="button" onClick={() => setFormWorker(worker)} className={btn} aria-label={`Edit ${worker.full_name}`}>Edit</button>
+        <details className="relative">
+          <summary className={`${btn} list-none`} aria-label={`More actions for ${worker.full_name}`}>More…</summary>
+          <div onClick={e => e.currentTarget.parentElement?.removeAttribute('open')} className="absolute right-0 z-30 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--panel)] shadow-lg p-1">
+            {active ? (
+              <button type="button" onClick={() => setPendingAction({ kind: 'deactivate', worker })} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--warn)] hover:bg-[var(--warn-light)]">Deactivate…</button>
+            ) : (
+              <button type="button" onClick={() => handleReactivate(worker)} disabled={reactivatingId === worker.id} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--success)] hover:bg-[var(--success-light)] disabled:opacity-50">Reactivate</button>
+            )}
+            <button type="button" onClick={() => setPendingAction({ kind: 'delete', worker })} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--danger)] hover:bg-[var(--danger-light)]">Delete…</button>
+          </div>
+        </details>
+      </div>
+    );
+  };
+
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden space-y-4">
+    <div className="flex flex-col space-y-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -277,102 +313,70 @@ export default function Employees() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto bg-[var(--panel)] rounded-xl border border-[var(--border)] relative">
+      {/* Workers: a table on wide screens, one card per worker on phones */}
+      <div className="bg-[var(--panel)] rounded-xl border border-[var(--border)]">
         {loading && workers.length === 0 ? (
           <div className="p-4"><TableSkeleton rows={6} /></div>
         ) : loadError ? (
+          <EmptyState className="m-4" icon={<Users className="w-5 h-5" aria-hidden="true" />} title="Workers could not be loaded" description={loadError} actionLabel="Try again" onAction={reload} />
+        ) : filtered.length === 0 ? (
           <EmptyState
-            className="m-4"
-            icon={<Users className="w-5 h-5" />}
-            title="Workers could not be loaded"
-            description={loadError}
-            actionLabel="Try again"
-            onAction={reload}
+            className="m-4 border-dashed"
+            icon={<Users className="w-5 h-5" aria-hidden="true" />}
+            title={q || departmentFilter ? 'No workers match your filters' : 'No workers yet'}
+            description={q || departmentFilter
+              ? 'Check the spelling, or clear the search and department filter.'
+              : 'Workers are the people you roster and pay. Add your first one, then give them shifts on the Roster.'}
+            action={q || departmentFilter
+              ? <Button variant="secondary" size="md" onClick={() => { setSearchQuery(''); setDepartmentFilter(''); }}>Clear filters</Button>
+              : activeBranches.length > 0 ? <Button variant="primary" size="md" onClick={() => setFormWorker('new')} leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}>Add worker</Button> : undefined}
           />
         ) : (
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-[var(--table-header)] sticky top-0 z-20">
-              <tr>
-                {['Name & contact', 'Branch', 'Department', 'Contracted (fortnight)', 'Status'].map(h => (
-                  <th key={h} className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">{h}</th>
-                ))}
-                <th className="py-3 px-4 text-right text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(worker => {
-                const active = isActiveWorker(worker);
-                return (
-                  <tr key={worker.id} className={`hover:bg-[var(--hover-row)] border-b border-[var(--border)] ${active ? '' : 'opacity-70'}`}>
+          <>
+            <table className="hidden md:table w-full text-left border-collapse">
+              <thead className="bg-[var(--table-header)]">
+                <tr>
+                  {['Name & contact', 'Branch', 'Department', 'Contract (fortnight)', 'Status'].map(h => (
+                    <th key={h} scope="col" className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">{h}</th>
+                  ))}
+                  <th scope="col" className="py-3 px-4 text-right text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(worker => (
+                  <tr key={worker.id} className={`hover:bg-[var(--hover-row)] border-b border-[var(--border)] last:border-0 ${isActiveWorker(worker) ? '' : 'opacity-70'}`}>
                     <td className="py-3 px-4">
                       <div className="font-bold text-sm text-[var(--text)]">{worker.full_name}</div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-[var(--muted)]">
-                        {worker.email && (
-                          <span className="flex items-center gap-1"><Mail className="w-3 h-3 opacity-70" />{worker.email}</span>
-                        )}
-                        {worker.phone && (
-                          <span className="flex items-center gap-1 font-mono"><Phone className="w-3 h-3 opacity-70" />{worker.phone}</span>
-                        )}
-                        {!worker.email && !worker.phone && <span className="italic">No contact details</span>}
-                      </div>
+                      <WorkerContact worker={worker} />
                     </td>
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center gap-1.5 text-sm text-[var(--text)]">
-                        <Building2 className="w-3.5 h-3.5 text-[var(--muted)]" />
-                        {worker.location_name || '—'}
-                      </span>
-                    </td>
+                    <td className="py-3 px-4 text-sm text-[var(--text)]">{worker.location_name || '—'}</td>
                     <td className="py-3 px-4 text-sm text-[var(--muted)]">{worker.department || '—'}</td>
-                    <td className="py-3 px-4 text-sm font-semibold text-[var(--text)]">{Number(worker.contracted_hours ?? 0)}h</td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1">
-                        {active ? <Badge variant="success" size="sm">Active</Badge> : <Badge variant="default" size="sm">Deactivated</Badge>}
-                        {worker.portal_status === 'active' && <Badge variant="info" size="sm">Portal</Badge>}
-                        {worker.portal_status === 'invited' && <Badge variant="warning" size="sm">Invited</Badge>}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex justify-end gap-1.5 flex-wrap">
-                        <button onClick={() => setTemplateWorker(worker)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--primary)] bg-[var(--primary-light)] hover:opacity-80 transition-colors cursor-pointer">
-                          Default roster
-                        </button>
-                        <button onClick={() => setPortalWorkerId(worker.id)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--muted)] bg-[var(--glass-4)] hover:bg-[var(--glass-8)] border border-[var(--border)] transition-colors cursor-pointer">
-                          Portal access
-                        </button>
-                        <button onClick={() => setFormWorker(worker)} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--muted)] bg-[var(--glass-4)] hover:bg-[var(--glass-8)] border border-[var(--border)] transition-colors cursor-pointer">
-                          Edit
-                        </button>
-                        {active ? (
-                          <button onClick={() => setPendingAction({ kind: 'deactivate', worker })} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--warn)] bg-[var(--warn-light)] hover:opacity-80 transition-colors cursor-pointer">
-                            Deactivate
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleReactivate(worker)}
-                            disabled={reactivatingId === worker.id}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--success)] bg-[var(--success-light)] hover:opacity-80 transition-colors cursor-pointer disabled:opacity-50"
-                          >
-                            Reactivate
-                          </button>
-                        )}
-                        <button onClick={() => setPendingAction({ kind: 'delete', worker })} className="px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--danger)] bg-[var(--danger-light)] hover:opacity-80 transition-colors cursor-pointer">
-                          Delete
-                        </button>
-                      </div>
-                    </td>
+                    <td className="py-3 px-4 text-sm font-semibold text-[var(--text)]">{Number(worker.contracted_hours ?? 0)} h</td>
+                    <td className="py-3 px-4"><WorkerBadges worker={worker} /></td>
+                    <td className="py-3 px-4">{workerActions(worker, false)}</td>
                   </tr>
-                );
-              })}
-              {filtered.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={6} className="py-10 text-center text-[var(--muted)] text-sm">
-                    {q || departmentFilter ? 'No workers match your filters.' : 'No workers yet. Add your first worker to start rostering.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+
+            <ul className="md:hidden divide-y divide-[var(--border)]">
+              {filtered.map(worker => (
+                <li key={worker.id} className={`p-4 space-y-2 ${isActiveWorker(worker) ? '' : 'opacity-70'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-bold text-base text-[var(--text)]">{worker.full_name}</p>
+                      <p className="text-sm text-[var(--muted)]">
+                        {[worker.location_name, worker.department, `${Number(worker.contracted_hours ?? 0)} h a fortnight`].filter(Boolean).join(' · ')}
+                      </p>
+                      <WorkerContact worker={worker} />
+                    </div>
+                    <WorkerBadges worker={worker} />
+                  </div>
+                  {workerActions(worker, true)}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
 
@@ -695,7 +699,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
 
         <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--panel-subtle)] space-y-2">
           <div className="flex items-center gap-2 text-xs font-bold text-[var(--text)]">
-            <Coffee className="w-4 h-4 text-[var(--primary)]" aria-hidden="true" /> Breaks
+            <Coffee className="w-4 h-4 text-[var(--primary-text)]" aria-hidden="true" /> Breaks
             <span className="font-normal text-[var(--muted)]">
               {workingDays === 0 ? 'Add shifts first' : `Break on ${daysWithBreak} of ${workingDays} working day${workingDays === 1 ? '' : 's'}`}
             </span>
@@ -799,7 +803,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
                         type="button"
                         onClick={() => addSegment(dayIndex)}
                         disabled={segments.length >= 12}
-                        className="shrink-0 self-start px-2 py-1 rounded-md text-[11px] font-semibold text-[var(--primary)] hover:bg-[var(--primary-light)] transition-colors cursor-pointer disabled:opacity-40"
+                        className="shrink-0 self-start px-2 py-1 rounded-md text-[11px] font-semibold text-[var(--primary-text)] hover:bg-[var(--primary-light)] transition-colors cursor-pointer disabled:opacity-40"
                       >
                         + Segment
                       </button>
@@ -840,9 +844,9 @@ function DayBreakControl({ dayName, value, rule, fallback, onChange }: {
           checked={on}
           onChange={e => onChange(e.target.checked ? fallback : 'none')}
           aria-label={`Break on ${dayName}`}
-          className="h-4 w-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
+          className="h-4 w-4 rounded border-[var(--border)] text-[var(--primary-text)] focus:ring-[var(--primary)] cursor-pointer"
         />
-        <span className={on ? 'text-[var(--primary)]' : 'text-[var(--muted)]'}>{on ? 'Break' : 'No break'}</span>
+        <span className={on ? 'text-[var(--primary-text)]' : 'text-[var(--muted)]'}>{on ? 'Break' : 'No break'}</span>
       </label>
       {on && (
         <select

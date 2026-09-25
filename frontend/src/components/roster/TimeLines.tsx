@@ -103,13 +103,14 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
           return (
             <li
               key={line.key}
+              data-tour={index === 0 ? 'time-line' : undefined}
               className={`rounded-lg p-1.5 -mx-1.5 ${issue ? 'bg-[var(--danger-light)] ring-1 ring-[var(--danger)]/40' : ''}`}
               onFocus={() => setEditingKey(line.key)}
               onBlur={e => {
                 if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setEditingKey(k => (k === line.key ? null : k));
               }}
             >
-              <div className="flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                 <select
                   aria-label={`${name} type, line ${n}`}
                   value={line.type}
@@ -119,7 +120,7 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
                   {types.map(t => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
                 </select>
 
-                <div className="order-last md:order-none basis-full md:basis-auto flex items-center gap-2 min-w-0">
+                <div className="order-last md:order-none basis-full md:basis-auto flex items-center gap-2 shrink-0">
                   {line.hoursOnly ? (
                     <>
                       <HoursInput
@@ -213,11 +214,12 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
       <button
         ref={addRef}
         type="button"
+        data-tour="add-line"
         onClick={addLine}
         disabled={lines.length >= MAX_LINES && !isUntouched(lines[lines.length - 1])}
-        className="mt-1 inline-flex items-center gap-1.5 h-11 md:h-8 px-2 -ml-2 rounded-lg text-xs font-semibold text-[var(--primary)] hover:bg-[var(--primary-light)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        className="mt-1 inline-flex items-center gap-1.5 h-11 md:h-8 px-2 -ml-2 rounded-lg text-xs font-semibold text-[var(--primary-text)] hover:bg-[var(--primary-light)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
       >
-        <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add time
+        <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add time (split shift or leave)
       </button>
     </div>
   );

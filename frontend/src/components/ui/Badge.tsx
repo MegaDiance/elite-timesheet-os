@@ -23,8 +23,8 @@ export const Badge: React.FC<BadgeProps> = ({
     success: 'bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/25',
     warning: 'bg-[var(--warn-light)] text-[var(--warn)] border border-[var(--warn)]/25',
     danger: 'bg-[var(--danger-light)] text-[var(--danger)] border border-[var(--danger)]/25',
-    info: 'bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/25',
-    purple: 'bg-[var(--primary-light)] text-[var(--primary)] border border-[var(--primary)]/25',
+    info: 'bg-[var(--primary-light)] text-[var(--primary-text)] border border-[var(--primary)]/25',
+    purple: 'bg-[var(--primary-light)] text-[var(--primary-text)] border border-[var(--primary)]/25',
   };
 
   return (

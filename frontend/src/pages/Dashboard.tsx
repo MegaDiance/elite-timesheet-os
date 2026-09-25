@@ -1,45 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertCircle,
-  ArrowRight,
-  BarChart3,
-  Building2,
-  Calendar,
-  CalendarCheck,
-  CheckCircle2,
-  ClipboardList,
-  Clock,
-  Copy,
-  FileCheck2,
-  Lock,
-  Phone,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  Unlock,
-  Users,
+  AlertCircle, ArrowRight, CalendarCheck, CalendarDays, CheckCircle2, Compass, Copy, FileCheck2, Lock, Phone, RefreshCw, Search, Unlock,
 } from 'lucide-react';
 import api from '../services/apiClient';
+import { useAccess } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
-import { Skeleton, CardSkeleton } from '../components/ui/Skeleton';
+import { Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
+import { HelpTip } from '../components/ui/HelpTip';
 import { useToast } from '../components/ui/Toast';
 import { formatFortnightLabel } from '../utils/fortnight';
-import { STATUS_VARIANT, type DayStatus } from '../components/roster/DayBox';
 import { friendlyError } from '../services/errors';
-
-const SEGMENT_LABEL: Record<string, string> = {
-  WORK: 'Normal Work',
-  Sick: 'Sick Leave',
-  Annual: 'Annual Leave',
-  TIL: 'TIL',
-  LWIP: 'LWIP',
-  Other: 'Other',
-};
+import { formatHours, formatTime, isEntryType, TYPE_LABEL } from '../components/roster/day';
+import { startTour } from '../components/tour/tourSignals';
 
 interface Segment {
   segment_id: string;
@@ -76,24 +53,11 @@ interface BranchStatus {
   timesheets_pending: number;
 }
 
-interface PendingTimesheet {
-  employee_id: string;
-  full_name: string;
-  department: string | null;
-  location_id: string;
-  location_name: string;
-  status: string;
-}
-
 interface DashboardData {
-  role: string;
   date: string;
   active_fortnight: string;
-  fortnight_end: string;
   public_holiday: string | null;
-  branches: Array<{ id: string; name: string; is_active: boolean }>;
   metrics: {
-    branches: number;
     active_workers: number;
     scheduled_today: number;
     currently_working: number;
@@ -103,85 +67,75 @@ interface DashboardData {
   };
   branch_status: BranchStatus[];
   scheduled_today: ScheduledWorker[];
-  pending_timesheets: PendingTimesheet[];
   organisation: { name: string; sign_in_link: string | null; branch_admins: number } | null;
 }
 
-const QUICK_LINKS = [
-  { to: '/roster', label: 'Roster', icon: Calendar },
-  { to: '/timesheets', label: 'Timesheets', icon: ClipboardList },
-  { to: '/workers', label: 'Workers', icon: Users },
-  { to: '/reports', label: 'Reports', icon: BarChart3 },
-  { to: '/branches', label: 'Branches', icon: Building2 },
-];
-
-function formatTime(t: string | null | undefined): string {
-  return t ? t.slice(0, 5) : '';
-}
-
-function formatHours(h: number | null | undefined): string {
-  const n = Number(h || 0);
-  return `${Math.round(n * 100) / 100}h`;
-}
-
-function segmentLabel(type: string | null | undefined): string {
-  return (type && SEGMENT_LABEL[type]) || type || 'Normal Work';
-}
+const typeLabel = (type: string | null | undefined) => (type && isEntryType(type) ? TYPE_LABEL[type] : 'Normal Work');
+const clock = (t: string | null) => (t ? formatTime(t.slice(0, 5)) : '');
 
 function SegmentRow({ segment }: { segment: Segment }) {
   const rostered = segment.roster_in && segment.roster_out
-    ? `${formatTime(segment.roster_in)}–${formatTime(segment.roster_out)} (${formatHours(segment.roster_hours)})`
-    : segment.roster_hours > 0 ? formatHours(segment.roster_hours) : 'Not rostered';
+    ? `${clock(segment.roster_in)} – ${clock(segment.roster_out)}`
+    : segment.roster_hours > 0 ? formatHours(segment.roster_hours) : 'not rostered';
   const worked = segment.actual_in && segment.actual_out
-    ? `${formatTime(segment.actual_in)}–${formatTime(segment.actual_out)} (${formatHours(segment.actual_hours)})`
-    : segment.actual_in ? `Started ${formatTime(segment.actual_in)}`
-    : segment.actual_hours > 0 ? formatHours(segment.actual_hours) : '—';
+    ? `${clock(segment.actual_in)} – ${clock(segment.actual_out)}`
+    : segment.actual_in ? `started ${clock(segment.actual_in)}`
+      : segment.actual_hours > 0 ? formatHours(segment.actual_hours) : null;
   const workedAsOther = segment.actual_segment_type && segment.actual_segment_type !== segment.segment_type;
-
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-      <span className="font-semibold text-[var(--text)] min-w-[92px]">{segmentLabel(segment.segment_type)}</span>
-      <span className="font-mono text-[var(--muted)]">Rostered: <span className="text-[var(--text)]">{rostered}</span></span>
-      <span className="font-mono text-[var(--muted)]">Worked: <span className="text-[var(--text)]">{worked}</span></span>
-      {workedAsOther && (
-        <Badge variant="info" size="sm">Worked as {segmentLabel(segment.actual_segment_type)}</Badge>
-      )}
-      {segment.is_unplanned && <Badge variant="warning" size="sm">Unplanned</Badge>}
-    </div>
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      <span className="font-semibold text-[var(--text)] min-w-[7rem]">{typeLabel(segment.segment_type)}</span>
+      <span className="text-[var(--muted)]">Rostered <span className="text-[var(--text)] tabular-nums">{rostered}</span></span>
+      {worked && <span className="text-[var(--muted)]">Worked <span className="text-[var(--text)] tabular-nums">{worked}</span></span>}
+      {workedAsOther && <Badge variant="info" size="sm">Worked as {typeLabel(segment.actual_segment_type)}</Badge>}
+      {segment.is_unplanned && <Badge variant="warning" size="sm"><AlertCircle className="w-3 h-3" aria-hidden="true" /> Not on the roster</Badge>}
+    </li>
   );
 }
 
 function workerStatus(worker: ScheduledWorker) {
-  if (worker.is_working) return <Badge variant="success" size="sm">Working now</Badge>;
-  if (worker.segments.some(s => s.actual_in && s.actual_out)) return <Badge variant="purple" size="sm">Hours recorded</Badge>;
+  if (worker.is_working) return <Badge variant="success" size="sm"><span className="w-1.5 h-1.5 rounded-full bg-current" aria-hidden="true" /> Working now</Badge>;
+  if (worker.segments.some(s => s.actual_in && s.actual_out)) return <Badge variant="info" size="sm"><CheckCircle2 className="w-3 h-3" aria-hidden="true" /> Hours recorded</Badge>;
+  if (worker.segments.every(s => s.segment_type !== 'WORK')) return <Badge variant="outline" size="sm">On leave</Badge>;
   return <Badge variant="outline" size="sm">Rostered</Badge>;
 }
 
+function LockState({ locked }: { locked: boolean }) {
+  return locked
+    ? <Badge variant="info" size="sm"><Lock className="w-3 h-3" aria-hidden="true" /> Locked</Badge>
+    : <Badge variant="outline" size="sm"><Unlock className="w-3 h-3" aria-hidden="true" /> Open</Badge>;
+}
+
+interface AttentionItem { key: string; icon: ReactNode; text: ReactNode; action?: { to: string; label: string } }
+
+/** "Today": what needs doing first, who is working, and the pay period — for the branch chosen in the menu. */
 export default function Dashboard() {
   const toast = useToast();
+  const { can } = useAccess();
   const { activeBranchId, activeBranch } = useActiveBranch();
   const [reloadKey, setReloadKey] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [leavePending, setLeavePending] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Always scoped to the one active branch (switched in the sidebar) — never every branch at once.
   useEffect(() => {
-    if (!activeBranchId) return;
+    if (!activeBranchId) { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    api.get('/dashboard/today', { params: { location_id: activeBranchId } })
-      .then(res => {
-        if (!cancelled) setData(res.data.data);
+    Promise.all([
+      api.get('/dashboard/today', { params: { location_id: activeBranchId } }),
+      api.get('/dashboard/attention', { params: { location_id: activeBranchId } }).catch(() => null),
+    ])
+      .then(([today, attention]) => {
+        if (cancelled) return;
+        setData(today.data.data);
+        setLeavePending(attention?.data?.data?.leave_pending ?? 0);
       })
-      .catch(err => {
-        if (!cancelled) setError(friendlyError(err, 'The dashboard could not be loaded.'));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch(err => { if (!cancelled) setError(friendlyError(err, 'Today’s overview could not be loaded.')); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [activeBranchId, reloadKey]);
 
@@ -195,73 +149,48 @@ export default function Dashboard() {
   };
 
   const todayLabel = data?.date
-    ? new Date(`${data.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    ? new Date(`${data.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
     : 'Today';
 
-  const q = searchQuery.trim().toLowerCase();
-  const scheduled = (data?.scheduled_today ?? []).filter(w =>
-    !q
-    || w.full_name.toLowerCase().includes(q)
-    || (w.department || '').toLowerCase().includes(q)
-    || (w.location_name || '').toLowerCase().includes(q)
-  );
-  const pending = data?.pending_timesheets ?? [];
-  const metrics = data?.metrics;
-
   const header = (
-    <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-4 border-b border-[var(--border)]">
+    <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)] flex items-center gap-2">
-          Dashboard
-          {activeBranch && <Badge variant="outline" size="sm"><Building2 className="w-3 h-3" />{activeBranch.name}</Badge>}
-        </h1>
-        <p className="text-xs text-[var(--muted)] mt-1.5 flex flex-wrap items-center gap-2">
+        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Today</h1>
+        <p className="text-sm text-[var(--muted)] mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium text-[var(--text)]">{todayLabel}</span>
-          {data?.active_fortnight && (
-            <>
-              <span>•</span>
-              <span>Pay period: <strong className="text-[var(--text)]">{formatFortnightLabel(data.active_fortnight)}</strong></span>
-            </>
-          )}
-          {data?.public_holiday && (
-            <>
-              <span>•</span>
-              <span className="text-[var(--warn)] font-semibold flex items-center gap-1">
-                <CalendarCheck className="w-3.5 h-3.5" />
-                Public holiday: {data.public_holiday}
-              </span>
-            </>
-          )}
+          {activeBranch && <span>· {activeBranch.name}</span>}
+          {data?.active_fortnight && <span>· Pay period {formatFortnightLabel(data.active_fortnight)}</span>}
         </p>
       </div>
-
-      <div className="flex items-end gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setReloadKey(k => k + 1)}
-          disabled={loading}
-          leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
-        >
+      <div className="flex gap-2">
+        <Button variant="ghost" size="sm" onClick={startTour} leftIcon={<Compass className="w-3.5 h-3.5" aria-hidden="true" />}>Show me around</Button>
+        <Button variant="ghost" size="sm" onClick={() => setReloadKey(k => k + 1)} disabled={loading} leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />}>
           Refresh
         </Button>
       </div>
-    </div>
+    </header>
   );
+
+  if (!activeBranchId && !loading) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <EmptyState
+          icon={<CalendarDays className="w-5 h-5" aria-hidden="true" />}
+          title="There are no active branches to show"
+          description="Everything in SimpleHours happens inside a branch: its workers, roster and timesheets. Add a branch to get started."
+          action={can('branches.manage') ? <Link to="/branches"><Button variant="primary" size="md">Add a branch</Button></Link> : undefined}
+        />
+      </div>
+    );
+  }
 
   if (loading && !data) {
     return (
       <div className="space-y-6">
         {header}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <CardSkeleton />
-          <CardSkeleton />
-          <CardSkeleton />
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Skeleton className="h-64 lg:col-span-2 rounded-xl" />
-          <Skeleton className="h-64 rounded-xl" />
-        </div>
+        <Skeleton className="h-32 rounded-xl" />
+        <Skeleton className="h-64 rounded-xl" />
       </div>
     );
   }
@@ -270,282 +199,176 @@ export default function Dashboard() {
     return (
       <div className="space-y-6">
         {header}
-        <EmptyState
-          icon={<AlertCircle className="w-5 h-5" />}
-          title="The dashboard could not be loaded"
-          description={error}
-          actionLabel="Try again"
-          onAction={() => setReloadKey(k => k + 1)}
-        />
+        <EmptyState icon={<AlertCircle className="w-5 h-5" aria-hidden="true" />} title="Today’s overview could not be loaded" description={error} actionLabel="Try again" onAction={() => setReloadKey(k => k + 1)} />
       </div>
     );
   }
 
-  const tiles = [
-    { label: 'Working now', value: metrics?.currently_working ?? 0, hint: 'Started and not yet finished', tone: 'text-[var(--success)]', icon: Clock },
-    { label: 'Rostered today', value: metrics?.scheduled_today ?? 0, hint: 'Workers with segments today', tone: 'text-[var(--text)]', icon: Calendar },
-    { label: 'Active workers', value: metrics?.active_workers ?? 0, hint: `Across ${metrics?.branches ?? 0} branch${metrics?.branches === 1 ? '' : 'es'}`, tone: 'text-[var(--text)]', icon: Users },
-    { label: 'Unplanned today', value: metrics?.unplanned_shifts_today ?? 0, hint: 'Segments worked without a roster', tone: (metrics?.unplanned_shifts_today ?? 0) > 0 ? 'text-[var(--warn)]' : 'text-[var(--text)]', icon: AlertCircle },
-    { label: 'Timesheets approved', value: metrics?.timesheets_approved ?? 0, hint: 'This pay period', tone: 'text-[var(--success)]', icon: CheckCircle2 },
-    { label: 'Waiting for approval', value: metrics?.timesheets_pending ?? 0, hint: 'This pay period', tone: (metrics?.timesheets_pending ?? 0) > 0 ? 'text-[var(--warn)]' : 'text-[var(--text)]', icon: FileCheck2 },
-  ];
+  const metrics = data?.metrics;
+  const branch = data?.branch_status[0];
+  const q = searchQuery.trim().toLowerCase();
+  const scheduled = (data?.scheduled_today ?? []).filter(w => !q || `${w.full_name} ${w.department ?? ''}`.toLowerCase().includes(q));
+
+  // What needs doing, most urgent first. Only things this person can act on.
+  const attention: AttentionItem[] = [];
+  if (data?.organisation && !data.organisation.sign_in_link) {
+    attention.push({ key: 'link', icon: <AlertCircle className="w-4 h-4 text-[var(--danger)]" aria-hidden="true" />, text: <><strong>Your sign-in link has expired.</strong> Nobody can sign in until you renew it.</>, action: { to: '/settings?tab=security', label: 'Renew link' } });
+  }
+  if (can('timesheets.manage') && leavePending > 0) {
+    attention.push({ key: 'leave', icon: <CalendarDays className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />, text: <><strong>{leavePending} leave request{leavePending === 1 ? '' : 's'}</strong> waiting for your decision.</>, action: { to: '/leave-requests', label: 'Decide' } });
+  }
+  if (can('timesheets.manage') && (metrics?.timesheets_pending ?? 0) > 0) {
+    attention.push({
+      key: 'timesheets', icon: <FileCheck2 className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />,
+      text: <><strong>{metrics!.timesheets_pending} timesheet{metrics!.timesheets_pending === 1 ? '' : 's'}</strong> not approved yet this pay period ({metrics!.timesheets_approved} of {metrics!.active_workers} done).</>,
+      action: { to: '/timesheets', label: 'Review' },
+    });
+  }
+  if ((metrics?.unplanned_shifts_today ?? 0) > 0) {
+    attention.push({ key: 'unplanned', icon: <AlertCircle className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />, text: <><strong>{metrics!.unplanned_shifts_today} shift{metrics!.unplanned_shifts_today === 1 ? '' : 's'} worked today</strong> that {metrics!.unplanned_shifts_today === 1 ? 'isn’t' : 'aren’t'} on the roster.</>, action: can('rosters.manage') ? { to: '/roster', label: 'Check roster' } : undefined });
+  }
+  if (data?.public_holiday) {
+    attention.push({ key: 'holiday', icon: <CalendarCheck className="w-4 h-4 text-[var(--primary-text)]" aria-hidden="true" />, text: <>Today is a public holiday: <strong>{data.public_holiday}</strong>. Hours worked today are reported as public holiday hours.</> });
+  }
+  if (branch?.roster_locked || branch?.timesheet_locked) {
+    attention.push({ key: 'locks', icon: <Lock className="w-4 h-4 text-[var(--muted)]" aria-hidden="true" />, text: <>{[branch.roster_locked && 'The roster', branch.timesheet_locked && 'Timesheets'].filter(Boolean).join(' and ')} {branch.roster_locked && branch.timesheet_locked ? 'are' : 'is'} locked for this pay period, so {branch.roster_locked && branch.timesheet_locked ? 'they' : 'it'} can’t be changed.</> });
+  }
 
   return (
     <div className="space-y-6">
       {header}
 
       {error && (
-        <div className="p-3 rounded-lg bg-[var(--danger-light)] border border-[var(--danger)]/30 text-xs text-[var(--danger)] flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{error}</span>
-        </div>
+        <p role="alert" className="p-3 rounded-lg bg-[var(--danger-light)] border border-[var(--danger)]/30 text-sm text-[var(--danger)]">{error}</p>
       )}
 
-      {/* Organisation card: Organisation Owner only (the API returns null for Branch Admins) */}
-      {data?.organisation && (
-        <Card className="p-5 border-[var(--primary)]/30 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
-            <div>
-              <span className="text-[11px] uppercase font-bold tracking-wider text-[var(--primary)]">Your organisation</span>
-              <h2 className="text-lg font-bold text-[var(--text)]">{data.organisation.name}</h2>
-            </div>
-            <Link to="/settings">
-              <Button variant="ghost" size="sm" leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}>Organisation settings</Button>
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="md:col-span-2 p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] space-y-2">
-              <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Private sign-in link</div>
-              {data.organisation.sign_in_link ? (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <div className="flex-1 min-w-0 px-3 py-2 rounded-md bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] truncate select-all">
-                    {data.organisation.sign_in_link}
-                  </div>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => handleCopyLink(data.organisation!.sign_in_link!)}
-                    leftIcon={<Copy className="w-3.5 h-3.5" />}
-                  >
-                    Copy link
-                  </Button>
-                </div>
-              ) : (
-                <p role="alert" className="text-sm text-[var(--danger)]">
-                  Your sign-in link has expired, so nobody can sign in. <Link to="/settings?tab=security" className="underline font-semibold">Renew it in Settings</Link>.
-                </p>
-              )}
-              <p className="text-[11px] text-[var(--muted)]">Share it with your Branch Admins and any workers you give portal access. It’s the only place anyone signs in.</p>
-            </div>
-
-            <Link
-              to="/branch-admins"
-              className="p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] hover:bg-[var(--hover-row)] transition-colors flex flex-col justify-between"
-            >
-              <div className="text-[10px] uppercase font-bold text-[var(--muted)]">Branch Admins</div>
-              <div className="text-2xl font-bold text-[var(--text)] font-mono">{data.organisation.branch_admins}</div>
-              <span className="text-[11px] text-[var(--primary)] font-semibold">Manage Branch Admins →</span>
-            </Link>
-          </div>
-        </Card>
-      )}
-
-      {/* Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        {tiles.map(tile => (
-          <Card key={tile.label} className="p-4 space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{tile.label}</span>
-              <tile.icon className="w-4 h-4 text-[var(--muted)] shrink-0" />
-            </div>
-            <div className={`text-2xl font-bold tracking-tight ${tile.tone}`}>{tile.value}</div>
-            <p className="text-[11px] text-[var(--muted)]">{tile.hint}</p>
-          </Card>
-        ))}
-      </div>
-
-      {/* Per-branch pay period status */}
-      <Card className="p-5 space-y-3">
-        <div className="flex items-center justify-between pb-2 border-b border-[var(--border)]">
-          <div>
-            <h2 className="font-bold text-sm text-[var(--text)]">Pay period status by branch</h2>
-            {data && (
-              <p className="text-xs text-[var(--muted)]">{formatFortnightLabel(data.active_fortnight)}</p>
-            )}
-          </div>
-          <Link to="/timesheets" className="text-xs font-semibold text-[var(--primary)] hover:underline">Open timesheets →</Link>
-        </div>
-
-        {(data?.branch_status ?? []).length === 0 ? (
-          <p className="py-4 text-center text-xs text-[var(--muted)]">No active branches to show.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wider text-[var(--muted)] border-b border-[var(--border)]">
-                  <th className="py-2 pr-3 font-semibold">Branch</th>
-                  <th className="py-2 px-3 font-semibold">Roster</th>
-                  <th className="py-2 px-3 font-semibold">Timesheets</th>
-                  <th className="py-2 px-3 font-semibold">Approved</th>
-                  <th className="py-2 pl-3 font-semibold text-right">Waiting</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {data!.branch_status.map(b => {
-                  const pct = b.active_workers > 0 ? Math.round((b.timesheets_approved / b.active_workers) * 100) : 0;
-                  return (
-                    <tr key={b.location_id}>
-                      <td className="py-2.5 pr-3 font-semibold text-[var(--text)]">{b.location_name}</td>
-                      <td className="py-2.5 px-3">
-                        {b.roster_locked
-                          ? <Badge variant="purple" size="sm"><Lock className="w-3 h-3" /> Locked</Badge>
-                          : <Badge variant="outline" size="sm"><Unlock className="w-3 h-3" /> Open</Badge>}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {b.timesheet_locked
-                          ? <Badge variant="success" size="sm"><Lock className="w-3 h-3" /> Locked</Badge>
-                          : <Badge variant="outline" size="sm"><Unlock className="w-3 h-3" /> Open</Badge>}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-2 min-w-[140px]">
-                          <div className="flex-1 h-1.5 rounded-full bg-[var(--panel-subtle)] border border-[var(--border)] overflow-hidden">
-                            <div className="h-full bg-[var(--success)]" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="font-mono text-[var(--text)] whitespace-nowrap">{b.timesheets_approved} / {b.active_workers}</span>
-                        </div>
-                      </td>
-                      <td className="py-2.5 pl-3 text-right">
-                        <Badge variant={b.timesheets_pending > 0 ? 'warning' : 'outline'} size="sm">{b.timesheets_pending}</Badge>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Who is rostered / working today */}
-        <Card className="lg:col-span-2 p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
-            <div>
-              <h2 className="font-bold text-sm text-[var(--text)]">Rostered and working today</h2>
-              <p className="text-xs text-[var(--muted)]">Each worker's segments for today, rostered and worked.</p>
-            </div>
-            <div className="relative w-full sm:w-56">
-              <Search className="w-3.5 h-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search workers…"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-[var(--input-bg)] border border-[var(--border)] text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--primary)]"
-              />
-            </div>
-          </div>
-
-          {scheduled.length === 0 ? (
-            <EmptyState
-              icon={<Calendar className="w-5 h-5" />}
-              title={q ? 'No matching workers' : 'Nobody is rostered today'}
-              description={q ? 'Try a different search.' : 'No roster or worked hours have been entered for today.'}
-              action={!q ? <Link to="/roster"><Button variant="outline" size="sm">Open the roster</Button></Link> : undefined}
-              className="border-dashed"
-            />
+      {/* 1. What needs doing */}
+      <section aria-labelledby="attention-heading">
+        <h2 id="attention-heading" className="text-sm font-semibold text-[var(--muted)] mb-2">Needs your attention</h2>
+        <Card className="p-0 overflow-hidden">
+          {attention.length === 0 ? (
+            <p className="p-4 flex items-center gap-2 text-sm text-[var(--text)]">
+              <CheckCircle2 className="w-4 h-4 text-[var(--success)]" aria-hidden="true" />
+              Nothing needs you right now. Timesheets and leave are up to date.
+            </p>
           ) : (
-            <div className="divide-y divide-[var(--border)] max-h-[520px] overflow-y-auto pr-1">
+            <ul className="divide-y divide-[var(--border)]">
+              {attention.map(item => (
+                <li key={item.key} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3">
+                  <p className="flex items-start gap-2.5 text-sm text-[var(--text)]"><span className="mt-0.5 shrink-0">{item.icon}</span><span>{item.text}</span></p>
+                  {item.action && (
+                    <Link to={item.action.to} className="shrink-0 self-start sm:self-auto">
+                      <Button variant="secondary" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />}>{item.action.label}</Button>
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </section>
+
+      {/* 2. Today's staffing */}
+      <section aria-labelledby="staffing-heading" className="space-y-2">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+          <div>
+            <h2 id="staffing-heading" className="text-sm font-semibold text-[var(--muted)]">Today’s staffing</h2>
+            <p className="text-sm text-[var(--text)]">
+              <strong>{metrics?.scheduled_today ?? 0}</strong> rostered · <strong>{metrics?.currently_working ?? 0}</strong> working now
+            </p>
+          </div>
+          {(data?.scheduled_today.length ?? 0) > 5 && (
+            <div className="relative w-full sm:w-56">
+              <label htmlFor="staff-search" className="sr-only">Find a worker</label>
+              <Search className="w-3.5 h-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+              <input id="staff-search" type="search" placeholder="Find a worker" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                className="w-full h-10 pl-9 pr-3 text-sm rounded-lg bg-[var(--input-bg)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--primary)]" />
+            </div>
+          )}
+        </div>
+        <Card className="p-0 overflow-hidden">
+          {scheduled.length === 0 ? (
+            <div className="p-6 text-center space-y-2">
+              <p className="text-sm font-semibold text-[var(--text)]">{q ? `No worker matches “${searchQuery.trim()}”.` : 'Nobody is rostered today.'}</p>
+              {!q && <p className="text-sm text-[var(--muted)]">Shifts added on the roster for today show up here, with who has started.</p>}
+              {!q && can('rosters.manage') && <Link to="/roster" className="inline-block"><Button variant="secondary" size="sm">Open the roster</Button></Link>}
+            </div>
+          ) : (
+            <ul className="divide-y divide-[var(--border)] max-h-[32rem] overflow-y-auto">
               {scheduled.map(worker => (
-                <div key={worker.employee_id} className="py-3 px-2 space-y-2 rounded-lg hover:bg-[var(--hover-row)] transition-colors">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-[var(--primary-light)] text-[var(--primary)] font-bold text-xs flex items-center justify-center shrink-0">
-                        {worker.full_name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-semibold text-xs text-[var(--text)] truncate">{worker.full_name}</span>
-                          {worker.department && <Badge size="sm">{worker.department}</Badge>}
-                        </div>
-                        {worker.phone && (
-                          <a href={`tel:${worker.phone}`} className="flex items-center gap-1 text-[11px] text-[var(--muted)] hover:text-[var(--text)] mt-0.5 w-fit">
-                            <Phone className="w-3 h-3 text-[var(--primary)]" />
-                            <span className="font-mono">{worker.phone}</span>
-                          </a>
-                        )}
-                      </div>
+                <li key={worker.employee_id} className="px-4 py-3 space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-semibold text-sm text-[var(--text)]">{worker.full_name}</span>
+                      {worker.department && <span className="text-xs text-[var(--muted)]"> · {worker.department}</span>}
+                      {worker.phone && (
+                        <a href={`tel:${worker.phone}`} className="ml-2 inline-flex items-center gap-1 text-xs text-[var(--primary-text)] hover:underline" aria-label={`Call ${worker.full_name}`}>
+                          <Phone className="w-3 h-3" aria-hidden="true" /> {worker.phone}
+                        </a>
+                      )}
                     </div>
                     {workerStatus(worker)}
                   </div>
-                  <div className="pl-11 space-y-1">
-                    {worker.segments.map(segment => (
-                      <SegmentRow key={segment.segment_id} segment={segment} />
-                    ))}
-                  </div>
-                </div>
+                  <ul className="space-y-1">
+                    {worker.segments.map(segment => <SegmentRow key={segment.segment_id} segment={segment} />)}
+                  </ul>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </Card>
+      </section>
 
-        <div className="space-y-6">
-          {/* Timesheets waiting for approval */}
-          <Card className="p-5 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[var(--border)]">
-              <div className="flex items-center gap-2">
-                <FileCheck2 className="w-4 h-4 text-[var(--warn)]" />
-                <h2 className="font-semibold text-xs text-[var(--text)] uppercase tracking-wider">Waiting for approval</h2>
-              </div>
-              <Badge variant={pending.length > 0 ? 'warning' : 'outline'} size="sm">{pending.length}</Badge>
-            </div>
-
-            {pending.length === 0 ? (
-              <div className="py-6 text-center text-[var(--muted)] text-xs">
-                <CheckCircle2 className="w-6 h-6 text-[var(--success)] mx-auto mb-1 opacity-80" />
-                Every timesheet in this pay period is approved.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {pending.slice(0, 6).map(t => (
-                  <div key={t.employee_id} className="p-2.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)] flex items-center justify-between gap-2 text-xs">
-                    <div className="min-w-0">
-                      <div className="font-semibold text-[var(--text)] truncate">{t.full_name}</div>
-                      <div className="text-[10px] text-[var(--muted)] truncate">
-                        {[t.location_name, t.department].filter(Boolean).join(' • ')}
-                      </div>
-                    </div>
-                    <Badge variant={STATUS_VARIANT[t.status as DayStatus] ?? 'outline'} size="sm">{t.status}</Badge>
-                  </div>
-                ))}
-                <Link to="/timesheets" className="block pt-1">
-                  <Button variant="primary" size="sm" className="w-full" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                    {pending.length > 6 ? `Review all ${pending.length} timesheets` : 'Review timesheets'}
-                  </Button>
-                </Link>
-              </div>
-            )}
-          </Card>
-
-          {/* Quick links */}
-          <Card className="p-4 space-y-2 text-xs">
-            <div className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Quick links</div>
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              {QUICK_LINKS.map(link => (
-                <Link
-                  key={link.to}
-                  to={link.to}
-                  className="p-2.5 rounded-lg bg-[var(--panel-subtle)] hover:bg-[var(--hover-row)] border border-[var(--border)] flex items-center gap-2 text-[var(--text)] transition-colors"
-                >
-                  <link.icon className="w-3.5 h-3.5 text-[var(--primary)]" />
-                  <span className="font-medium">{link.label}</span>
-                </Link>
+      {/* 3. The pay period */}
+      {(data?.branch_status.length ?? 0) > 0 && (
+        <section aria-labelledby="period-heading" className="space-y-2">
+          <h2 id="period-heading" className="text-sm font-semibold text-[var(--muted)] flex items-center gap-0.5">
+            This pay period
+            <HelpTip label="Locks">A locked roster can’t be changed, but worked hours can still be recorded. Locked timesheets can’t be changed at all. Locks are set on the Roster page.</HelpTip>
+          </h2>
+          <Card className="p-0 overflow-hidden">
+            <ul className="divide-y divide-[var(--border)]">
+              {data!.branch_status.map(b => (
+                <li key={b.location_id} className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <span className="font-semibold text-[var(--text)]">{b.location_name}</span>
+                  <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[var(--muted)]">
+                    <span className="flex items-center gap-1.5">Roster <LockState locked={b.roster_locked} /></span>
+                    <span className="flex items-center gap-1.5">Timesheets <LockState locked={b.timesheet_locked} /></span>
+                    <span>{b.timesheets_approved} of {b.active_workers} approved</span>
+                  </span>
+                </li>
               ))}
-            </div>
+            </ul>
           </Card>
-        </div>
-      </div>
+        </section>
+      )}
+
+      {/* 4. Organisation (Owner only; the API returns null for everyone else) */}
+      {data?.organisation && (
+        <section aria-labelledby="org-heading" className="space-y-2">
+          <h2 id="org-heading" className="text-sm font-semibold text-[var(--muted)]">Your organisation</h2>
+          <Card className="p-4 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-[var(--text)] flex items-center gap-0.5">
+                Sign-in link
+                <HelpTip label="Sign-in link">This is the only place anyone signs in to {data.organisation.name}. Share it with your Branch Admins and any workers you give access. Manage it in Settings → Security.</HelpTip>
+              </p>
+              {data.organisation.sign_in_link ? (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-1">
+                  <div className="flex-1 min-w-0 px-3 py-2 rounded-md bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] truncate select-all">{data.organisation.sign_in_link}</div>
+                  <Button variant="secondary" size="sm" onClick={() => handleCopyLink(data.organisation!.sign_in_link!)} leftIcon={<Copy className="w-3.5 h-3.5" aria-hidden="true" />}>Copy link</Button>
+                </div>
+              ) : (
+                <p className="text-sm text-[var(--danger)] mt-1">Expired. <Link to="/settings?tab=security" className="underline font-semibold">Renew it in Settings</Link>.</p>
+              )}
+            </div>
+            <p className="text-sm text-[var(--muted)]">
+              {data.organisation.branch_admins} Branch Admin{data.organisation.branch_admins === 1 ? '' : 's'} ·{' '}
+              <Link to="/branch-admins" className="text-[var(--primary-text)] font-semibold hover:underline">Manage</Link>
+            </p>
+          </Card>
+        </section>
+      )}
     </div>
   );
 }

@@ -230,7 +230,7 @@ export default function Locations() {
             <div className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Branches</div>
             <div className="text-2xl font-bold text-[var(--text)] mt-1">{branches.length}</div>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center">
             <Building2 className="w-5 h-5" />
           </div>
         </Card>
@@ -246,9 +246,9 @@ export default function Locations() {
         <Card className="p-4 flex items-center justify-between">
           <div>
             <div className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Active workers</div>
-            <div className="text-2xl font-bold text-[var(--primary)] mt-1">{workerCount}</div>
+            <div className="text-2xl font-bold text-[var(--primary-text)] mt-1">{workerCount}</div>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center">
             <Users className="w-5 h-5" />
           </div>
         </Card>
@@ -316,7 +316,7 @@ export default function Locations() {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3 min-w-0">
                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                    branch.is_active ? 'bg-[var(--primary-light)] text-[var(--primary)]' : 'bg-[var(--glass-8)] text-[var(--muted)]'
+                    branch.is_active ? 'bg-[var(--primary-light)] text-[var(--primary-text)]' : 'bg-[var(--glass-8)] text-[var(--muted)]'
                   }`}>
                     <Building2 className="w-4 h-4" />
                   </div>
@@ -384,7 +384,7 @@ export default function Locations() {
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-semibold text-[var(--muted)] uppercase tracking-wider">Branch Admins</span>
                   {canManageAdmins && (
-                    <Link to="/branch-admins" className="text-[var(--primary)] hover:underline font-bold">
+                    <Link to="/branch-admins" className="text-[var(--primary-text)] hover:underline font-bold">
                       Manage
                     </Link>
                   )}

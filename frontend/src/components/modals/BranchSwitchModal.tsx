@@ -61,7 +61,7 @@ export const BranchSwitchModal: React.FC<BranchSwitchModalProps> = ({ isOpen, on
                     <Check className="w-3.5 h-3.5" />
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--primary)] shrink-0">
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--primary-text)] shrink-0">
                     Switch <ArrowRight className="w-3.5 h-3.5" />
                   </span>
                 )}

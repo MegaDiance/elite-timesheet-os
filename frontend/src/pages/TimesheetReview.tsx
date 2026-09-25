@@ -5,7 +5,6 @@ import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
 import { useToast } from '../components/ui/Toast';
-import { Badge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -15,12 +14,12 @@ import { Dialog, buttonClass } from '../components/roster/Dialog';
 import { apiErrorMessage, signedHours, type BulkApproveResult, type TimesheetRow, type TimesheetStatus } from '../components/roster/api';
 import { currentFortnightIso, dayLabel, fortnightDays, isWeekendIso, periodLabel, shiftIso, todayIso } from '../components/roster/dates';
 import { formatHours, readDay, type DayRecord } from '../components/roster/day';
+import { TimesheetStatusBadge, TimesheetStatusGuide } from '../components/TimesheetStatus';
 
 type Tab = 'waiting' | 'approved' | 'locked' | 'all';
 
 const TAB_STATUS: Record<Exclude<Tab, 'all'>, TimesheetStatus> = { waiting: 'Draft', approved: 'Approved', locked: 'Locked' };
 const TAB_LABEL: Record<Tab, string> = { waiting: 'Waiting', approved: 'Approved', locked: 'Locked', all: 'All' };
-const STATUS_VARIANT: Record<TimesheetStatus, 'outline' | 'success' | 'warning'> = { Draft: 'outline', Approved: 'success', Locked: 'warning' };
 
 /**
  * Timesheet approval for a pay period. Hours are entered by the Organisation Owner or a Branch
@@ -291,6 +290,23 @@ export default function TimesheetReview() {
         </div>
       </Card>
 
+      {/* How it works, in one line — the details are a click away */}
+      <details data-tour="timesheet-status" className="group rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+        <summary className="cursor-pointer list-none flex flex-wrap items-center gap-2 text-sm text-[var(--text)]">
+          <span className="font-semibold">How approval works:</span>
+          <TimesheetStatusBadge status="Draft" /> <span aria-hidden="true">→</span>
+          <TimesheetStatusBadge status="Approved" /> <span aria-hidden="true">→</span>
+          <TimesheetStatusBadge status="Locked" />
+          <span className="text-xs text-[var(--primary-text)] font-semibold group-open:hidden">What do these mean?</span>
+        </summary>
+        <div className="pt-3 space-y-3">
+          <TimesheetStatusGuide />
+          <p className="text-xs text-[var(--muted)]">
+            Hours are entered on the <Link to="/roster" className="text-[var(--primary-text)] font-semibold hover:underline">Roster</Link>. This page is for checking each person’s fortnight and approving it.
+          </p>
+        </div>
+      </details>
+
       {/* Tabs and search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div role="group" aria-label="Filter by status" className="flex items-center gap-1 p-1 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] overflow-x-auto">
@@ -337,8 +353,14 @@ export default function TimesheetReview() {
       ) : visible.length === 0 ? (
         <EmptyState
           icon={<FileCheck2 className="w-5 h-5" aria-hidden="true" />}
-          title="No timesheets in this view"
-          description={tab === 'waiting' ? 'Nothing is waiting for approval in this pay period.' : 'No timesheets match this filter.'}
+          title={search.trim() ? `No timesheet matches “${search.trim()}”` : tab === 'waiting' ? 'Nothing is waiting for approval' : 'No timesheets in this view'}
+          description={search.trim()
+            ? 'Check the spelling, or clear the search.'
+            : tab === 'waiting'
+              ? 'Every timesheet in this pay period is approved. Use the arrows above to check another pay period.'
+              : rows.length === 0
+                ? 'There are no active workers in this branch yet. Add workers, give them shifts on the Roster, and their timesheets appear here.'
+                : 'No timesheets have this status. “All” shows every timesheet in the pay period.'}
           action={tab !== 'all' ? <button type="button" onClick={() => setTab('all')} className={buttonClass.secondary}>Show all</button> : undefined}
         />
       ) : (
@@ -396,11 +418,7 @@ export default function TimesheetReview() {
                     <div>
                       <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Status</dt>
                       <dd>
-                        <Badge variant={STATUS_VARIANT[row.status]} size="sm">
-                          {row.status === 'Approved' && <CheckCircle2 className="w-3 h-3" aria-hidden="true" />}
-                          {row.status === 'Locked' && <Lock className="w-3 h-3" aria-hidden="true" />}
-                          {row.status}
-                        </Badge>
+                        <TimesheetStatusBadge status={row.status} />
                       </dd>
                     </div>
                   </dl>
@@ -446,7 +464,7 @@ export default function TimesheetReview() {
                       <>
                         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                           <PlannedWorkedKey />
-                          <Link to="/roster" className="text-xs font-semibold text-[var(--primary)] hover:underline">Change days on the roster</Link>
+                          <Link to="/roster" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Change days on the roster</Link>
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-4">
                           {[0, 1].map(week => (
@@ -456,7 +474,7 @@ export default function TimesheetReview() {
                                 const holidayName = holidays.get(iso);
                                 return (
                                   <li key={iso} className={`grid grid-cols-[5.25rem_minmax(0,1fr)] gap-2 rounded-lg border border-[var(--border)] p-2 ${holidayName ? PUBLIC_HOLIDAY_CLASS : isWeekendIso(iso) ? WEEKEND_CLASS : 'bg-[var(--panel-subtle)]'}`}>
-                                    <span className={`text-xs font-semibold leading-5 whitespace-nowrap ${iso === today ? 'text-[var(--primary)]' : 'text-[var(--text)]'}`}>{dayLabel(iso)}</span>
+                                    <span className={`text-xs font-semibold leading-5 whitespace-nowrap ${iso === today ? 'text-[var(--primary-text)]' : 'text-[var(--text)]'}`}>{dayLabel(iso)}</span>
                                     <div className="min-w-0">
                                       {holidayName && <PublicHolidayBadge name={holidayName} />}
                                       <DayLines day={record ?? { roster: [], timesheet: [], note: null }} variant="regular" />

@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
-import { CalendarDays } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { CalendarCheck2, RotateCcw } from 'lucide-react';
 import api from '../services/apiClient';
-import { apiErrorMessage } from '../components/roster/api';
+import { apiErrorMessage, skipReason } from '../components/roster/api';
 import { buttonClass, inputClass } from '../components/roster/Dialog';
-import { Badge } from '../components/ui/Badge';
 import { dayLabel } from '../components/roster/dates';
 import { TYPE_LABEL, type EntryType } from '../components/roster/day';
+import { LEAVE_TYPE_HELP, LeaveStatusBadge, type LeaveState } from '../components/LeaveStatus';
+import { HelpTip } from '../components/ui/HelpTip';
+import { useToast } from '../components/ui/Toast';
 
 interface AdminLeaveRequest {
   id: string;
@@ -19,120 +22,152 @@ interface AdminLeaveRequest {
   end_time: string | null;
   hours: number | null;
   reason: string | null;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: LeaveState;
   rejection_reason: string | null;
 }
 
-const STATUS_VARIANT: Record<AdminLeaveRequest['status'], 'outline' | 'success' | 'danger'> = { Pending: 'outline', Approved: 'success', Rejected: 'danger' };
-
-/** Owner/Branch Admin review of leave requests from workers in their branches. */
+/** Owner / Branch Admin: decide on leave requests from workers in the branches they manage. */
 export default function LeaveRequests() {
+  const toast = useToast();
   const [status, setStatus] = useState<'Pending' | 'all'>('Pending');
   const [rows, setRows] = useState<AdminLeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [rejecting, setRejecting] = useState<string | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
-    api.get(`/leave-requests${status === 'Pending' ? '?status=Pending' : ''}`).then(res => setRows(res.data.data)).finally(() => setLoading(false));
-  };
-  useEffect(load, [status]);
+    setLoadError(null);
+    api.get(`/leave-requests${status === 'Pending' ? '?status=Pending' : ''}`)
+      .then(res => setRows(res.data.data))
+      .catch(err => setLoadError(apiErrorMessage(err, 'Leave requests could not be loaded.')))
+      .finally(() => setLoading(false));
+  }, [status]);
+  useEffect(load, [load]);
 
-  const approve = async (id: string) => {
-    setBusyId(id);
-    setError(null);
-    setNotice(null);
+  const decide = async (row: AdminLeaveRequest, decision: 'approve' | 'reject') => {
+    setBusyId(row.id);
     try {
-      const res = await api.post(`/leave-requests/${id}/review`, { decision: 'approve' });
-      setNotice(res.data.message);
+      const res = await api.post(`/leave-requests/${row.id}/review`, decision === 'approve'
+        ? { decision }
+        : { decision, rejection_reason: declineReason.trim() || undefined });
+      const skipped: Array<{ date: string; reason: string }> = res.data?.data?.skipped ?? [];
+      if (decision === 'reject') toast.success(`${row.employee_name}’s leave was declined.`);
+      else if (skipped.length === 0) toast.success(`${row.employee_name}’s leave is approved and added to the roster.`);
+      else toast.success(`Approved. Not added on ${skipped.map(s => `${dayLabel(s.date)} (${skipReason(s.reason)})`).join(', ')}. Change those days on the Roster if needed.`);
+      setDeclining(null);
+      setDeclineReason('');
       load();
     } catch (err) {
-      setError(apiErrorMessage(err, 'Could not approve this request.'));
+      toast.error(apiErrorMessage(err, decision === 'approve' ? 'This request could not be approved.' : 'This request could not be declined.'));
     } finally {
       setBusyId(null);
     }
   };
 
-  const reject = async (id: string) => {
-    setBusyId(id);
-    setError(null);
-    try {
-      await api.post(`/leave-requests/${id}/review`, { decision: 'reject', rejection_reason: rejectionReason || undefined });
-      setRejecting(null);
-      setRejectionReason('');
-      load();
-    } catch (err) {
-      setError(apiErrorMessage(err, 'Could not reject this request.'));
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const when = (r: AdminLeaveRequest) => [
+    r.start_date === r.end_date ? dayLabel(r.start_date, 'long') : `${dayLabel(r.start_date)} – ${dayLabel(r.end_date)}`,
+    r.start_time && r.end_time ? `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}` : null,
+    r.hours != null ? `${r.hours} h` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center justify-between gap-3">
+    <div className="max-w-3xl mx-auto space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-[var(--text)] flex items-center gap-2">
-            <CalendarDays className="w-5 h-5 text-[var(--primary)]" />
-            Leave Requests
+          <h1 className="text-xl font-bold text-[var(--text)] flex items-center gap-1">
+            Leave requests
+            <HelpTip label="Leave types">{LEAVE_TYPE_HELP}</HelpTip>
           </h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">Requests from workers in your branches.</p>
+          <p className="text-sm text-[var(--muted)] mt-0.5">
+            Approving adds the leave to that person’s roster and worked hours for those days. Days that are approved or locked are left as they are and listed.
+          </p>
         </div>
-        <div className="flex gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]">
-          <button onClick={() => setStatus('Pending')} className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${status === 'Pending' ? 'bg-[var(--panel)] text-[var(--text)] shadow-sm' : 'text-[var(--muted)]'}`}>Pending</button>
-          <button onClick={() => setStatus('all')} className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${status === 'all' ? 'bg-[var(--panel)] text-[var(--text)] shadow-sm' : 'text-[var(--muted)]'}`}>All</button>
+        <div role="group" aria-label="Show" className="flex gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]">
+          {(['Pending', 'all'] as const).map(s => (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={status === s}
+              onClick={() => setStatus(s)}
+              className={`min-h-10 px-3 rounded-lg text-sm font-semibold ${status === s ? 'bg-[var(--panel)] text-[var(--text)] shadow-sm' : 'text-[var(--muted)]'}`}
+            >
+              {s === 'Pending' ? 'Waiting' : 'All'}
+            </button>
+          ))}
         </div>
-      </div>
+      </header>
 
-      {notice && <div className="p-3 rounded-xl bg-[var(--success-light)] border border-[var(--success)]/25 text-sm text-[var(--success)]">{notice}</div>}
-      {error && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-sm text-rose-400">{error}</div>}
-
-      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)] overflow-hidden">
-        {loading ? (
-          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading…</div>
+      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl overflow-hidden">
+        {loadError ? (
+          <div role="alert" className="p-4 flex flex-wrap items-center justify-between gap-3 text-sm text-[var(--danger)]">
+            {loadError}
+            <button type="button" onClick={load} className={`${buttonClass.secondary} h-11`}><RotateCcw className="w-4 h-4" aria-hidden="true" /> Try again</button>
+          </div>
+        ) : loading ? (
+          <p className="p-8 text-center text-sm text-[var(--muted)]">Loading leave requests…</p>
         ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[var(--muted)]">No {status === 'Pending' ? 'pending ' : ''}leave requests.</div>
+          <div className="p-8 text-center space-y-2">
+            <CalendarCheck2 className="w-6 h-6 mx-auto text-[var(--success)]" aria-hidden="true" />
+            <p className="text-sm font-semibold text-[var(--text)]">{status === 'Pending' ? 'No leave is waiting for a decision.' : 'No leave requests yet.'}</p>
+            <p className="text-sm text-[var(--muted)]">
+              {status === 'Pending'
+                ? 'New requests from your workers appear here. Past decisions are under “All”.'
+                : <>Workers with portal access can ask for leave from their phone. Give access on <Link to="/workers" className="text-[var(--primary-text)] font-semibold hover:underline">Workers</Link>. You can also enter leave yourself on the Roster.</>}
+            </p>
+          </div>
         ) : (
-          rows.map(r => (
-            <div key={r.id} className="px-4 py-3">
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-[var(--text)]">{r.employee_name} · {r.location_name}</div>
-                  <div className="text-xs text-[var(--muted)]">
-                    {TYPE_LABEL[r.leave_type]} · {r.start_date === r.end_date ? dayLabel(r.start_date) : `${dayLabel(r.start_date)} – ${dayLabel(r.end_date)}`}
-                    {r.start_time && r.end_time && ` · ${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}`}
-                    {r.hours != null && ` · ${r.hours} h`}
+          <ul className="divide-y divide-[var(--border)]">
+            {rows.map(r => (
+              <li key={r.id} className="px-4 py-3 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[var(--text)]">
+                      {r.employee_name} <span className="font-normal text-[var(--muted)]">· {r.location_name}</span>
+                    </p>
+                    <p className="text-sm text-[var(--text)]">{TYPE_LABEL[r.leave_type]} · {when(r)}</p>
+                    {r.reason && <p className="text-sm text-[var(--muted)] mt-0.5">“{r.reason}”</p>}
+                    {r.status === 'Rejected' && r.rejection_reason && <p className="text-sm text-[var(--danger)] mt-0.5">Why declined: {r.rejection_reason}</p>}
                   </div>
-                  {r.reason && <div className="text-xs text-[var(--muted)] mt-0.5 italic">“{r.reason}”</div>}
-                  {r.status === 'Rejected' && r.rejection_reason && <div className="text-xs text-[var(--danger)] mt-0.5">Reason: {r.rejection_reason}</div>}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <LeaveStatusBadge status={r.status} />
+                    {r.status === 'Pending' && (
+                      <>
+                        <button type="button" onClick={() => decide(r, 'approve')} disabled={busyId === r.id} className={`${buttonClass.primary} h-10`}>
+                          {busyId === r.id ? 'Saving…' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setDeclining(declining === r.id ? null : r.id); setDeclineReason(''); }}
+                          aria-expanded={declining === r.id}
+                          disabled={busyId === r.id}
+                          className={`${buttonClass.secondary} h-10`}
+                        >
+                          Decline…
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant={STATUS_VARIANT[r.status]}>{r.status}</Badge>
-                  {r.status === 'Pending' && (
-                    <>
-                      <button onClick={() => approve(r.id)} disabled={busyId === r.id} className={buttonClass.primary}>Approve</button>
-                      <button onClick={() => setRejecting(rejecting === r.id ? null : r.id)} disabled={busyId === r.id} className={buttonClass.secondary}>Reject</button>
-                    </>
-                  )}
-                </div>
-              </div>
-              {rejecting === r.id && (
-                <div className="mt-2 flex gap-2">
-                  <input
-                    value={rejectionReason}
-                    onChange={e => setRejectionReason(e.target.value)}
-                    placeholder="Reason (optional)"
-                    className={`${inputClass} flex-1`}
-                  />
-                  <button onClick={() => reject(r.id)} disabled={busyId === r.id} className={buttonClass.primary}>Confirm reject</button>
-                </div>
-              )}
-            </div>
-          ))
+                {declining === r.id && (
+                  <div className="flex flex-col sm:flex-row gap-2 rounded-lg bg-[var(--panel-subtle)] p-2">
+                    <label htmlFor={`decline-${r.id}`} className="sr-only">Why are you declining? (optional)</label>
+                    <input
+                      id={`decline-${r.id}`}
+                      value={declineReason}
+                      onChange={e => setDeclineReason(e.target.value)}
+                      placeholder={`Tell ${r.employee_name.split(' ')[0]} why (optional)`}
+                      maxLength={500}
+                      className={`${inputClass} flex-1 min-h-10`}
+                    />
+                    <button type="button" onClick={() => decide(r, 'reject')} disabled={busyId === r.id} className={`${buttonClass.danger} h-10`}>Decline request</button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

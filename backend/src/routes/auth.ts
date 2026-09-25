@@ -73,7 +73,7 @@ async function describeAccess(userId: string, orgId: string) {
     const access = await resolveAccess(userId, orgId);
     if (!access) return null;
     const [userRes, orgRes, branchRes] = await Promise.all([
-        query('SELECT id, email, full_name, two_factor_enabled FROM users WHERE id = $1', [userId]),
+        query('SELECT id, email, full_name, two_factor_enabled, tutorial_version FROM users WHERE id = $1', [userId]),
         query('SELECT id, name, employees_can_submit_timesheets FROM organisations WHERE id = $1', [orgId]),
         query('SELECT id, name, address, timezone, is_active FROM locations WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name ASC', [orgId, access.branchIds]),
     ]);
@@ -444,6 +444,24 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         res.json({ success: true, data: description });
     } catch (err) {
         sendError(res, err, 'GET ME ERROR');
+    }
+});
+
+/**
+ * PUT /api/auth/me/tutorial  { version }
+ * Records that the signed-in person finished or skipped the first-time walkthrough, so it is not
+ * shown again on another device. Their own account only; there is nothing else to change here.
+ */
+router.put('/me/tutorial', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const version = req.body?.version;
+        if (!Number.isInteger(version) || version < 1 || version > 1000) {
+            return res.status(400).json({ success: false, error: { code: 'VALIDATION_FAILED', message: 'Choose which walkthrough was finished.' } });
+        }
+        await query('UPDATE users SET tutorial_version = $1, tutorial_completed_at = NOW() WHERE id = $2', [version, req.auth!.userId]);
+        res.json({ success: true, data: { tutorial_version: version } });
+    } catch (err) {
+        sendError(res, err, 'TUTORIAL PROGRESS ERROR');
     }
 });
 

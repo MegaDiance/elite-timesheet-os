@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { X } from 'lucide-react';
 
 const FOCUSABLE = [
@@ -37,14 +37,16 @@ interface DialogProps {
 }
 
 /**
- * Accessible modal dialog: role="dialog", aria-modal, labelled by its title, Escape closes,
- * Tab stays inside, and focus returns to where it was when the dialog closes.
+ * Modal focus behaviour shared by every dialog in the app: focus moves into the panel, Tab and
+ * Shift+Tab stay inside it, Escape closes the top-most dialog only, the page behind stops
+ * scrolling, and focus returns to the control that opened the dialog when it closes.
  */
-export function Dialog({ title, description, onClose, children, footer, size = 'md', closeDisabled = false, onSubmit, sheet = false }: DialogProps) {
-  const titleId = useId();
-  const descriptionId = useId();
-  const panelRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+export function useDialogFocus(
+  panelRef: RefObject<HTMLElement | null>,
+  onClose: () => void,
+  closeDisabled = false,
+  initialFocusWithin?: RefObject<HTMLElement | null>,
+) {
   const [returnFocusTo] = useState(() => (typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null));
 
   const onCloseRef = useRef(onClose);
@@ -59,7 +61,7 @@ export function Dialog({ title, description, onClose, children, footer, size = '
     openDialogs.push(id);
     const panel = panelRef.current;
     if (panel && !panel.contains(document.activeElement)) {
-      const target = bodyRef.current?.querySelector<HTMLElement>(FOCUSABLE) ?? panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel;
+      const target = initialFocusWithin?.current?.querySelector<HTMLElement>(FOCUSABLE) ?? panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel;
       target.focus();
     }
     const previousOverflow = document.body.style.overflow;
@@ -101,6 +103,18 @@ export function Dialog({ title, description, onClose, children, footer, size = '
       if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus();
     };
   }, [returnFocusTo]);
+}
+
+/**
+ * Accessible modal dialog: role="dialog", aria-modal, labelled by its title, Escape closes,
+ * Tab stays inside, and focus returns to where it was when the dialog closes.
+ */
+export function Dialog({ title, description, onClose, children, footer, size = 'md', closeDisabled = false, onSubmit, sheet = false }: DialogProps) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(panelRef, onClose, closeDisabled, bodyRef);
 
   const content = (
     <>

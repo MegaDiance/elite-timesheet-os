@@ -383,6 +383,47 @@ Keep these; do not introduce new brand colours.
 
 ---
 
+## 15a. What is built [CURRENT 2026-09-25]
+
+The principle: someone who has never used a roster or timesheet system can work out what to do without help. Where this section and the [REQUIRED]/[PROPOSED] sections above differ, this is what the product does today.
+
+### Navigation (`components/Layout.tsx`)
+- Built only from the permissions `/auth/me` reports. Anything a person can't use is **left out**, never shown disabled. Employees with employee timesheets switched off have no "My timesheet" or "My past hours" at all; the routes redirect and the API refuses them (403 `EMPLOYEE_TIMESHEETS_DISABLED`).
+- Managers: *Daily work* (Today, Roster, Timesheets, Leave requests), *People* (Workers, Branch Admins), *Records* (Reports, Audit log), *Organisation* (Branches, Team chat, Settings), then Help. Employees: My schedule, My timesheet, My past hours, Leave.
+- "Where am I": organisation, branch (with a help tip that people only see their assigned branches) and role, at the top of the menu.
+- "What needs attention": counts on Timesheets and Leave requests from `GET /api/dashboard/attention` (scoped like every other list), with screen-reader text.
+- The desktop menu stays open (it folds to icons on the roster to give the grid room). Phones: a bottom bar with the daily tasks plus "More", and a skip-to-content link.
+
+### Statuses (`components/TimesheetStatus.tsx`, `components/LeaveStatus.tsx`)
+- Timesheets: **Draft → Approved → Locked** (there is no Submitted state; see PRD). One badge component everywhere, each state with its own icon and word, and one sentence of meaning for managers and one for employees. Colour is never the only signal.
+- Leave: Waiting for a decision / Approved / Declined, again with icons.
+
+### Roster (`pages/Roster.tsx`, `components/roster/*`)
+- Three numbered choices: ① Branch ② Pay period ③ Find a worker (new search).
+- A permanent hint: "Click a day to add or change a shift, leave or a break." Empty days always show a faint "+".
+- Tools grouped and labelled: Fill the fortnight / Approve / Lock / Export, each with a help tip where the meaning isn't obvious.
+- After saving, the day is outlined and tagged "Saved" for a few seconds and a toast says what was saved ("Saved Alice's Mon 14 Sept: rostered 7.5 h").
+- Day editor: lines of `Type · Start → Finish = hours · Break`; "Add time (split shift or leave)"; a Breaks section with "Apply break to all days…" (every day ticked; untick exceptions, which are marked "no change") and "Choose days…". When the organisation merges leave with the roster, the editor says **before saving** exactly how a shift will be split. Closing with unsaved changes asks once, inline ("Keep editing" / "Discard changes").
+
+### Walkthrough (`components/tour/*`)
+- Replaces the old slideshow. A spotlight rings the real element; a small card beside it explains it; clicks go straight through to the app.
+- Managers (9 steps): workspace → find your roster → create a shift (waits for a day to be opened) → enter the times (waits for "9" and "5p") → add a break → add leave (waits for a leave line) → split days (9–1 Work, 1–3 Sick, 3–5 Work) → timesheets (Draft → Approved → Locked) → where daily work lives. Employees: workspace → schedule → (timesheet, if enabled) → leave → finish.
+- Steps that wait for an action complete themselves ("Done") and move on; "Skip" is always available. Nothing is pre-filled or saved by the tour.
+- Shown once per person (`users.tutorial_version`), on their home page; restart from Help or "Show me around". Escape ends it (unless a dialog is open).
+- Pages mark tour targets with `data-tour="…"` (workspace, roster-controls, roster-cell, time-line, break-controls, add-line, save-day, timesheet-status, daily-nav, schedule-today, leave-form, my-timesheet). Keep these when changing those screens.
+
+### Help, errors and empty states
+- Help (`components/ContextHelpModal.tsx`): the walkthrough plus short answers written for the person's role. The keyword chatbot was removed.
+- `HelpTip` (`components/ui/HelpTip.tsx`): a "?" beside a label, opened by click or tap, for status, locks, breaks, leave types, branch access and the sign-in link.
+- Errors go through `services/errors.ts` (`friendlyError`): the server's own sentence when it is written for people, otherwise plain language ("You don't have access to this. It may belong to a branch you aren't assigned to."). Technical detail goes to the console only. Failed loads always show an error with "Try again", never an empty state.
+- Empty states say what is missing, why it matters, and offer the next action (e.g. Roster with no workers → "Add a worker").
+- Toasts stay long enough to read (longer for errors), wrap instead of truncating, sit above the phone bar, and are announced to screen readers.
+
+### Mobile and accessibility
+- Workers and Audit log switch from tables to one card per row below 768 px; the roster switches to a day picker with one card per worker.
+- Light-theme `--muted`, `--warn`, `--success`, `--danger` darkened to ≥ 4.5:1; `--primary-text` (a lighter blue in dark mode) is used for text, since the brand blue is 3.2:1 on dark panels. Visible focus ring everywhere; `prefers-reduced-motion` respected.
+- `ui/Modal` now shares the roster `Dialog`'s focus handling (`useDialogFocus`): focus moves in, Tab stays inside, Escape closes the top dialog, focus returns afterwards.
+
 ## 16. Consistency with other documents
 
 - Navigation areas (§4–5) map 1:1 to capability groups in TRD §5.3.

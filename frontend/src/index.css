@@ -7,6 +7,8 @@
   --primary: #3b5bdb;
   --primary-h: #2f4ac4;
   --primary-light: rgba(59, 91, 219, 0.12);
+  /* Primary as text/links: the brand blue is too dark to read on dark panels (3.2:1). */
+  --primary-text: #8ea2ff;
   --success: #10b981;
   --success-light: rgba(16, 185, 129, 0.12);
   --danger: #ef4444;
@@ -38,14 +40,15 @@ html[data-theme='light'], body.light-mode {
   --primary: #3b5bdb;
   --primary-h: #2f4ac4;
   --primary-light: rgba(59, 91, 219, 0.08);
-  --success: #0a8a5e;
+  --primary-text: #3b5bdb;
+  --success: #087a53;
   --success-light: rgba(10, 138, 94, 0.08);
-  --danger: #c42b2b;
+  --danger: #b42323;
   --danger-light: rgba(196, 43, 43, 0.08);
-  --warn: #c27d0a;
+  --warn: #9a5b00;
   --warn-light: rgba(194, 125, 10, 0.08);
   --text: #1a1f36;
-  --muted: #6b7a99;
+  --muted: #56627d;
   --border: #e3e8f0;
   --border-hover: #c8d0e0;
   --input-bg: #ffffff;
@@ -87,3 +90,14 @@ body {
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Keyboard focus is always visible (mouse clicks don't show it). Components may style their own. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--primary-text);
+  outline-offset: 2px;
+}
+
+/* Respect "reduce motion": no sliding, zooming or spotlight animation. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

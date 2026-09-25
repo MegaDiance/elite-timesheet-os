@@ -98,7 +98,7 @@ export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
         )}
 
         <div className="bg-[var(--panel-subtle)] p-3 rounded-md border border-[var(--border)] text-xs text-[var(--muted)] flex items-start gap-2.5">
-          <Info className="w-4 h-4 text-[var(--primary)] shrink-0 mt-0.5" />
+          <Info className="w-4 h-4 text-[var(--primary-text)] shrink-0 mt-0.5" />
           <span>
             Locking or unlocking a pay period always accepts the person's own account password. A lock password is an extra,
             shared password for that kind of lock. Leave a field blank to keep the current one.

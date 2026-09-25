@@ -50,7 +50,7 @@ function formatDetails(details: string | null): string {
 function actionTone(action: string): string {
   if (/DELETE|REMOVE|REVOKE|DEACTIVATE|FAILED|REJECT/.test(action)) return 'bg-[var(--danger-light)] text-[var(--danger)]';
   if (/CREATE|ADD|APPROVE|INVITE|ACCEPT|REACTIVATE|CONFIGURED/.test(action)) return 'bg-[var(--success-light)] text-[var(--success)]';
-  if (/UPDATE|CHANGE|LOCK|MOVE|TRANSFER|REGENERATE|REOPEN/.test(action)) return 'bg-[var(--primary-light)] text-[var(--primary)]';
+  if (/UPDATE|CHANGE|LOCK|MOVE|TRANSFER|REGENERATE|REOPEN/.test(action)) return 'bg-[var(--primary-light)] text-[var(--primary-text)]';
   return 'bg-[var(--glass-8)] text-[var(--muted)]';
 }
 
@@ -145,7 +145,7 @@ export default function Audit() {
   const controlClass = 'px-3 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] outline-none focus:border-[var(--primary)]';
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden space-y-4">
+    <div className="flex flex-col md:h-[calc(100dvh-5rem)] md:overflow-hidden space-y-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -214,7 +214,7 @@ export default function Audit() {
             <input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setVisible(PAGE_SIZE); }} className={controlClass} />
           </label>
           {hasFilters && (
-            <button onClick={resetFilters} className="text-xs font-semibold text-[var(--primary)] hover:underline cursor-pointer px-1">
+            <button onClick={resetFilters} className="text-xs font-semibold text-[var(--primary-text)] hover:underline cursor-pointer px-1">
               Clear
             </button>
           )}
@@ -233,7 +233,8 @@ export default function Audit() {
             onAction={fetchLogs}
           />
         ) : (
-          <table className="w-full text-left border-collapse">
+          <>
+          <table className="hidden md:table w-full text-left border-collapse">
             <thead className="bg-[var(--table-header)] sticky top-0 z-20">
               <tr>
                 {['Time', 'Actor', 'Action', 'Record', 'Details', 'Change'].map(h => (
@@ -297,6 +298,36 @@ export default function Audit() {
               )}
             </tbody>
           </table>
+
+          {/* Phones: one entry per card, the same information stacked */}
+          <ul className="md:hidden divide-y divide-[var(--border)]">
+            {filteredLogs.slice(0, visible).map(log => {
+              const time = entryTime(log);
+              const details = formatDetails(log.details);
+              const branch = log.location_id ? branchName.get(log.location_id) : null;
+              return (
+                <li key={log.id} className="p-4 space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <span title={log.action} className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${actionTone(log.action)}`}>{humanise(log.action)}</span>
+                    <span className="text-xs text-[var(--muted)] text-right">{time ? new Date(time).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</span>
+                  </div>
+                  <p className="text-sm text-[var(--text)]"><span className="font-semibold">{actorLabel(log)}</span>{log.entity_type && <span className="text-[var(--muted)]"> · {humanise(log.entity_type)}</span>}{branch && <span className="text-[var(--muted)]"> · {branch}</span>}</p>
+                  {details && <p className="text-sm text-[var(--muted)] break-words">{details}</p>}
+                  {(log.previous_value || log.new_value) && (
+                    <p className="text-sm break-words">
+                      {log.previous_value && <span className="text-[var(--danger)] line-through mr-2"><span className="sr-only">Before: </span>{log.previous_value}</span>}
+                      {log.new_value && <span className="text-[var(--success)]"><span className="sr-only">After: </span>{log.new_value}</span>}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+            {filteredLogs.length === 0 && !loading && (
+              <li className="p-8 text-center text-sm text-[var(--muted)]">{hasFilters ? 'No entries match your filters.' : 'Nothing has been recorded yet.'}</li>
+            )}
+            {loading && logs.length === 0 && <li className="p-8 text-center text-sm text-[var(--muted)]">Loading the audit log…</li>}
+          </ul>
+          </>
         )}
         {!error && filteredLogs.length > visible && (
           <div className="p-3 flex items-center justify-center gap-3 border-t border-[var(--border)] text-xs text-[var(--muted)]">

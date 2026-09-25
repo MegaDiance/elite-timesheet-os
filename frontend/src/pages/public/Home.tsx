@@ -210,7 +210,7 @@ function RoleList({ icon: Icon, title, scope, items }: { icon: typeof UserRound;
   return (
     <div className="border-t border-[var(--border)] pt-5">
       <div className="flex items-center gap-3">
-        <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--primary-light)] text-[var(--primary)]">
+        <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--primary-light)] text-[var(--primary-text)]">
           <Icon className="h-4.5 w-4.5" />
         </span>
         <div>

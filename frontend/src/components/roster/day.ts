@@ -16,8 +16,8 @@ export const TYPE_LABEL: Record<EntryType, string> = {
   WORK: 'Normal Work',
   Sick: 'Sick Leave',
   Annual: 'Annual Leave',
-  TIL: 'TIL',
-  LWIP: 'LWIP',
+  TIL: 'Time in lieu',
+  LWIP: 'Leave without pay',
   Other: 'Other',
 };
 
@@ -276,6 +276,34 @@ function mergeLeaveSpans(spans: Span[]): Span[] {
     if (cursor < w.end) result.push({ ...w, start: cursor, end: w.end });
   }
   return result;
+}
+
+/**
+ * When leave sits inside a shift and the organisation merges leave with the roster, the saved day is
+ * not what was typed: the shift is split around the leave. This says so in words, before saving,
+ * e.g. "The 9:00 AM → 5:00 PM shift will be saved as 9:00 AM → 1:00 PM and 2:00 PM → 5:00 PM,
+ * around the Sick leave." Null when nothing will be split.
+ */
+export function describeLeaveMerge(entries: Entry[]): string | null {
+  const spans: Span[] = [];
+  entries.forEach((e, index) => {
+    const span = e.start && e.finish ? spanOf(e.start, e.finish) : null;
+    if (span && typeof span === 'object') spans.push({ index, ...span, type: e.type, hasBreak: e.has_break, breakMins: e.break_mins });
+  });
+  const clock = (m: number) => formatTime(`${String(Math.floor((m % 1440) / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  const range = (s: { start: number; end: number }) => `${clock(s.start)} → ${clock(s.end)}`;
+  const merged = mergeLeaveSpans(spans);
+  const sentences: string[] = [];
+  for (const work of spans.filter(s => s.type === 'WORK')) {
+    const leave = spans.filter(l => l.type !== 'WORK' && l.start < work.end && l.end > work.start);
+    if (leave.length === 0) continue;
+    const pieces = merged.filter(m => m.type === 'WORK' && m.index === work.index);
+    const leaveNames = Array.from(new Set(leave.map(l => TYPE_LABEL[l.type]))).join(' and ');
+    sentences.push(pieces.length === 0
+      ? `The ${range(work)} shift is fully covered by ${leaveNames}, so only the leave will be saved.`
+      : `The ${range(work)} shift will be saved as ${pieces.map(range).join(' and ')}, around the ${leaveNames}.`);
+  }
+  return sentences.length ? sentences.join(' ') : null;
 }
 
 export interface HoursPreview {

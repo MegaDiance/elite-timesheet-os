@@ -429,7 +429,7 @@ Each feature lists what exists now and what is required.
 
 ### 7.13 Authentication and security features
 
-- [CURRENT] Email + password (bcrypt), organisation-specific login URL `/login/:slug` as the **only** sign-in page (the generic `/login` and its organisation picker were removed 2026-09-24: `/login` is a "page not found" and `POST /api/auth/login` requires `organisation_slug`), email one-time-code 2FA (optional per user), suspicious-login email verification, password reset, 15-minute inactivity timeout with warning, 24-hour absolute session, server-side session revocation and "sign out other sessions", login history, rate limiting (5 attempts / 15 min, in-memory), hidden platform gate.
+- [CURRENT] Email + password (bcrypt), the organisation's private sign-in link `/login/<token>` as the **only** sign-in page (the generic `/login` and its organisation picker were removed 2026-09-24). Since 2026-09-25 the **server** answers `/login`, unknown pages and invalid links with a real HTTP 404 (410 for an expired link); the link token is 128-bit, stored hashed + encrypted, optionally expiring and revocable by regenerating (TRD §4.1a), email one-time-code 2FA (optional per user), suspicious-login email verification, password reset, 15-minute inactivity timeout with warning, 24-hour absolute session, server-side session revocation and "sign out other sessions", login history, rate limiting (5 attempts / 15 min, in-memory), hidden platform gate.
 - [REQUIRED] See §11.
 
 ---
@@ -501,7 +501,7 @@ Correct landing page (employee schedule, branch dashboard, admin overview, payro
 - [PROPOSED] Each organisation has an `entry_code`: random, ≥ 128 bits, rotatable by the Owner. Rotation invalidates the old code immediately.
   - `/o/<entry_code>` renders a **generic** SimpleHours sign-in page. No organisation name, logo or other data is shown before authentication.
   - The organisation is resolved server-side from the code **and** the user's membership after the password is verified.
-  - [CURRENT] `/login/:slug` accepts the human-readable `slug`, the 8-character `portal_slug` or the UUID. These keep working only during a communicated transition window, then show the generic page.
+  - [CURRENT 2026-09-25] `/login/<token>` accepts only the organisation's current link token (looked up by hash). The lookup shows the organisation's name after the token is confirmed; nothing else. The `entry_code` rename and a nameless sign-in page remain [PROPOSED].
 - [REQUIRED] Wrong password, unknown email, unknown/rotated entry code, and "no membership in this organisation" produce the **same** error and timing to the client. [CURRENT — defect] The current response distinguishes `NO_ORGANISATION_ACCESS`, revealing that the password was correct.
 - [REQUIRED] Platform Admins cannot sign in through tenant login URLs. [CURRENT — defect D-9] They can.
 
@@ -550,7 +550,7 @@ Audited 2026-09-21 and re-checked against `7fa3094`. The "Sec. audit" column map
 | D-20 | High | Login with only an employee row copies the global `users.role` into the JWT. The security context then falls back to it, so a Company Admin of org A becomes OWNER in org B. | `routes/auth.ts`, `permissionService.ts` | C6 | Open |
 | D-21 | High | The membership invite overwrites an existing member's role with no hierarchy check. ORG_ADMIN can remove OWNER members. `'Company Admin'` normalises to OWNER. | `routes/memberships.ts` | C13 | Open |
 | D-22 | High | Managers can approve or bulk-approve their own timesheet. Bulk-approve silently drops unauthorised rows. | `routes/submissions.ts` | C15 | Open |
-| D-23 | High | The public lookup leaks org id, current `portal_slug`, branch count and entry mode. `discover` enumerates orgs. | `routes/organisation.ts` | C16 | Open |
+| D-23 | High | The public lookup leaks org id, current `portal_slug`, branch count and entry mode. `discover` enumerates orgs. | `routes/organisation.ts` | C16 | Fixed: lookup returns the name only, by hash; invalid/expired are uniform 404/410 and rate-limited (2026-09-25) |
 | D-24 | Medium | Employee team roster and dashboard "team today" cover all branches. | `routes/portal.ts`, `routes/dashboard.ts` | C19 | Open |
 | D-25 | Medium | `GET /records/stats` has no permission guard. `POST /employees` trusts a body `location_id`. `PUT /employees/:id` can relink `user_id` to any member. | `routes/records.ts`, `routes/employees.ts` | C20 | Open |
 | D-26 | Medium | Announcement moderation and the chat toggle are decided by the JWT role string. | `routes/announcements.ts` | C21 | Open |

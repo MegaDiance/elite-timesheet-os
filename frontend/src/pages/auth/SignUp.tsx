@@ -65,7 +65,7 @@ export default function SignUp() {
               <button
                 type="button"
                 onClick={() => setSentTo(null)}
-                className="text-xs text-[var(--primary)] hover:underline"
+                className="text-xs text-[var(--primary-text)] hover:underline"
               >
                 Use a different email
               </button>

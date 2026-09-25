@@ -45,7 +45,17 @@ Each flow uses the same structure:
 
 ## 2. Organisation login flow
 
-**Start:** user opens their organisation's private link `/o/<entry_code>` [PROPOSED]. [CURRENT] `/login/<slug>`, where the slug may be the human slug, the `portal_slug` or the UUID.
+**Start:** user opens their organisation's private link `/o/<entry_code>` [PROPOSED]. [CURRENT 2026-09-25] `/login/<token>`, the organisation's private link token.
+
+[CURRENT 2026-09-25] What the server does with the page request itself, before any JavaScript runs:
+
+| Request | HTTP | Browser shows |
+|---|---|---|
+| `GET /login`, `/login/`, any unknown path | 404 | "Page not found" — no mention of signing in |
+| `GET /login/<valid token>` | 200 | Sign-in form with the organisation's name (after `GET /api/organisation/lookup/<token>` confirms it) |
+| `GET /login/<expired token>` | 410 | "This sign-in link has expired. Ask your manager for the new sign-in link." |
+| `GET /login/<unknown, revoked, malformed, other org's or inactive org's token>` | 404 | "This sign-in link isn't valid" — never a form |
+| Too many bad links from one IP (5 / 15 min) | 404 | as above; the lookup API answers 429 and the page offers "Try again" |
 
 | Step | User action | Backend action | AuthZ | Result |
 |---|---|---|---|---|
@@ -116,7 +126,7 @@ Replaces four current mechanisms (PRD §7.9). Current behaviour noted per varian
 **Start:** invitee has accepted an invitation (§3) and has a session.
 
 1. Landing page per §2.1.
-2. [CURRENT] Onboarding tutorial auto-opens once (`simplehours_tutorial_seen`). [PROPOSED] Tutorial content depends on capabilities (employee tour vs manager tour); "Take the tour" in the help modal must work (currently fires the wrong event name).
+2. [CURRENT 2026-09-25] The interactive walkthrough (UI-UX-DESIGN §Walkthrough) starts once on the person's home page, per account (`users.tutorial_version`, `PUT /api/auth/me/tutorial`), with a manager version and an employee version. It can be restarted from Help or "Show me around" on Today.
 3. Employee with no linked employee record: [CURRENT] "No Staff Profile Linked" card. [PROPOSED] Cannot occur for invitation-created employees (invite links `employee_id`); remains as a safe fallback message.
 4. Prompt to enable 2FA for management roles [PROPOSED]; organisation-enforced 2FA [DEFERRED].
 

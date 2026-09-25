@@ -48,7 +48,7 @@ function NoAccess() {
           ? 'This area is for managers and owners. If you need it, ask your manager to change your access.'
           : 'This area is managed by the Organisation Owner. If you need it, ask the owner to change your access.'}
       </p>
-      <Link to={isEmployee ? '/my/schedule' : '/dashboard'} className="inline-block text-sm font-semibold text-[var(--primary)] hover:underline">
+      <Link to={isEmployee ? '/my/schedule' : '/dashboard'} className="inline-block text-sm font-semibold text-[var(--primary-text)] hover:underline">
         Go to {isEmployee ? 'my schedule' : 'the dashboard'}
       </Link>
     </div>

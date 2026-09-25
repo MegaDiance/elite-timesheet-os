@@ -21,6 +21,10 @@
 
 [REQUIRED] Migrations become the single source. The pg-mem schema is generated from migrations or replaced by a real PostgreSQL test database (TRD §13.3).
 
+[CURRENT 2026-09-25] Done: migrations are the only schema; pg-mem and the hand-written `db.ts` schema are gone, and every Jest suite runs on a PostgreSQL database built from the migrations. Recent additive migrations:
+- `706_private_link_hardening`: `organisations.portal_slug_hash` (unique; the only lookup column), `portal_slug_enc` (AES-256-GCM, written by the app), `portal_link_expires_at`, `portal_link_created_at`; `portal_slug` made nullable and cleared by the app once the encrypted copy exists. **Contract step (needs approval + backup):** drop `organisations.portal_slug` once every production organisation has `portal_slug_enc` (check: `SELECT count(*) FROM organisations WHERE portal_slug IS NOT NULL` returns 0).
+- `707_tutorial_progress`: `users.tutorial_version`, `users.tutorial_completed_at`.
+
 ---
 
 ## 2. Current schema assessment

@@ -7,7 +7,7 @@ import { useToast } from '../components/ui/Toast';
 import { Badge, Button, Card, EmptyState, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs } from '../components/ui';
 import { apiErrorMessage, downloadPayrollCsv, openPayrollPrint, signedHours } from '../components/roster/api';
 import { currentFortnightIso, periodLabel, shiftIso } from '../components/roster/dates';
-import { STATUS_VARIANT, type DayStatus } from '../components/roster/DayBox';
+import { TimesheetStatusBadge, type TimesheetState } from '../components/TimesheetStatus';
 
 interface WorkerPayrollSummary {
   employee_id: string;
@@ -72,8 +72,7 @@ const hasException = (w: WorkerPayrollSummary) =>
 const sumOf = (rows: WorkerPayrollSummary[], key: keyof WorkerPayrollSummary) => rows.reduce((acc, r) => acc + n(r[key]), 0);
 
 function StatusBadge({ status }: { status: string }) {
-  const variant = STATUS_VARIANT[status as DayStatus] ?? 'outline';
-  return <Badge variant={variant}>{status === 'Approved' && <CheckCircle2 className="w-3 h-3" aria-hidden="true" />}{status}</Badge>;
+  return <TimesheetStatusBadge status={status as TimesheetState} size="md" />;
 }
 
 export default function Reports() {
@@ -344,7 +343,7 @@ export default function Reports() {
 
         {loading ? (
           <div className="p-12 text-center bg-[var(--panel)] border border-[var(--border)] rounded-lg">
-            <RefreshCw className="w-6 h-6 animate-spin text-[var(--primary)] mx-auto mb-2" aria-hidden="true" />
+            <RefreshCw className="w-6 h-6 animate-spin text-[var(--primary-text)] mx-auto mb-2" aria-hidden="true" />
             <p className="text-xs text-[var(--muted)]">Adding up the pay period…</p>
           </div>
         ) : !report || filtered.length === 0 ? (

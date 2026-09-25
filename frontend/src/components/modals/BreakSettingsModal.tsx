@@ -99,7 +99,7 @@ export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, 
           )}
 
           <div className="bg-[var(--panel-subtle)] p-3 rounded-md border border-[var(--border)] text-xs text-[var(--muted)] flex items-start gap-2.5">
-            <Clock className="w-4 h-4 text-[var(--primary)] shrink-0 mt-0.5" />
+            <Clock className="w-4 h-4 text-[var(--primary-text)] shrink-0 mt-0.5" />
             <span>
               The break is taken off once per day, when the day's timed segments add up to the threshold and the gaps between
               them are shorter than the break. It comes off the longest Normal Work segment. Changes apply to hours saved from now on.

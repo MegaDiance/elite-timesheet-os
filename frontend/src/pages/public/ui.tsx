@@ -72,7 +72,7 @@ export function Point({ title, children }: { title: string; children: React.Reac
     <li className="flex gap-3">
       <span
         aria-hidden="true"
-        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--primary-light)] text-[var(--primary)]"
+        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--primary-light)] text-[var(--primary-text)]"
       >
         <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
       </span>

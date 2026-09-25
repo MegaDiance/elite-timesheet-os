@@ -51,19 +51,6 @@ export function PublicHolidayBadge({ name }: { name?: string }) {
   );
 }
 
-export type DayStatus = 'Draft' | 'Approved' | 'Locked';
-
-/**
- * One status → one Badge variant, everywhere a timesheet's status is shown. Locked is treated as
- * a neutral "final/immutable" state (purple), not a warning — Reports and the Dashboard
- * previously disagreed on this.
- */
-export const STATUS_VARIANT: Record<DayStatus, 'outline' | 'success' | 'purple'> = {
-  Draft: 'outline',
-  Approved: 'success',
-  Locked: 'purple',
-};
-
 export interface DayContent {
   roster: Entry[];
   timesheet: Entry[];

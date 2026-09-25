@@ -185,7 +185,7 @@ export const OrgLogin: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--bg)]">
         <div className="flex flex-col items-center gap-3 text-[var(--muted)]">
-          <Loader2 className="w-6 h-6 animate-spin text-[var(--primary)]" />
+          <Loader2 className="w-6 h-6 animate-spin text-[var(--primary-text)]" />
           <p className="text-xs font-medium">Loading sign-in page…</p>
         </div>
       </div>
@@ -238,7 +238,7 @@ export const OrgLogin: React.FC = () => {
               {(brand?.name || 'S').charAt(0).toUpperCase()}
             </div>
           </Link>
-          <div className="text-[11px] font-semibold tracking-wider uppercase text-[var(--primary)]">SimpleHours</div>
+          <div className="text-[11px] font-semibold tracking-wider uppercase text-[var(--primary-text)]">SimpleHours</div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">{title}</h1>
           <p className="text-xs text-[var(--muted)]">
             Sign in to your rosters, timesheets and schedule
@@ -292,7 +292,7 @@ export const OrgLogin: React.FC = () => {
                   leftIcon={<Lock className="w-4 h-4" />}
                 />
                 <div className="flex justify-end mt-1.5">
-                  <Link to={`/forgot-password?org=${encodeURIComponent(slug || '')}`} className="text-xs text-[var(--primary)] hover:underline">
+                  <Link to={`/forgot-password?org=${encodeURIComponent(slug || '')}`} className="text-xs text-[var(--primary-text)] hover:underline">
                     Forgot password?
                   </Link>
                 </div>
@@ -306,7 +306,7 @@ export const OrgLogin: React.FC = () => {
           {step === 'code' && (
             <form onSubmit={handleCodeSubmit} className="space-y-5">
               <div className="text-center space-y-1">
-                <div className="w-10 h-10 rounded-full bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center mx-auto">
+                <div className="w-10 h-10 rounded-full bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center mx-auto">
                   <KeyRound className="w-5 h-5" />
                 </div>
                 <h2 className="text-sm font-semibold text-[var(--text)]">Two-step verification</h2>
@@ -337,7 +337,7 @@ export const OrgLogin: React.FC = () => {
                 <button type="button" onClick={backToCredentials} className="text-[var(--muted)] hover:text-[var(--text)] inline-flex items-center gap-1">
                   <ArrowLeft className="w-3.5 h-3.5" /> Back
                 </button>
-                <button type="button" onClick={handleResend} disabled={resending} className="text-[var(--primary)] hover:underline disabled:opacity-50">
+                <button type="button" onClick={handleResend} disabled={resending} className="text-[var(--primary-text)] hover:underline disabled:opacity-50">
                   {resending ? 'Sending…' : 'Send a new code'}
                 </button>
               </div>
@@ -347,7 +347,7 @@ export const OrgLogin: React.FC = () => {
 
         <p className="text-center text-xs text-[var(--muted)]">
           New to SimpleHours?{' '}
-          <Link to="/signup" className="font-semibold text-[var(--primary)] hover:underline">
+          <Link to="/signup" className="font-semibold text-[var(--primary-text)] hover:underline">
             Set up a new organisation
           </Link>
         </p>

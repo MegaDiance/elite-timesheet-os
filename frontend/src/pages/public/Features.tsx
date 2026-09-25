@@ -17,7 +17,7 @@ function Point({ title, children }: { title: string; children: React.ReactNode }
 
 function SectionIcon({ children }: { children: React.ReactNode }) {
   return (
-    <div className="w-10 h-10 rounded-lg bg-[var(--primary-light)] border border-[var(--primary)]/20 flex items-center justify-center text-[var(--primary)]">
+    <div className="w-10 h-10 rounded-lg bg-[var(--primary-light)] border border-[var(--primary)]/20 flex items-center justify-center text-[var(--primary-text)]">
       {children}
     </div>
   );
@@ -47,8 +47,8 @@ export const Features: React.FC = () => {
             <Point title="Templates">Give each worker a fortnight template and roster from it in one step.</Point>
             <Point title="Copy a day">Copy a day to other days or other workers. Days that already have worked hours are never overwritten.</Point>
             <Point title="Quick time entry">
-              Type times the way you say them (<code className="text-[var(--primary)]">7</code>, <code className="text-[var(--primary)]">0730</code>,{' '}
-              <code className="text-[var(--primary)]">3p</code>, <code className="text-[var(--primary)]">15:30</code>). An end time before the start is an overnight shift.
+              Type times the way you say them (<code className="text-[var(--primary-text)]">7</code>, <code className="text-[var(--primary-text)]">0730</code>,{' '}
+              <code className="text-[var(--primary-text)]">3p</code>, <code className="text-[var(--primary-text)]">15:30</code>). An end time before the start is an overnight shift.
             </Point>
           </ul>
         </div>
@@ -75,7 +75,7 @@ export const Features: React.FC = () => {
                 <span className="font-mono text-[var(--muted)]">{seg.time}</span>
               </div>
             ))}
-            <div className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--primary)]">
+            <div className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--primary-text)]">
               <Plus className="w-3.5 h-3.5" /> Add segment
             </div>
           </Card>
@@ -201,10 +201,10 @@ export const Features: React.FC = () => {
         <h2 className="text-2xl font-bold text-center text-[var(--text)] mb-8">Access and security</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { icon: <Building2 className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Owner and Branch Admins', text: 'Branch Admins only see their branches, checked on the server' },
-            { icon: <KeyRound className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Two-step verification', text: 'Optional email codes at sign-in' },
-            { icon: <Clock3 className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Automatic sign-out', text: 'After 15 minutes of inactivity' },
-            { icon: <ScrollText className="w-5 h-5 text-[var(--primary)] mx-auto" />, title: 'Audit log', text: 'Changes, for the Organisation Owner' },
+            { icon: <Building2 className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Owner and Branch Admins', text: 'Branch Admins only see their branches, checked on the server' },
+            { icon: <KeyRound className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Two-step verification', text: 'Optional email codes at sign-in' },
+            { icon: <Clock3 className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Automatic sign-out', text: 'After 15 minutes of inactivity' },
+            { icon: <ScrollText className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Audit log', text: 'Changes, for the Organisation Owner' },
           ].map(card => (
             <div key={card.title} className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
               {card.icon}

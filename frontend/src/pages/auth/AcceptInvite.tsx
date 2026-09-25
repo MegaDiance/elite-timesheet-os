@@ -120,7 +120,7 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
               <Clock className="w-6 h-6" />
             </div>
           </Link>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--primary)]">SimpleHours</div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--primary-text)]">SimpleHours</div>
         </div>
         {children}
       </div>
@@ -196,7 +196,7 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
 
       <Card className="p-8 space-y-5">
         <div className="p-3.5 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-xl flex items-start gap-2.5 text-xs">
-          <div className="w-8 h-8 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center shrink-0">
             <MapPin className="w-4 h-4" />
           </div>
           <div className="text-[var(--muted)] leading-relaxed">

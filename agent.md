@@ -37,12 +37,29 @@ Documents label everything **[CURRENT] / [REQUIRED] / [PROPOSED] / [DEFERRED]**.
 
 ---
 
+## 🔐 Private sign-in links — `/login` is not a sign-in page
+
+- `/login` is intentionally **not** a public authentication entry point. The server answers it (and every unknown page, and any invalid `/login/<token>`) with a real HTTP **404**; an expired link gets **410**. Never add a login form, link or redirect at `/login`.
+- People sign in only through their organisation's private link, `/login/<token>`. The token is 128-bit, looked up by SHA-256 hash, kept AES-256-GCM encrypted (never in plain text), optionally expiring, and revoked by regenerating. All of it lives in `backend/src/services/portalLink.ts`; page statuses in `backend/src/services/pageRoutes.ts`. Details: `docs/TRD.md` §4.1a.
+- Adding a frontend route? Add its path to `PAGE_PATHS` in `pageRoutes.ts` too — a test compares it with `App.tsx`, and a missing path would be a 404.
+- The link is only ever returned to the Owner (and as `portal_path` in the sign-in response). Don't add it to `/auth/me` or other shared responses.
+
+## 🧭 UX conventions (see `docs/UI-UX-DESIGN.md` §15a)
+
+- Navigation shows only what the person can use — leave items out, never show them disabled. Frontend hiding is never the security: the API must refuse too.
+- Timesheet status: always `TimesheetStatusBadge` (Draft → Approved → Locked); leave status: `LeaveStatusBadge`. Never colour alone.
+- Errors: `friendlyError()` from `services/errors.ts` — no raw codes, `403`, or field names in front of users. A failed load shows an error with "Try again", never an empty state.
+- Empty states say what is missing, why it matters, and offer the next action.
+- The walkthrough targets `data-tour="…"` attributes and listens for `tourSignal(...)` events (`components/tour/`). Keep them when you change those screens.
+
+---
+
 ## 🛠 Tech Stack & Architecture
 
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7.
   - Theming: Full CSS theme variable support (`var(--bg)`, `var(--panel)`, `var(--text)`, `var(--border)`, `var(--input-bg)`). Both Dark and Light modes must look clean and high-contrast.
 - **Backend**: Node.js, Express, TypeScript, JWT auth with bcrypt password hashing.
-- **Database**: PostgreSQL (with in-memory `pg-mem` mock database enabled for development via `DATABASE_URL=memory`).
+- **Database**: PostgreSQL only — the schema is owned by `backend/migrations` (node-pg-migrate). The in-memory `pg-mem` option was removed; locally run `docker compose up -d db` (dev) or `db-test` (port 55432, used by `npm test`).
 - **Core Services**:
   - `timeParser.ts`: Smart flexible time input parsing (`9` -> `09:00`, `9a` -> `09:00`, `1700` -> `17:00`) and break deduction calculations.
   - `periodUtils.ts`: Fortnight boundary anchor calculations.

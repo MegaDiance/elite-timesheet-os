@@ -70,7 +70,7 @@ function SectionHeader({ icon, title, description, action }: {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
       <div className="flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center shrink-0">
           {icon}
         </div>
         <div>
@@ -99,7 +99,7 @@ function ToggleRow({ label, description, checked, saving, disabled, onChange }: 
         checked={checked}
         disabled={disabled || saving}
         onChange={e => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer disabled:cursor-not-allowed"
+        className="mt-0.5 h-4 w-4 rounded border-[var(--border)] text-[var(--primary-text)] focus:ring-[var(--primary)] cursor-pointer disabled:cursor-not-allowed"
       />
       <span className="min-w-0">
         <span className="block text-sm font-semibold text-[var(--text)]">{label}{saving && ' · Saving…'}</span>
@@ -506,11 +506,11 @@ export default function Settings() {
               <SectionHeader
                 icon={<Sliders className="w-4 h-4" />}
                 title="Employee timesheets"
-                description="Whether employees can create and submit their own timesheets, or hours are only entered by managers."
+                description="Whether employees record their own worked hours, or only managers do."
               />
               <ToggleRow
                 label="Allow employees to submit timesheets"
-                description="When enabled, employees can create and submit their own timesheets. When disabled, timesheets are managed by authorised managers."
+                description="On: employees see “My timesheet” and enter the hours they worked; a manager still approves them. Off: the timesheet pages disappear for employees completely and only managers record hours on the Roster."
                 checked={org?.employees_can_submit_timesheets ?? true}
                 saving={savingWorkforceField === 'employees_can_submit_timesheets'}
                 disabled={!org}
@@ -526,7 +526,7 @@ export default function Settings() {
               />
               <ToggleRow
                 label="Automatically merge leave with rostered hours"
-                description="Automatically splits rostered work around approved leave, so overlapping leave and work hours don't need to be entered as separate manual edits."
+                description="Example: rostered 9:00–5:00 and sick 1:00–2:00 is saved as 9:00–1:00 work, 1:00–2:00 sick, 2:00–5:00 work. The day editor always says when a shift is split. Off: leave that overlaps work is refused, and you adjust the work times yourself."
                 checked={org?.automatically_merge_leave_with_roster ?? false}
                 saving={savingWorkforceField === 'automatically_merge_leave_with_roster'}
                 disabled={!org}
@@ -534,7 +534,7 @@ export default function Settings() {
               />
               <ToggleRow
                 label="Leave requests require approval"
-                description="When enabled, an employee's leave request stays pending until a manager approves it. When disabled, it takes effect immediately."
+                description="On: a request waits under Leave requests until a manager approves it. Off: it is added to the roster straight away."
                 checked={org?.leave_requests_require_approval ?? true}
                 saving={savingWorkforceField === 'leave_requests_require_approval'}
                 disabled={!org}

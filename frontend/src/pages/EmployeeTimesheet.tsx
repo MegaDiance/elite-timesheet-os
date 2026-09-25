@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, CheckSquare, Lock, Pencil, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Lock, RotateCcw, X } from 'lucide-react';
 import api from '../services/apiClient';
 import { apiErrorMessage } from '../components/roster/api';
+import { TimesheetStatusBadge, TIMESHEET_STATE, type TimesheetState } from '../components/TimesheetStatus';
 import { buttonClass } from '../components/roster/Dialog';
 import TimeLines from '../components/roster/TimeLines';
 import { currentFortnightIso, dayLabel, fortnightDays, isWeekendIso, periodLabel, shiftIso } from '../components/roster/dates';
@@ -51,7 +52,7 @@ export default function EmployeeTimesheet() {
         setDays(map);
         setReadOnly({ approved: body.approved, timesheet_locked: body.timesheet_locked });
       })
-      .catch(() => setError('Could not load your timesheet. Please try again.'))
+      .catch(err => setError(apiErrorMessage(err, 'Your timesheet could not be loaded.')))
       .finally(() => setLoading(false));
   };
 
@@ -77,41 +78,52 @@ export default function EmployeeTimesheet() {
   const total = partTotal(Array.from(days.values()).flatMap(d => d.timesheet));
   const locked = readOnly.approved || readOnly.timesheet_locked;
 
+  const status: TimesheetState = readOnly.approved && readOnly.timesheet_locked ? 'Locked' : readOnly.approved ? 'Approved' : 'Draft';
+  const navButton = 'min-w-11 h-11 px-3 rounded-lg border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--panel-subtle)] inline-flex items-center justify-center';
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center justify-between gap-3">
+    <div className="max-w-3xl mx-auto space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-[var(--text)] flex items-center gap-2">
-            <CheckSquare className="w-5 h-5 text-[var(--primary)]" />
-            My Timesheet
-          </h1>
+          <h1 className="text-xl font-bold text-[var(--text)]">My timesheet</h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">{periodLabel(startDate)} · {formatHours(total)} worked</p>
         </div>
         <div className="flex items-center gap-1.5">
-          <button onClick={() => setStartDate(shiftIso(startDate, -14))} className="p-2 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-subtle)]" aria-label="Previous fortnight">
-            <ChevronLeft className="w-4 h-4" />
+          <button type="button" onClick={() => setStartDate(shiftIso(startDate, -14))} className={navButton} aria-label="Previous fortnight">
+            <ChevronLeft className="w-4 h-4" aria-hidden="true" />
           </button>
-          <button onClick={() => setStartDate(currentFortnightIso())} className="px-3 py-2 rounded-lg border border-[var(--border)] text-xs font-semibold text-[var(--text)] hover:bg-[var(--panel-subtle)]">
-            Today
+          <button type="button" onClick={() => setStartDate(currentFortnightIso())} className={navButton} disabled={startDate === currentFortnightIso()}>
+            This fortnight
           </button>
-          <button onClick={() => setStartDate(shiftIso(startDate, 14))} className="p-2 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-subtle)]" aria-label="Next fortnight">
-            <ChevronRight className="w-4 h-4" />
+          <button type="button" onClick={() => setStartDate(shiftIso(startDate, 14))} className={navButton} aria-label="Next fortnight">
+            <ChevronRight className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
-      </div>
+      </header>
 
-      {error && <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-sm text-rose-400">{error}</div>}
+      {!loading && !error && (
+        <section data-tour="my-timesheet" aria-label="Timesheet status" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex items-start gap-3">
+          <TimesheetStatusBadge status={status} size="md" />
+          <div className="text-sm">
+            <p className="text-[var(--text)]">{TIMESHEET_STATE[status].employeeMeaning}</p>
+            {!locked && <p className="text-[var(--muted)] mt-1">Choose “Record hours” on a day to enter when you started and finished.</p>}
+            {locked && readOnly.timesheet_locked && !readOnly.approved && (
+              <p className="text-[var(--warn)] mt-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" aria-hidden="true" /> Timesheets are locked for this pay period.</p>
+            )}
+          </div>
+        </section>
+      )}
 
-      {locked && !loading && (
-        <p className="flex items-center gap-1.5 text-xs text-[var(--warn)] bg-[var(--warn-light)] border border-[var(--warn)]/30 rounded-lg px-3 py-2">
-          <Lock className="w-3.5 h-3.5 shrink-0" />
-          {readOnly.approved ? 'This timesheet is approved and can no longer be changed.' : 'Timesheets are locked for this pay period.'}
-        </p>
+      {error && (
+        <div role="alert" className="p-4 rounded-xl bg-[var(--danger-light)] border border-[var(--danger)]/30 text-sm text-[var(--danger)] flex flex-wrap items-center justify-between gap-3">
+          {error}
+          <button type="button" onClick={() => load()} className={navButton}><RotateCcw className="w-4 h-4 mr-1.5" aria-hidden="true" /> Try again</button>
+        </div>
       )}
 
       <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)] overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading…</div>
+          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading your timesheet…</div>
         ) : (
           fortnightDays(startDate).map(iso => {
             const day = days.get(iso);
@@ -154,11 +166,12 @@ export default function EmployeeTimesheet() {
                 </div>
                 {editable && (
                   <button
+                    type="button"
                     onClick={() => setEditingDate(iso)}
-                    className="p-1.5 rounded-lg text-[var(--muted)] hover:text-[var(--primary)] hover:bg-[var(--panel-subtle)] shrink-0"
-                    title="Edit worked hours"
+                    className="h-11 px-3 rounded-lg border border-[var(--border)] text-sm font-semibold text-[var(--primary-text)] hover:bg-[var(--primary-light)] shrink-0"
+                    aria-label={`${day && day.timesheet.length > 0 ? 'Change' : 'Record'} hours for ${dayLabel(iso, 'long')}`}
                   >
-                    <Pencil className="w-3.5 h-3.5" />
+                    {day && day.timesheet.length > 0 ? 'Change' : 'Record hours'}
                   </button>
                 )}
               </div>
@@ -227,8 +240,8 @@ function DayRow({ dateIso, entries, rostered, breakSettings, mergeLeave, onCance
     <div className="px-4 py-4 bg-[var(--panel-subtle)] space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-sm font-semibold text-[var(--text)]">{dayLabel(dateIso, 'long')}</div>
-        <button onClick={onCancel} className="p-1 rounded text-[var(--muted)] hover:text-[var(--text)]" title="Cancel" disabled={saving}>
-          <X className="w-4 h-4" />
+        <button type="button" onClick={onCancel} className="p-2.5 rounded text-[var(--muted)] hover:text-[var(--text)]" aria-label="Cancel" disabled={saving}>
+          <X className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
       {(leave.length > 0 || rosteredLeave.length > 0) && (
