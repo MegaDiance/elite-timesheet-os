@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import app from '../../src/index';
 import { clearAllRateLimits } from '../../src/services/authUtils';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from '../helpers/testDb';
-import { PASSWORD, PERIOD, World, bearer, buildWorld, simpleDay, signIn } from '../helpers/fixtures';
+import { PASSWORD, PERIOD, World, assignBranchAdmin, bearer, buildWorld, simpleDay, signIn, systemRoleId } from '../helpers/fixtures';
 
 const names = (rows: any[]) => rows.map(r => r.full_name).sort();
 
@@ -123,14 +123,16 @@ describe('Branch and organisation isolation', () => {
         });
 
         it('another organisation’s ids are 404, and nothing about them is returned', async () => {
+            const adminRole = await systemRoleId(w.abc.id, 'ADMIN');
+            const xyzAdminRole = await systemRoleId(w.xyz.id, 'ADMIN');
             const cases = [
                 request(app).get(`/api/locations/${w.xyz.sydney}`).set(bearer(w.tokens.owner)),
                 request(app).put(`/api/employees/${w.workers.syd}`).set(bearer(w.tokens.owner)).send({ full_name: 'Hijack' }),
                 request(app).get(`/api/records?start_date=${PERIOD}&employee_id=${w.workers.syd}`).set(bearer(w.tokens.owner)),
                 request(app).post('/api/submissions/approve').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.syd, start_date: PERIOD }),
                 request(app).post('/api/locks').set(bearer(w.tokens.owner)).send({ location_id: w.xyz.sydney, start_date: PERIOD, roster_locked: true, password: PASSWORD }),
-                request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner)).send({ email: 'x@x.test', location_ids: [w.xyz.sydney] }),
-                request(app).put(`/api/branch-admins/${w.users.sarah.id}/branches`).set(bearer(w.tokens.xavier)).send({ location_ids: [w.xyz.sydney] }),
+                request(app).post('/api/team/invitations').set(bearer(w.tokens.owner)).send({ email: 'x@x.test', role_id: adminRole, scope: { branch_ids: [w.xyz.sydney] } }),
+                request(app).post(`/api/team/${w.users.sarah.id}/roles`).set(bearer(w.tokens.xavier)).send({ role_id: xyzAdminRole, scope: { branch_ids: [w.xyz.sydney] } }),
             ];
             for (const res of await Promise.all(cases)) {
                 expect(res.status).toBe(404);
@@ -142,21 +144,23 @@ describe('Branch and organisation isolation', () => {
     });
 
     describe('access follows the database, not the token', () => {
-        it('removing a Branch Admin from a branch takes effect on the very next request', async () => {
+        it('removing a branch from someone’s role takes effect on the very next request', async () => {
             const before = await request(app).get(`/api/employees?location_id=${w.abc.richmond}`).set(bearer(w.tokens.sarah));
             expect(before.status).toBe(200);
-            await request(app).put(`/api/branch-admins/${w.users.sarah.id}/branches`).set(bearer(w.tokens.owner)).send({ location_ids: [w.abc.melbourne] });
+            const team = await request(app).get('/api/team').set(bearer(w.tokens.owner));
+            const assignment = team.body.data.members.find((m: any) => m.user_id === w.users.sarah.id).assignments[0];
+            await request(app).put(`/api/team/${w.users.sarah.id}/roles/${assignment.id}`).set(bearer(w.tokens.owner)).send({ scope: { branch_ids: [w.abc.melbourne] } });
             const after = await request(app).get(`/api/employees?location_id=${w.abc.richmond}`).set(bearer(w.tokens.sarah));
             expect(after.status).toBe(403);
         });
 
-        it('removing all of a Branch Admin’s branches ends their session', async () => {
-            await request(app).delete(`/api/branch-admins/${w.users.greg.id}`).set(bearer(w.tokens.owner));
+        it('removing all of someone’s access ends their session', async () => {
+            await request(app).delete(`/api/team/${w.users.greg.id}`).set(bearer(w.tokens.owner));
             const res = await request(app).get('/api/auth/me').set(bearer(w.tokens.greg));
             expect(res.status).toBe(401);
         });
 
-        it('deactivating a branch removes it from every Branch Admin’s scope immediately', async () => {
+        it('deactivating a branch removes it from every branch-scoped assignment immediately', async () => {
             await request(app).post(`/api/locations/${w.abc.richmond}/deactivate`).set(bearer(w.tokens.owner));
             const res = await request(app).get(`/api/employees?location_id=${w.abc.richmond}`).set(bearer(w.tokens.sarah));
             expect(res.status).toBe(403);
@@ -169,7 +173,8 @@ describe('Branch and organisation isolation', () => {
                 process.env.JWT_SECRET as string
             );
             const me = await request(app).get('/api/auth/me').set(bearer(forged));
-            expect(me.body.data.role).toBe('BRANCH_ADMIN');
+            expect(me.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+            expect(me.body.data.is_owner).toBe(false);
             expect(me.body.data.organisation.id).toBe(w.abc.id);
             const settings = await request(app).put('/api/organisation/settings').set(bearer(forged)).send({ break_mins_weekday: 0 });
             expect(settings.status).toBe(403);
@@ -187,8 +192,8 @@ describe('Branch and organisation isolation', () => {
         });
 
         it('a person with access to two organisations only acts in the session’s organisation', async () => {
-            // Greg becomes a Branch Admin of XYZ as well; his ABC session still only reaches ABC.
-            await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
+            // Greg becomes an Admin of XYZ as well; his ABC session still only reaches ABC.
+            await assignBranchAdmin(w.xyz.id, w.xyz.sydney, w.users.greg.id);
             const list = await request(app).get('/api/employees').set(bearer(w.tokens.greg));
             expect(names(list.body.data)).toEqual(['Gee Worker']);
             const xyzToken = await signIn(w.users.greg.id, w.xyz.id);

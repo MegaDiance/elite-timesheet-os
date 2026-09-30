@@ -13,11 +13,11 @@ export async function connectTestDb(): Promise<void> {
     await initDB(url);
 }
 
-/** Removes all rows from every application table (the schema and pgmigrations are kept). */
+/** Removes all rows from every application table. The schema, pgmigrations and the permission catalogue (reference data seeded by a migration) are kept. */
 export async function resetTestDb(): Promise<void> {
     const pool = getPool();
     const tables = await pool.query(
-        `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'pgmigrations'`
+        `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT IN ('pgmigrations', 'permissions')`
     );
     if (tables.rows.length > 0) {
         const list = tables.rows.map((r: any) => `"${r.tablename}"`).join(', ');

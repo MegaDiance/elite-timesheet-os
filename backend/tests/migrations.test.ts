@@ -85,6 +85,31 @@ describe('two-role migrations on legacy data', () => {
         ]);
     });
 
+    it('each Branch Admin became an Admin role assignment scoped to exactly their branches — nothing more, and the Owner and employees are not duplicated into it', async () => {
+        const assignments = await q(`SELECT u.email, r.name AS role, ur.scope_all, l.name AS branch
+                                       FROM user_roles ur JOIN users u ON u.id = ur.user_id JOIN roles r ON r.id = ur.role_id
+                                       LEFT JOIN user_role_branches urb ON urb.user_role_id = ur.id
+                                       LEFT JOIN locations l ON l.id = urb.location_id
+                                      ORDER BY 1, 4`);
+        expect(assignments).toEqual([
+            { email: 'coadmin@apex.test', role: 'Admin', scope_all: false, branch: 'Melbourne' },
+            { email: 'coadmin@apex.test', role: 'Admin', scope_all: false, branch: 'Richmond' },
+            { email: 'mgr@apex.test', role: 'Admin', scope_all: false, branch: 'Melbourne' },
+            { email: 'mgr@bl.test', role: 'Admin', scope_all: false, branch: 'Main Branch' },
+        ]);
+        // Exactly the branch_admins rows, viewed through the new tables.
+        expect(await q(`SELECT ba.org_id, ba.location_id, ba.user_id FROM branch_admins ba
+                        EXCEPT SELECT ur.org_id, urb.location_id, ur.user_id FROM user_roles ur JOIN user_role_branches urb ON urb.user_role_id = ur.id`)).toEqual([]);
+    });
+
+    it('every organisation, including switched-off ones, has its three built-in roles and the standard Admin permissions', async () => {
+        const perOrg = await q("SELECT org_id, COUNT(*)::int AS n, COUNT(system_key)::int AS built_in FROM roles GROUP BY org_id");
+        expect(perOrg).toHaveLength(3);
+        for (const row of perOrg) expect([row.n, row.built_in]).toEqual([3, 3]);
+        expect((await q("SELECT COUNT(*)::int AS n FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.system_key = 'ADMIN' AND rp.permission_key = 'timesheets.approve'"))[0].n).toBe(3);
+        expect((await q("SELECT COUNT(*)::int AS n FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.system_key = 'ADMIN' AND rp.permission_key IN ('users.manage', 'roles.manage', 'audit.view', 'security.manage')"))[0].n).toBe(0);
+    });
+
     it('employee logins and the Platform Admin get no access; their accounts are kept', async () => {
         for (const id of [ids.employee, ids.platform]) {
             expect(await q('SELECT 1 FROM branch_admins WHERE user_id = $1', [id])).toEqual([]);
@@ -200,5 +225,7 @@ describe('two-role migrations on legacy data', () => {
         db = new Client({ connectionString: urlForDatabase(DB) });
         await db.connect();
         expect(await q('SELECT org_id, location_id, user_id FROM branch_admins ORDER BY 1, 2, 3')).toEqual(accessBefore);
+        // The role assignments are rebuilt from them, so the same people hold the same branches.
+        expect(await q('SELECT ur.org_id, urb.location_id, ur.user_id FROM user_roles ur JOIN user_role_branches urb ON urb.user_role_id = ur.id ORDER BY 1, 2, 3')).toEqual(accessBefore);
     }, 120000);
 });

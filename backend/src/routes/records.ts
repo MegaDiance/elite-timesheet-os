@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { query } from '../services/db';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { HttpError, badRequest, loadWorker, resolveBranchFilter } from '../services/policy';
+import { requireAnyPermission, requireAuth, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { HttpError, assertBranchAccess, badRequest, canAccessBranch, loadWorker, loadWorkerAny, resolveBranchFilterAny } from '../services/policy';
 import { getFortnightStartIso, isFortnightStart, isIsoDate } from '../services/periodUtils';
 import { getPeriodLock, isTimesheetApproved } from '../services/periodLocks';
 import { breakRuleFor, loadBreakSettings, readBreakMins, rowsToDay, writeDayRecord } from '../services/segments';
@@ -10,16 +10,22 @@ import { applyRosterKeepingLeave, calculateRosterStats, loadApprovedLeave } from
 /**
  * Daily records: one per worker per day. A day has a ROSTER (what was planned) and a TIMESHEET
  * (what was worked); each is a list of times with a type (Normal Work or a leave type).
- * Every route authorises against the worker's own branch, loaded from the database.
+ * Every route authorises against the worker's own branch, loaded from the database. The two sides
+ * have their own permissions: a caller only reads or writes the side (roster / timesheet) their
+ * permissions cover in that worker's branch, and creating a side that is empty needs the "create"
+ * permission where changing one that already has entries needs "edit".
  */
 const router = Router();
 router.use(requireAuth);
 
-router.get('/stats', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+const VIEW_PERMISSIONS = [Permission.ROSTERS_VIEW, Permission.TIMESHEETS_VIEW] as const;
+const WRITE_PERMISSIONS = [Permission.ROSTERS_CREATE, Permission.ROSTERS_EDIT, Permission.TIMESHEETS_CREATE, Permission.TIMESHEETS_EDIT] as const;
+
+router.get('/stats', requireAnyPermission(...VIEW_PERMISSIONS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         if (!isFortnightStart(req.query.start_date)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period.');
-        const worker = await loadWorker(ctx, Permission.TIMESHEETS_MANAGE, req.query.employee_id);
+        const worker = await loadWorkerAny(ctx, VIEW_PERMISSIONS, req.query.employee_id);
         const stats = await calculateRosterStats(ctx.orgId, worker.id, req.query.start_date);
         res.json({ success: true, data: stats });
     } catch (err) {
@@ -27,14 +33,14 @@ router.get('/stats', requirePermission(Permission.TIMESHEETS_MANAGE), async (req
     }
 });
 
-router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.get('/', requireAnyPermission(...VIEW_PERMISSIONS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { start_date, end_date, employee_id } = req.query;
-        const branchIds = resolveBranchFilter(ctx, Permission.TIMESHEETS_MANAGE, req.query.location_id);
+        const branchIds = resolveBranchFilterAny(ctx, VIEW_PERMISSIONS, req.query.location_id);
 
         const params: any[] = [ctx.orgId, branchIds];
-        let sql = `SELECT dr.* FROM daily_records dr
+        let sql = `SELECT dr.*, e.location_id FROM daily_records dr
                      JOIN employees e ON e.id = dr.employee_id
                     WHERE dr.org_id = $1 AND e.location_id = ANY($2::uuid[])`;
         if (start_date !== undefined) {
@@ -48,7 +54,7 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
             sql += ` AND dr.record_date <= $${params.length}`;
         }
         if (employee_id !== undefined) {
-            const worker = await loadWorker(ctx, Permission.TIMESHEETS_MANAGE, employee_id);
+            const worker = await loadWorkerAny(ctx, VIEW_PERMISSIONS, employee_id);
             params.push(worker.id);
             sql += ` AND dr.employee_id = $${params.length}`;
         }
@@ -68,17 +74,31 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
 
         res.json({
             success: true,
-            data: records.map((rec: any) => ({
-                id: rec.id,
-                employee_id: rec.employee_id,
-                record_date: rec.record_date,
-                ...rowsToDay(rowsByRecord.get(rec.id) || []),
-            })),
+            // Each side is only returned where the caller may see it in the worker's branch.
+            data: records.map((rec: any) => {
+                const day = rowsToDay(rowsByRecord.get(rec.id) || []);
+                return {
+                    id: rec.id,
+                    employee_id: rec.employee_id,
+                    record_date: rec.record_date,
+                    ...day,
+                    roster: canAccessBranch(ctx, Permission.ROSTERS_VIEW, rec.location_id) ? day.roster : [],
+                    timesheet: canAccessBranch(ctx, Permission.TIMESHEETS_VIEW, rec.location_id) ? day.timesheet : [],
+                };
+            }),
         });
     } catch (err) {
         sendError(res, err, 'RECORDS GET ERROR');
     }
 });
+
+/** Whether the day already has roster entries / worked entries, so a write knows whether it creates or changes them. */
+async function storedSides(orgId: string, workerId: string, recordDate: string): Promise<{ roster: boolean; timesheet: boolean }> {
+    const rec = await query('SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [orgId, workerId, recordDate]);
+    if (rec.rows.length === 0) return { roster: false, timesheet: false };
+    const day = rowsToDay((await query('SELECT * FROM shift_segments WHERE record_id = $1', [rec.rows[0].id])).rows);
+    return { roster: day.roster.length > 0, timesheet: day.timesheet.length > 0 };
+}
 
 /**
  * POST /api/records
@@ -92,13 +112,20 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
  *   - timesheets locked  → the timesheet must be unchanged
  *   - timesheet approved → nothing may change
  */
-router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/', requireAnyPermission(...WRITE_PERMISSIONS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { employee_id, record_date } = req.body || {};
         if (!isIsoDate(record_date)) throw badRequest('VALIDATION_FAILED', 'record_date must be YYYY-MM-DD.');
+        const scope = req.body?.scope ?? 'BOTH';
+        if (!['ROSTER', 'TIMESHEET', 'BOTH'].includes(scope)) throw badRequest('VALIDATION_FAILED', 'scope must be ROSTER, TIMESHEET or BOTH.');
 
-        const worker = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
+        const worker = await loadWorkerAny(ctx, WRITE_PERMISSIONS, employee_id);
+        // Each side being replaced needs its own permission in the worker's branch: "create" for a
+        // side that has no entries yet, "edit" for one that does.
+        const stored = await storedSides(ctx.orgId, worker.id, record_date);
+        if (scope !== 'TIMESHEET') assertBranchAccess(ctx, stored.roster ? Permission.ROSTERS_EDIT : Permission.ROSTERS_CREATE, worker.location_id);
+        if (scope !== 'ROSTER') assertBranchAccess(ctx, stored.timesheet ? Permission.TIMESHEETS_EDIT : Permission.TIMESHEETS_CREATE, worker.location_id);
         if (!worker.is_active) {
             throw badRequest('WORKER_INACTIVE', 'Cannot record shifts or hours for an inactive worker.');
         }
@@ -119,7 +146,7 @@ router.post('/', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthR
  * is authorised and lock-checked on its own; targets that already hold worked hours, are approved,
  * or are roster-locked are skipped and reported — copying never overwrites recorded hours.
  */
-router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/copy-day', requireAnyPermission(Permission.ROSTERS_CREATE, Permission.ROSTERS_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { employee_id, source_date, target_dates, target_employee_ids } = req.body || {};
@@ -130,7 +157,7 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
         const targetWorkerIds: unknown[] = Array.isArray(target_employee_ids) && target_employee_ids.length > 0 ? target_employee_ids : [employee_id];
         if (targetWorkerIds.length > 200) throw badRequest('VALIDATION_FAILED', 'Too many workers selected.');
 
-        const source = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
+        const source = await loadWorker(ctx, Permission.ROSTERS_VIEW, employee_id);
         const sourceRec = await query('SELECT id FROM daily_records WHERE org_id = $1 AND employee_id = $2 AND record_date = $3', [ctx.orgId, source.id, source_date]);
         const sourceShifts = sourceRec.rows.length
             ? rowsToDay((await query('SELECT * FROM shift_segments WHERE record_id = $1', [sourceRec.rows[0].id])).rows).roster
@@ -142,11 +169,14 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
         const skipped: Array<{ employee_id: string; date: string; reason: string }> = [];
 
         for (const workerId of targetWorkerIds) {
-            const worker = await loadWorker(ctx, Permission.ROSTERS_MANAGE, workerId);
+            const worker = await loadWorkerAny(ctx, [Permission.ROSTERS_CREATE, Permission.ROSTERS_EDIT], workerId);
             for (const date of target_dates as string[]) {
                 if (worker.id === source.id && date === source_date) continue;
                 const skip = (reason: string) => skipped.push({ employee_id: worker.id, date, reason });
                 if (!worker.is_active) { skip('INACTIVE'); continue; }
+                // Copying onto a day that already has a roster replaces it (edit); onto an empty day it creates one.
+                const needs = (await storedSides(ctx.orgId, worker.id, date)).roster ? Permission.ROSTERS_EDIT : Permission.ROSTERS_CREATE;
+                if (!canAccessBranch(ctx, needs, worker.location_id)) { skip('NOT_ALLOWED'); continue; }
 
                 const fortnightStart = getFortnightStartIso(date);
                 if (await isTimesheetApproved(ctx.orgId, worker.id, fortnightStart)) { skip('APPROVED'); continue; }
@@ -180,7 +210,7 @@ router.post('/copy-day', requirePermission(Permission.ROSTERS_MANAGE), async (re
  * and lock/approval-checked independently, exactly like `copy-day` — one locked or approved day
  * never blocks the others.
  */
-router.post('/apply-break', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/apply-break', requireAnyPermission(Permission.ROSTERS_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { employee_id, record_dates, has_break } = req.body || {};
@@ -191,8 +221,10 @@ router.post('/apply-break', requirePermission(Permission.ROSTERS_MANAGE), async 
             throw badRequest('VALIDATION_FAILED', 'record_dates must be a list of 1-31 dates.');
         }
 
-        const worker = await loadWorker(ctx, Permission.ROSTERS_MANAGE, employee_id);
+        const worker = await loadWorker(ctx, Permission.ROSTERS_EDIT, employee_id);
         if (!worker.is_active) throw badRequest('WORKER_INACTIVE', 'Cannot change breaks for an inactive worker.');
+        // Worked-hours breaks change only when the caller may also edit this branch's timesheets.
+        const includeTimesheet = canAccessBranch(ctx, Permission.TIMESHEETS_EDIT, worker.location_id);
 
         const settings = await loadBreakSettings(ctx.orgId);
         const applied: string[] = [];
@@ -212,7 +244,9 @@ router.post('/apply-break', requirePermission(Permission.ROSTERS_MANAGE), async 
 
                 const view = rowsToDay(existing);
                 const flip = (list: typeof view.roster) => list.map(e => (e.type === 'WORK' ? { ...e, has_break, break_mins: breakMins } : e));
-                const body = { scope: 'BOTH' as const, roster: flip(view.roster), timesheet: flip(view.timesheet), note: view.note };
+                const body = includeTimesheet
+                    ? { scope: 'BOTH' as const, roster: flip(view.roster), timesheet: flip(view.timesheet), note: view.note }
+                    : { scope: 'ROSTER' as const, roster: flip(view.roster), note: view.note };
                 await writeDayRecord({ orgId: ctx.orgId, worker, recordDate: date, body, rule: breakRuleFor(settings, date) });
                 applied.push(date);
             } catch (err) {

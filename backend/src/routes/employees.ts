@@ -1,8 +1,8 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query, withTransaction } from '../services/db';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { AccessContext, HttpError, badRequest, isUuid, loadBranch, loadWorker, resolveBranchFilter, writeAudit } from '../services/policy';
+import { requireAuth, requireAnyPermission, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { AccessContext, HttpError, badRequest, canAccessBranch, isUuid, loadBranch, loadWorker, resolveBranchFilterAny, writeAudit } from '../services/policy';
 import { isValidEmail } from '../services/authUtils';
 import { loadBreakSettings, normaliseDaySegments, readBreakMins } from '../services/segments';
 
@@ -10,9 +10,9 @@ import { loadBreakSettings, normaliseDaySegments, readBreakMins } from '../servi
  * Workers (stored in the `employees` table).
  *
  * A worker is an operational record — someone who is rostered, timesheeted and reported on.
- * Workers never sign in and are not linked to accounts. Every worker belongs to exactly one
- * branch of its organisation, and every request here is authorised against that stored branch:
- * the Organisation Owner in any branch, a Branch Admin only in the branches assigned to them.
+ * Every worker belongs to exactly one branch of its organisation, and every request here is
+ * authorised against that stored branch and the caller's permission in it (employees.*, rosters.*
+ * for default rosters). The client's branch id is only ever a filter checked against that scope.
  */
 const router = Router();
 router.use(requireAuth);
@@ -61,17 +61,22 @@ function readWorkerFields(body: any) {
 }
 
 /** A client-supplied branch id is only ever a request: it is loaded from this organisation and checked against the caller's scope. */
-async function loadActiveTargetBranch(ctx: AccessContext, requested: unknown) {
+async function loadActiveTargetBranch(ctx: AccessContext, permission: Permission, requested: unknown) {
     if (!isUuid(requested)) throw badRequest('VALIDATION_FAILED', 'location_id must be a branch id.');
-    const branch = await loadBranch(ctx, Permission.WORKERS_MANAGE, requested);
+    const branch = await loadBranch(ctx, permission, requested);
     if (!branch.is_active) throw badRequest('BRANCH_INACTIVE', `Branch "${branch.name}" is deactivated. Choose an active branch.`);
     return branch;
 }
 
-router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+/**
+ * Anyone who works with a roster or a timesheet needs the worker's name, so those permissions also
+ * open this list. Contact details stay with employees.view: without it in the worker's branch,
+ * email and phone are left out.
+ */
+router.get('/', requireAnyPermission(Permission.EMPLOYEES_VIEW, Permission.ROSTERS_VIEW, Permission.TIMESHEETS_VIEW), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const branchIds = resolveBranchFilter(ctx, Permission.WORKERS_MANAGE, req.query.location_id);
+        const branchIds = resolveBranchFilterAny(ctx, [Permission.EMPLOYEES_VIEW, Permission.ROSTERS_VIEW, Permission.TIMESHEETS_VIEW], req.query.location_id);
         const includeInactive = req.query.include_inactive === 'true';
 
         const result = await query(
@@ -101,6 +106,11 @@ router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRe
         for (const worker of workers) {
             worker.template = byWorker.get(worker.id) || [];
             worker.status = worker.is_active ? 'Active' : 'Inactive';
+            if (!canAccessBranch(ctx, Permission.EMPLOYEES_VIEW, worker.location_id)) {
+                worker.email = null;
+                worker.phone = null;
+                worker.portal_status = 'none';
+            }
         }
 
         res.json({ success: true, data: workers });
@@ -109,14 +119,14 @@ router.get('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRe
     }
 });
 
-router.post('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/', requirePermission(Permission.EMPLOYEES_CREATE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const fields = readWorkerFields(req.body);
         if (req.body?.location_id === undefined || req.body.location_id === null || req.body.location_id === '') {
             throw badRequest('VALIDATION_FAILED', 'location_id is required: every worker belongs to a branch.');
         }
-        const branch = await loadActiveTargetBranch(ctx, req.body.location_id);
+        const branch = await loadActiveTargetBranch(ctx, Permission.EMPLOYEES_CREATE, req.body.location_id);
 
         let created;
         try {
@@ -139,10 +149,10 @@ router.post('/', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthR
     }
 });
 
-router.put('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.put('/:id', requirePermission(Permission.EMPLOYEES_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_EDIT, req.params.id);
         const fields = readWorkerFields(req.body);
 
         // Moving a worker needs access to the branch they are in (loadWorker) and the branch they are going to.
@@ -150,7 +160,7 @@ router.put('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: Aut
         const requested = req.body?.location_id;
         const wantsBranch = requested !== undefined && requested !== null && requested !== '';
         const target = wantsBranch && String(requested).toLowerCase() !== worker.location_id.toLowerCase()
-            ? await loadActiveTargetBranch(ctx, requested)
+            ? await loadActiveTargetBranch(ctx, Permission.EMPLOYEES_EDIT, requested)
             : null;
         const branchId: string = target ? target.id : worker.location_id;
 
@@ -188,10 +198,10 @@ router.put('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: Aut
 });
 
 /** Deactivating keeps every roster, timesheet and report row; the worker just stops appearing in active lists. */
-router.post('/:id/deactivate', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:id/deactivate', requirePermission(Permission.EMPLOYEES_ARCHIVE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_ARCHIVE, req.params.id);
         await query('UPDATE employees SET is_active = false WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_DEACTIVATED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Deactivated worker ${worker.full_name}` });
         res.json({ success: true });
@@ -200,10 +210,10 @@ router.post('/:id/deactivate', requirePermission(Permission.WORKERS_MANAGE), asy
     }
 });
 
-router.post('/:id/reactivate', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:id/reactivate', requirePermission(Permission.EMPLOYEES_ARCHIVE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_ARCHIVE, req.params.id);
         await query('UPDATE employees SET is_active = true WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId]);
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_REACTIVATED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Reactivated worker ${worker.full_name}` });
         res.json({ success: true });
@@ -213,10 +223,10 @@ router.post('/:id/reactivate', requirePermission(Permission.WORKERS_MANAGE), asy
 });
 
 /** Permanent deletion is refused once a worker has approved timesheets: that is payroll history. Deactivate instead. */
-router.delete('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.delete('/:id', requirePermission(Permission.EMPLOYEES_ARCHIVE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_ARCHIVE, req.params.id);
 
         const deleted = await withTransaction(async (tx) => {
             const approved = await tx(
@@ -248,10 +258,10 @@ router.delete('/:id', requirePermission(Permission.WORKERS_MANAGE), async (req: 
  * Replaces the worker's fortnightly roster template (day_index 0–13, day 0 is the Sunday a pay
  * period starts on). Each day is validated with the same segment rules as the roster itself.
  */
-router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:id/templates', requirePermission(Permission.ROSTERS_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const worker = await loadWorker(ctx, Permission.ROSTERS_EDIT, req.params.id);
 
         const templates = req.body?.templates;
         if (!Array.isArray(templates) || templates.length > MAX_TEMPLATE_ROWS) {
@@ -302,10 +312,10 @@ router.post('/:id/templates', requirePermission(Permission.WORKERS_MANAGE), asyn
  * default roster template, optionally with an explicit length (null = the organisation's rule).
  * A day with no template shift has nothing to flip, so it is left alone.
  */
-router.post('/:id/templates/apply-break', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:id/templates/apply-break', requirePermission(Permission.ROSTERS_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.id);
+        const worker = await loadWorker(ctx, Permission.ROSTERS_EDIT, req.params.id);
 
         const { day_indexes, has_break } = req.body || {};
         if (typeof has_break !== 'boolean') throw badRequest('VALIDATION_FAILED', 'has_break must be true or false.');

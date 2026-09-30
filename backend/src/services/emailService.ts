@@ -281,7 +281,7 @@ export function buildOrganisationSetupEmailTemplate(params: { setupLink: string,
     const text = `Set up your SimpleHours organisation\n\nUse the link below to create your organisation. You will become its Organisation Owner.\n\n${params.setupLink}\n\n${footer}`;
     const html = buildActionEmail({
         title: 'Set up your organisation',
-        body: 'Use the button below to create your organisation on SimpleHours. You will become its Organisation Owner, and can then add branches and invite Branch Admins.',
+        body: 'Use the button below to create your organisation on SimpleHours. You will become its Organisation Owner, and can then add branches and invite your team.',
         buttonLabel: 'Create organisation',
         link: params.setupLink,
         footer,
@@ -290,21 +290,23 @@ export function buildOrganisationSetupEmailTemplate(params: { setupLink: string,
 }
 
 /**
- * Branch Admin invitation, sent by an Organisation Owner.
+ * Team invitation: someone is invited to join with a role, sent by a person who manages users.
  */
-export function buildBranchAdminInviteEmailTemplate(params: {
+export function buildTeamInviteEmailTemplate(params: {
     inviteLink: string,
     recipientEmail: string,
     organisationName: string,
+    roleName: string,
+    /** The branches the role applies to; empty means the entire organisation. */
     branchNames: string[],
 }): { subject: string, html: string, text: string } {
-    const branches = params.branchNames.join(', ');
-    const subject = `You have been invited to manage ${params.organisationName} on SimpleHours`;
+    const where = params.branchNames.length > 0 ? `for: ${params.branchNames.join(', ')}` : 'across the entire organisation';
+    const subject = `You have been invited to join ${params.organisationName} on SimpleHours`;
     const footer = `This single-use invitation was issued to ${params.recipientEmail} and expires in 7 days.`;
-    const body = `You have been invited to be a Branch Admin at ${params.organisationName} for: ${branches}. Branch Admins manage the workers, roster and timesheets of their assigned branches.`;
+    const body = `You have been invited to join ${params.organisationName} as ${params.roleName} ${where}. What you can do depends on the permissions of that role.`;
     const text = `${subject}\n\n${body}\n\nAccept the invitation:\n${params.inviteLink}\n\n${footer}`;
     const html = buildActionEmail({
-        title: `Branch Admin invitation — ${params.organisationName}`,
+        title: `Invitation — ${params.organisationName}`,
         body,
         buttonLabel: 'Accept invitation',
         link: params.inviteLink,
@@ -314,7 +316,7 @@ export function buildBranchAdminInviteEmailTemplate(params: {
 }
 
 /**
- * Employee portal invitation, sent by an Organisation Owner or Branch Admin.
+ * Employee portal invitation, sent by someone who manages employee access.
  */
 export function buildEmployeeInviteEmailTemplate(params: {
     inviteLink: string,

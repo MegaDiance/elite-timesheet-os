@@ -104,8 +104,10 @@ describe('accepting an invitation', () => {
         expect((await sql('SELECT user_id FROM employees WHERE id = $1', [w.workers.gee])).rows[0].user_id).not.toBeNull();
 
         const login = await request(app).post('/api/auth/login').send({ email: 'gee.new@abc.test', password: 'GeeAccount123', organisation_slug: w.abc.portalSlug });
-        expect(login.body.data.role).toBe('EMPLOYEE');
-        expect(login.body.data.permissions).toEqual([]);
+        expect(login.body.data.roles.map((r: any) => r.name)).toEqual(['Employee']);
+        expect(login.body.data.is_manager).toBe(false);
+        // The employee role holds the employee-portal permissions and no management permission at all.
+        expect([...login.body.data.permissions].sort()).toEqual(['leave.create', 'portal.access', 'timesheets.submit']);
         expect(login.body.data.employee_capabilities).toEqual({ can_submit_timesheets: true });
 
         const replay = await request(app).post('/api/employee-accounts/invitations/accept').send({ token, password: 'GeeAccount123' });

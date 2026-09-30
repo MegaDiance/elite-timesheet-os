@@ -2,8 +2,8 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query, withTransaction } from '../services/db';
 import { comparePassword } from '../services/auth';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { HttpError, badRequest, loadBranch, resolveBranchFilter, writeAudit } from '../services/policy';
+import { requireAnyPermission, requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { HttpError, badRequest, loadBranch, resolveBranchFilterAny, writeAudit } from '../services/policy';
 import { isFortnightStart } from '../services/periodUtils';
 import { lockBranchPeriod } from '../services/periodLocks';
 
@@ -15,10 +15,11 @@ import { lockBranchPeriod } from '../services/periodLocks';
 const router = Router();
 router.use(requireAuth);
 
-router.get('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthRequest, res: Response) => {
+/** Lock state is shown wherever a roster or timesheet is, so those permissions can read it; only timesheets.lock changes it. */
+router.get('/', requireAnyPermission(Permission.TIMESHEETS_LOCK, Permission.ROSTERS_VIEW, Permission.TIMESHEETS_VIEW), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const branchIds = resolveBranchFilter(ctx, Permission.PERIODS_LOCK, req.query.location_id);
+        const branchIds = resolveBranchFilterAny(ctx, [Permission.TIMESHEETS_LOCK, Permission.ROSTERS_VIEW, Permission.TIMESHEETS_VIEW], req.query.location_id);
         const params: any[] = [ctx.orgId, branchIds];
         let sql = `SELECT location_id, start_date, roster_locked, timesheet_locked
                      FROM fortnight_locks WHERE org_id = $1 AND location_id = ANY($2::uuid[])`;
@@ -39,7 +40,7 @@ router.get('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthRequ
  * Changes only the flag(s) supplied. `password` is the caller's own password, or the
  * organisation's lock password for the flag being changed.
  */
-router.post('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthRequest, res: Response) => {
+router.post('/', requirePermission(Permission.TIMESHEETS_LOCK), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { location_id, start_date, roster_locked, timesheet_locked, password } = req.body || {};
@@ -50,7 +51,7 @@ router.post('/', requirePermission(Permission.PERIODS_LOCK), async (req: AuthReq
         }
         if (typeof password !== 'string' || !password) throw badRequest('PASSWORD_REQUIRED', 'Enter your password to change a lock.');
 
-        const branch = await loadBranch(ctx, Permission.PERIODS_LOCK, location_id);
+        const branch = await loadBranch(ctx, Permission.TIMESHEETS_LOCK, location_id);
 
         const [userRes, orgRes] = await Promise.all([
             query('SELECT password_hash FROM users WHERE id = $1', [ctx.userId]),

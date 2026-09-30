@@ -9,7 +9,7 @@ import app from '../../src/index';
 import { clearAllRateLimits } from '../../src/services/authUtils';
 import { getTestOutbox, clearTestOutbox } from '../../src/services/emailService';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from '../helpers/testDb';
-import { PASSWORD, World, bearer, buildWorld, createWorker, linkEmployeeLogin } from '../helpers/fixtures';
+import { PASSWORD, World, assignBranchAdmin, bearer, buildWorld, createWorker, linkEmployeeLogin } from '../helpers/fixtures';
 
 let w: World;
 beforeAll(connectTestDb);
@@ -57,13 +57,13 @@ describe('reset links can never reach beyond what the caller controls', () => {
     });
 
     it("an Owner cannot reset a Branch Admin's login when that login also has access in another organisation", async () => {
-        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
-        const res = await request(app).post(`/api/branch-admins/${w.users.greg.id}/reset-password-link`).set(bearer(w.tokens.owner));
+        await assignBranchAdmin(w.xyz.id, w.xyz.sydney, w.users.greg.id);
+        const res = await request(app).post(`/api/team/${w.users.greg.id}/reset-password-link`).set(bearer(w.tokens.owner));
         expect(res.status).toBe(409);
         expect(await resetTokenCount(w.users.greg.id)).toBe(0);
 
         // Sarah's login only has access here, so her Owner can still help her back in.
-        expect((await request(app).post(`/api/branch-admins/${w.users.sarah.id}/reset-password-link`).set(bearer(w.tokens.owner))).status).toBe(200);
+        expect((await request(app).post(`/api/team/${w.users.sarah.id}/reset-password-link`).set(bearer(w.tokens.owner))).status).toBe(200);
     });
 });
 

@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { sendTransactionalEmail, buildOrganisationSetupEmailTemplate, buildBranchAdminInviteEmailTemplate } from '../src/services/emailService';
+import { sendTransactionalEmail, buildOrganisationSetupEmailTemplate, buildTeamInviteEmailTemplate } from '../src/services/emailService';
 
 jest.mock('nodemailer');
 
@@ -13,16 +13,26 @@ describe('Transactional Email Service Tests', () => {
         expect(template.html).not.toMatch(/Elite Timesheet/i);
     });
 
-    it('builds the Branch Admin invitation naming the organisation and branches, escaping HTML', () => {
-        const template = buildBranchAdminInviteEmailTemplate({
+    it('builds the team invitation naming the organisation, role and branches, escaping HTML', () => {
+        const template = buildTeamInviteEmailTemplate({
             inviteLink: 'https://app.simplehours.test/accept-invite?token=abc',
             recipientEmail: 'sarah@abc.test',
             organisationName: '<b>ABC</b> Health',
+            roleName: 'Payroll Manager',
             branchNames: ['Melbourne', 'Richmond'],
         });
+        expect(template.text).toContain('Payroll Manager');
         expect(template.text).toContain('Melbourne, Richmond');
         expect(template.html).toContain('&lt;b&gt;ABC&lt;/b&gt; Health');
         expect(template.html).not.toContain('<b>ABC</b>');
+    });
+
+    it('says the whole organisation when the invitation is not limited to branches', () => {
+        const template = buildTeamInviteEmailTemplate({
+            inviteLink: 'https://app.simplehours.test/accept-invite?token=abc', recipientEmail: 'hr@abc.test',
+            organisationName: 'ABC Health', roleName: 'HR Manager', branchNames: [],
+        });
+        expect(template.text).toContain('entire organisation');
     });
 
     it('should dispatch email via dev-mock transport and return delivery result without credentials leak', async () => {

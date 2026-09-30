@@ -1,13 +1,13 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { badRequest, loadBranch, writeAudit } from '../services/policy';
+import { requireAuth, requireManagement, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { badRequest, forbidden, hasPermission, isUuid, loadBranch, notFound, writeAudit } from '../services/policy';
 
 /**
  * Branches (stored in the `locations` table).
- * The Organisation Owner creates, edits, deactivates and reactivates branches.
- * A Branch Admin can see the branches they are assigned to — nothing else.
+ * branches.manage (organisation-wide) creates, edits, deactivates and reactivates branches.
+ * Everyone else who manages data sees only the branches their permissions cover — nothing else.
  */
 const router = Router();
 router.use(requireAuth);
@@ -22,21 +22,27 @@ function readBranchFields(body: any) {
     };
 }
 
-router.get('/', requirePermission(Permission.BRANCH_VIEW), async (req: AuthRequest, res: Response) => {
+router.get('/', requireManagement, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const includeInactive = req.query.include_inactive === 'true';
+        // Who has access to a branch is only shown to people who manage users.
+        const showTeam = hasPermission(ctx, Permission.USERS_MANAGE);
         const result = await query(
             `SELECT l.*,
                     (SELECT COUNT(*)::int FROM employees e
                       WHERE e.location_id = l.id AND e.is_active = true) AS active_staff_count,
-                    COALESCE((SELECT json_agg(json_build_object('id', u.id, 'email', u.email, 'full_name', u.full_name) ORDER BY u.email)
-                                FROM branch_admins ba JOIN users u ON u.id = ba.user_id
-                               WHERE ba.location_id = l.id), '[]'::json) AS admins
+                    CASE WHEN $4::boolean THEN COALESCE((SELECT json_agg(json_build_object('id', m.id, 'email', m.email, 'full_name', m.full_name) ORDER BY m.email)
+                                FROM (SELECT DISTINCT u.id, u.email, u.full_name
+                                        FROM user_roles ur
+                                        JOIN users u ON u.id = ur.user_id
+                                       WHERE ur.org_id = l.org_id
+                                         AND (ur.scope_all OR EXISTS (SELECT 1 FROM user_role_branches urb WHERE urb.user_role_id = ur.id AND urb.location_id = l.id))) m),
+                              '[]'::json) ELSE '[]'::json END AS admins
                FROM locations l
               WHERE l.org_id = $1 AND l.id = ANY($2::uuid[]) AND (l.is_active = true OR $3::boolean)
               ORDER BY l.name ASC`,
-            [ctx.orgId, ctx.branchIds, includeInactive]
+            [ctx.orgId, ctx.branchIds, includeInactive, showTeam]
         );
         res.json({ success: true, data: result.rows });
     } catch (err) {
@@ -67,10 +73,14 @@ router.post('/', requirePermission(Permission.BRANCHES_MANAGE), async (req: Auth
     }
 });
 
-router.get('/:id', requirePermission(Permission.BRANCH_VIEW), async (req: AuthRequest, res: Response) => {
+router.get('/:id', requireManagement, async (req: AuthRequest, res: Response) => {
     try {
-        const branch = await loadBranch(req.auth!, Permission.BRANCH_VIEW, req.params.id);
-        res.json({ success: true, data: branch });
+        const ctx = req.auth!;
+        if (!isUuid(req.params.id)) throw notFound('Branch');
+        const found = await query('SELECT * FROM locations WHERE id = $1 AND org_id = $2', [req.params.id, ctx.orgId]);
+        if (found.rows.length === 0) throw notFound('Branch');
+        if (!ctx.branchIds.includes(found.rows[0].id)) throw forbidden('You do not have access to this branch.');
+        res.json({ success: true, data: found.rows[0] });
     } catch (err) {
         sendError(res, err, 'BRANCH GET ERROR');
     }
@@ -100,7 +110,7 @@ router.put('/:id', requirePermission(Permission.BRANCHES_MANAGE), async (req: Au
 
 /**
  * Branches are never deleted: rosters, timesheets and audit history belong to them.
- * Deactivating removes the branch from every Branch Admin's scope immediately.
+ * Deactivating removes the branch from every branch-scoped assignment immediately.
  * The last active branch cannot be deactivated.
  */
 router.post('/:id/deactivate', requirePermission(Permission.BRANCHES_MANAGE), async (req: AuthRequest, res: Response) => {

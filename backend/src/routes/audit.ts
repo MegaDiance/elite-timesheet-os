@@ -3,7 +3,7 @@ import { query } from '../services/db';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 
 /**
- * The organisation's audit trail. Only the Organisation Owner reads it, and nobody can change it:
+ * The organisation's audit trail. Only holders of audit.view read it, and nobody can change it:
  * rows are written exclusively through writeAudit (services/policy).
  */
 const router = Router();

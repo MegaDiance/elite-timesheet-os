@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requireEmployee, AuthRequest, sendError } from '../middleware/auth';
+import { requireAuth, requireEmployee, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, isUuid } from '../services/policy';
 import { addDays, fmtISO, getFortnightStartIso, isFortnightStart, isIsoDate, parseIsoDateUtc } from '../services/periodUtils';
 import { DayEntry, breakRuleFor, isSegmentType, loadBreakSettings, rowsToDay, writeDayRecord } from '../services/segments';
@@ -176,7 +176,7 @@ const LEAVE_LABEL: Record<string, string> = { Sick: 'Sick Leave', Annual: 'Annua
  * `mergeDayWrite`, not silently ignored, so an employee can never smuggle a roster change through
  * this endpoint. Refuses outright while `employees_can_submit_timesheets` is off for the org.
  */
-router.post('/timesheet', async (req: AuthRequest, res: Response) => {
+router.post('/timesheet', requirePermission(Permission.TIMESHEETS_SUBMIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         await assertEmployeeTimesheetsEnabled(ctx.orgId);
@@ -192,7 +192,7 @@ router.post('/timesheet', async (req: AuthRequest, res: Response) => {
         const body = { ...(req.body || {}), scope: 'TIMESHEET', timesheet };
         const saved = await writeDayRecord({
             orgId: ctx.orgId,
-            worker: { id: ctx.employeeId!, location_id: ctx.branchIds[0] },
+            worker: { id: ctx.employeeId!, location_id: ctx.employeeBranchId! },
             recordDate: record_date,
             body,
             rule,
@@ -275,7 +275,7 @@ router.get('/leave-requests', async (req: AuthRequest, res: Response) => {
  * When the organisation has `leave_requests_require_approval` off, the request is approved and
  * materialized immediately instead of sitting Pending.
  */
-router.post('/leave-requests', async (req: AuthRequest, res: Response) => {
+router.post('/leave-requests', requirePermission(Permission.LEAVE_CREATE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { leave_type, start_date, end_date, start_time, end_time, hours, reason } = req.body || {};
@@ -308,7 +308,7 @@ router.post('/leave-requests', async (req: AuthRequest, res: Response) => {
 
         const requireApproval = (await query('SELECT leave_requests_require_approval FROM organisations WHERE id = $1', [ctx.orgId])).rows[0]?.leave_requests_require_approval !== false;
         const id = crypto.randomUUID();
-        const worker = { id: ctx.employeeId!, location_id: ctx.branchIds[0] };
+        const worker = { id: ctx.employeeId!, location_id: ctx.employeeBranchId! };
 
         await query(
             `INSERT INTO leave_requests (id, org_id, employee_id, location_id, leave_type, start_date, end_date, start_time, end_time, hours, reason, status)
@@ -327,7 +327,7 @@ router.post('/leave-requests', async (req: AuthRequest, res: Response) => {
 });
 
 /** DELETE /api/portal/leave-requests/:id — withdraws the employee's own request, only while Pending. */
-router.delete('/leave-requests/:id', async (req: AuthRequest, res: Response) => {
+router.delete('/leave-requests/:id', requirePermission(Permission.LEAVE_CREATE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         if (!isUuid(req.params.id)) throw badRequest('VALIDATION_FAILED', 'Invalid request id.');

@@ -60,6 +60,21 @@ export async function createSession(
     return { sessionId };
 }
 
+/** How long a password re-entry stays valid for the sensitive step it was asked for. */
+export const REAUTH_WINDOW_MS = 5 * 60 * 1000;
+
+/** Records, on the server-side session, that the person just re-entered their password. */
+export async function markReauthenticated(sessionId: string): Promise<void> {
+    await query('UPDATE sessions SET reauthenticated_at = NOW() WHERE id = $1', [sessionId]);
+}
+
+/** True when this session re-entered its password within the re-authentication window. */
+export async function hasFreshReauthentication(sessionId: string): Promise<boolean> {
+    const res = await query('SELECT reauthenticated_at FROM sessions WHERE id = $1 AND is_active = true AND revoked_at IS NULL', [sessionId]);
+    const at = res.rows[0]?.reauthenticated_at;
+    return Boolean(at) && Date.now() - new Date(at).getTime() <= REAUTH_WINDOW_MS;
+}
+
 /**
  * Validates session active state, inactivity timeout, and user active status
  */

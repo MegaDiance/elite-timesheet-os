@@ -7,7 +7,8 @@ import recordsRoutes from './routes/records';
 import locksRoutes from './routes/locks';
 import organisationRoutes from './routes/organisation';
 import locationsRoutes from './routes/locations';
-import branchAdminsRoutes from './routes/branchAdmins';
+import teamRoutes from './routes/team';
+import rolesRoutes from './routes/roles';
 import employeeAccountsRoutes from './routes/employeeAccounts';
 import portalRoutes from './routes/portal';
 import leaveRequestsRoutes from './routes/leaveRequests';
@@ -88,7 +89,8 @@ app.get('/health', (_req, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/signup', signupRoutes);
-app.use('/api/branch-admins', branchAdminsRoutes);
+app.use('/api/team', teamRoutes);
+app.use('/api/roles', rolesRoutes);
 app.use('/api/employee-accounts', employeeAccountsRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/leave-requests', leaveRequestsRoutes);

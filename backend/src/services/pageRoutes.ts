@@ -21,7 +21,7 @@ export const PAGE_PATHS: readonly string[] = [
     '/accept-invite', '/accept-employee-invite',
     // Signed-in application (the API authorises every request; these only need to load the app)
     '/app', '/dashboard', '/roster', '/timesheets', '/leave-requests', '/workers', '/reports',
-    '/branches', '/branch-admins', '/audit', '/announcements', '/settings',
+    '/branches', '/settings/roles', '/audit', '/announcements', '/settings',
     '/my/schedule', '/my/timesheet', '/my/history', '/my/leave',
 ];
 

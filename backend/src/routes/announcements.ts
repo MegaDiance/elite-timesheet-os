@@ -1,36 +1,27 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { AccessContext, Role, badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
+import { requireAuth, requireManagement, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { AccessContext, badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
 
 /**
  * Management noticeboard.
  *
- * The audience is the organisation's accounts: the Organisation Owner and its Branch Admins.
- * Posts, reactions and threaded replies are organisation-wide. Any authenticated management
- * account may read, post, react and reply — employees are not part of this audience and are
- * denied below, before any handler runs. Authors may delete their own posts and replies;
+ * The audience is the organisation's management accounts: anyone who holds at least one
+ * management permission. Posts, reactions and threaded replies are organisation-wide. Any of them
+ * may read, post, react and reply — employees are not part of this audience and are denied by
+ * requireManagement, before any handler runs. Authors may delete their own posts and replies;
  * deleting someone else's requires announcements.moderate.
  */
 const router = Router();
-router.use(requireAuth, (req: AuthRequest, res: Response, next) => {
-    if (req.auth!.role === 'EMPLOYEE') {
-        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You do not have access to this.' } });
-    }
-    next();
-});
+router.use(requireAuth, requireManagement);
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_CONTENT_LENGTH = 5000;
 const MAX_EMOJI_LENGTH = 32;
 
 /** Denormalised label stored with each post / reply. Display only — never used for authorisation. */
-const ROLE_LABELS: Record<Role, string> = {
-    OWNER: 'Organisation Owner',
-    BRANCH_ADMIN: 'Branch Admin',
-    EMPLOYEE: 'Employee',
-};
+const roleLabel = (ctx: AccessContext) => ctx.roles.map(r => r.name).join(', ') || 'Team';
 
 interface ReactionSummary {
     emoji: string;
@@ -161,7 +152,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
             `INSERT INTO organisation_announcements (id, org_id, author_id, author_name, author_role, title, content)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING id, org_id, author_id, author_name, author_role, title, content, created_at`,
-            [crypto.randomUUID(), ctx.orgId, ctx.userId, authorName(ctx), ROLE_LABELS[ctx.role], title, content]
+            [crypto.randomUUID(), ctx.orgId, ctx.userId, authorName(ctx), roleLabel(ctx), title, content]
         );
 
         res.status(201).json({
@@ -256,7 +247,7 @@ router.post('/:id/replies', async (req: AuthRequest, res: Response) => {
             `INSERT INTO announcement_replies (id, announcement_id, org_id, author_id, author_name, author_role, content)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING id, announcement_id, org_id, author_id, author_name, author_role, content, created_at`,
-            [crypto.randomUUID(), announcement.id, ctx.orgId, ctx.userId, authorName(ctx), ROLE_LABELS[ctx.role], content]
+            [crypto.randomUUID(), announcement.id, ctx.orgId, ctx.userId, authorName(ctx), roleLabel(ctx), content]
         );
 
         res.status(201).json({ success: true, data: { ...inserted.rows[0], can_delete: true } });

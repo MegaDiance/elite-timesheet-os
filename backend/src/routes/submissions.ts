@@ -9,7 +9,7 @@ import { getPeriodLock, lockWorkerPeriod, timesheetLockedError } from '../servic
 /**
  * Timesheet approval.
  *
- * Hours are entered by the Organisation Owner or a Branch Admin, so there is no submit / review /
+ * Hours are entered by the people who manage the roster, so there is no submit / review /
  * reject handshake: a worker's fortnight is either Draft or Approved. Approving freezes that
  * worker's days for the fortnight; reopening (while the period is not locked) makes them editable again.
  */
@@ -21,12 +21,12 @@ function readStartDate(value: unknown): string {
     return value;
 }
 
-router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.get('/', requirePermission(Permission.TIMESHEETS_VIEW), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const startDate = readStartDate(req.query.start_date);
         const endDate = fmtISO(addDays(parseIsoDateUtc(startDate), 13));
-        const branchIds = resolveBranchFilter(ctx, Permission.TIMESHEETS_MANAGE, req.query.location_id);
+        const branchIds = resolveBranchFilter(ctx, Permission.TIMESHEETS_VIEW, req.query.location_id);
 
         const result = await query(
             `SELECT e.id AS employee_id, e.full_name, e.department, e.location_id, l.name AS location_name,
@@ -69,10 +69,10 @@ router.get('/', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: Aut
  * Authorises against the worker's own branch, then runs `change` in a transaction that holds the
  * worker-period lock (the same one day saves take) and refuses when the branch period is locked.
  */
-async function changeSubmission<T>(req: AuthRequest, workerId: unknown, startDate: string,
+async function changeSubmission<T>(req: AuthRequest, permission: Permission, workerId: unknown, startDate: string,
     change: (tx: (text: string, params?: any[]) => Promise<any>, worker: any) => Promise<T>) {
     const ctx = req.auth!;
-    const worker = await loadWorker(ctx, Permission.TIMESHEETS_MANAGE, workerId);
+    const worker = await loadWorker(ctx, permission, workerId);
     const result = await withTransaction(async (tx) => {
         await lockWorkerPeriod(tx, ctx.orgId, worker.id, worker.location_id, startDate);
         if ((await getPeriodLock(ctx.orgId, worker.location_id, startDate, tx)).timesheet_locked) throw timesheetLockedError();
@@ -83,7 +83,7 @@ async function changeSubmission<T>(req: AuthRequest, workerId: unknown, startDat
 
 async function approve(req: AuthRequest, workerId: unknown, startDate: string) {
     const ctx = req.auth!;
-    const { worker, result: saved } = await changeSubmission(req, workerId, startDate, (tx, w) => tx(
+    const { worker, result: saved } = await changeSubmission(req, Permission.TIMESHEETS_APPROVE, workerId, startDate, (tx, w) => tx(
         `INSERT INTO timesheet_submissions (id, org_id, employee_id, start_date, status, reviewed_by, reviewed_at)
          VALUES ($1, $2, $3, $4, 'Approved', $5, NOW())
          ON CONFLICT (org_id, employee_id, start_date) DO UPDATE
@@ -100,7 +100,7 @@ async function approve(req: AuthRequest, workerId: unknown, startDate: string) {
     return { employee_id: worker.id, id: saved.rows[0].id, status: 'Approved' };
 }
 
-router.post('/approve', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/approve', requirePermission(Permission.TIMESHEETS_APPROVE), async (req: AuthRequest, res: Response) => {
     try {
         const startDate = readStartDate(req.body?.start_date);
         res.json({ success: true, data: await approve(req, req.body?.employee_id, startDate) });
@@ -113,7 +113,7 @@ router.post('/approve', requirePermission(Permission.TIMESHEETS_MANAGE), async (
  * POST /api/submissions/bulk-approve  { start_date, employee_ids: [...] }
  * Every item is authorised on its own and reported on its own — nothing is dropped silently.
  */
-router.post('/bulk-approve', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/bulk-approve', requirePermission(Permission.TIMESHEETS_APPROVE), async (req: AuthRequest, res: Response) => {
     try {
         const startDate = readStartDate(req.body?.start_date);
         const ids = req.body?.employee_ids;
@@ -135,11 +135,11 @@ router.post('/bulk-approve', requirePermission(Permission.TIMESHEETS_MANAGE), as
     }
 });
 
-router.post('/reopen', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/reopen', requirePermission(Permission.TIMESHEETS_REOPEN), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const startDate = readStartDate(req.body?.start_date);
-        const { worker, result: reopened } = await changeSubmission(req, req.body?.employee_id, startDate, (tx, w) => tx(
+        const { worker, result: reopened } = await changeSubmission(req, Permission.TIMESHEETS_REOPEN, req.body?.employee_id, startDate, (tx, w) => tx(
             `UPDATE timesheet_submissions SET status = 'Draft', reviewed_by = $1, reviewed_at = NOW()
               WHERE org_id = $2 AND employee_id = $3 AND start_date = $4 AND status = 'Approved' RETURNING id`,
             [ctx.userId, ctx.orgId, w.id, startDate]

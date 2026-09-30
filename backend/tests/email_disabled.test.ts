@@ -9,7 +9,7 @@ import app from '../src/index';
 import { clearAllRateLimits } from '../src/services/authUtils';
 import { getTestOutbox, clearTestOutbox, isEmailSendingEnabled } from '../src/services/emailService';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from './helpers/testDb';
-import { PASSWORD, World, bearer, buildWorld } from './helpers/fixtures';
+import { PASSWORD, World, bearer, buildWorld, systemRoleId } from './helpers/fixtures';
 
 const tokenFrom = (link: string) => /token=([a-f0-9]{64})/.exec(link)?.[1] as string;
 
@@ -37,10 +37,12 @@ it('the switch itself reports off, and the mail infrastructure still exists to t
     process.env.EMAIL_ENABLED = 'false';
 });
 
-describe('Branch Admin invitations', () => {
+describe('Team invitations', () => {
+    const invitation = (email: string) => systemRoleId(w.abc.id, 'ADMIN').then(role_id => ({ email, role_id, scope: { branch_ids: [w.abc.melbourne] } }));
+
     it('a new invitation returns a copyable link instead of emailing it, and no email is sent', async () => {
-        const res = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner))
-            .send({ email: 'newadmin@abc.test', location_ids: [w.abc.melbourne] });
+        const res = await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner))
+            .send(await invitation('newadmin@abc.test'));
         expect(res.status).toBe(201);
         expect(res.body.data.delivery_status).toBe('link');
         expect(res.body.data.invite_link).toMatch(/\/accept-invite\?token=[a-f0-9]{64}/);
@@ -49,38 +51,38 @@ describe('Branch Admin invitations', () => {
 
         // The link actually works.
         const token = tokenFrom(res.body.data.invite_link);
-        const accept = await request(app).post('/api/branch-admins/invitations/accept').send({ token, password: 'Newcomer123' });
+        const accept = await request(app).post('/api/team/invitations/accept').send({ token, password: 'Newcomer123' });
         expect(accept.status).toBe(200);
     });
 
     it('resend rotates the token and returns the new link the same way', async () => {
-        const created = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner))
-            .send({ email: 'newadmin@abc.test', location_ids: [w.abc.melbourne] });
+        const created = await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner))
+            .send(await invitation('newadmin@abc.test'));
         const firstToken = tokenFrom(created.body.data.invite_link);
         const id = (await sql('SELECT id FROM branch_admin_invitations WHERE email = $1', ['newadmin@abc.test'])).rows[0].id;
 
-        const resent = await request(app).post(`/api/branch-admins/invitations/${id}/resend`).set(bearer(w.tokens.owner));
+        const resent = await request(app).post(`/api/team/invitations/${id}/resend`).set(bearer(w.tokens.owner));
         expect(resent.body.data.delivery_status).toBe('link');
         const secondToken = tokenFrom(resent.body.data.invite_link);
         expect(secondToken).not.toBe(firstToken);
         expect(getTestOutbox()).toHaveLength(0);
 
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token: firstToken, password: 'Newcomer123' })).status).toBe(400);
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token: secondToken, password: 'Newcomer123' })).status).toBe(200);
+        expect((await request(app).post('/api/team/invitations/accept').send({ token: firstToken, password: 'Newcomer123' })).status).toBe(400);
+        expect((await request(app).post('/api/team/invitations/accept').send({ token: secondToken, password: 'Newcomer123' })).status).toBe(200);
     });
 
     it('the invite link never appears on any other endpoint, only on the request/resend response', async () => {
-        await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner))
-            .send({ email: 'newadmin@abc.test', location_ids: [w.abc.melbourne] });
-        const list = await request(app).get('/api/branch-admins').set(bearer(w.tokens.owner));
+        await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner))
+            .send(await invitation('newadmin@abc.test'));
+        const list = await request(app).get('/api/team').set(bearer(w.tokens.owner));
         expect(JSON.stringify(list.body)).not.toMatch(/token=/);
     });
 
     it('invitation actions are still audited while email is off', async () => {
-        const res = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner))
-            .send({ email: 'newadmin@abc.test', location_ids: [w.abc.melbourne] });
+        const res = await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner))
+            .send(await invitation('newadmin@abc.test'));
         const audit = await request(app).get('/api/audit').set(bearer(w.tokens.owner));
-        const entry = audit.body.data.find((a: any) => a.action === 'BRANCH_ADMIN_INVITED');
+        const entry = audit.body.data.find((a: any) => a.action === 'TEAM_MEMBER_INVITED');
         expect(entry).toBeTruthy();
         expect(JSON.stringify(entry)).not.toMatch(/token=/);
         expect(res.status).toBe(201);
@@ -98,8 +100,8 @@ describe('Password reset', () => {
         expect((await sql('SELECT COUNT(*)::int AS n FROM reset_tokens')).rows[0].n).toBe(0);
     });
 
-    it('the Owner can generate a reset link for a Branch Admin and hand it over directly', async () => {
-        const res = await request(app).post(`/api/branch-admins/${w.users.sarah.id}/reset-password-link`).set(bearer(w.tokens.owner));
+    it('the Owner can generate a reset link for a team member and hand it over directly', async () => {
+        const res = await request(app).post(`/api/team/${w.users.sarah.id}/reset-password-link`).set(bearer(w.tokens.owner));
         expect(res.status).toBe(200);
         expect(res.body.data.reset_link).toMatch(/\/reset-password\?token=[a-f0-9]{64}/);
         expect(getTestOutbox()).toHaveLength(0);
@@ -110,12 +112,12 @@ describe('Password reset', () => {
         expect((await request(app).post('/api/auth/login').send({ email: w.users.sarah.email, password: 'BrandNew123', organisation_slug: w.abc.portalSlug })).status).toBe(200);
 
         const audit = await request(app).get('/api/audit').set(bearer(w.tokens.owner));
-        expect(audit.body.data.some((a: any) => a.action === 'BRANCH_ADMIN_PASSWORD_RESET_LINK_CREATED')).toBe(true);
+        expect(audit.body.data.some((a: any) => a.action === 'TEAM_PASSWORD_RESET_LINK_CREATED')).toBe(true);
     });
 
-    it('a Branch Admin cannot generate a reset link (Owner only), and a non-admin id is refused', async () => {
-        expect((await request(app).post(`/api/branch-admins/${w.users.owner.id}/reset-password-link`).set(bearer(w.tokens.sarah))).status).toBe(403);
-        expect((await request(app).post(`/api/branch-admins/${crypto.randomUUID()}/reset-password-link`).set(bearer(w.tokens.owner))).status).toBe(404);
+    it('an Admin cannot generate a reset link (needs users.manage), and an unknown id is refused', async () => {
+        expect((await request(app).post(`/api/team/${w.users.owner.id}/reset-password-link`).set(bearer(w.tokens.sarah))).status).toBe(403);
+        expect((await request(app).post(`/api/team/${crypto.randomUUID()}/reset-password-link`).set(bearer(w.tokens.owner))).status).toBe(404);
     });
 });
 

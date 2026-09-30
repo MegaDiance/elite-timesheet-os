@@ -1,8 +1,9 @@
 /**
  * Regression tests for the four critical findings (C1–C4) of the 2026-09-21 security audit,
- * re-stated for the two-role model.
+ * re-stated for the roles-and-permissions model.
  *
- *   C1  Only the Organisation Owner creates privileged accounts; no endpoint accepts a role.
+ *   C1  Only someone holding users.manage creates privileged accounts, and only within access they
+ *       hold themselves; creating a worker never creates or links an account.
  *   C2  Possessing an invitation token never authenticates anyone.
  *   C3  Login verification is bound to one challenge; a bare code authenticates nobody.
  *   C4  Email is never rerouted and fails closed.
@@ -15,7 +16,7 @@ import app from '../../src/index';
 import { clearAllRateLimits } from '../../src/services/authUtils';
 import { sendTransactionalEmail, getTestOutbox, clearTestOutbox, isEmailDeliveryConfigured } from '../../src/services/emailService';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from '../helpers/testDb';
-import { PASSWORD, World, bearer, buildWorld } from '../helpers/fixtures';
+import { PASSWORD, World, bearer, buildWorld, systemRoleId } from '../helpers/fixtures';
 
 function lastEmailTo(address: string) {
     const mail = [...getTestOutbox()].reverse().find(m => m.to === address);
@@ -34,7 +35,7 @@ beforeEach(async () => {
     w = await buildWorld();
 });
 
-describe('C1: only the Organisation Owner creates privileged accounts', () => {
+describe('C1: only people who manage users create privileged accounts', () => {
     it('creating a worker never creates or links an account, whatever role fields are sent', async () => {
         const users = (await sql('SELECT COUNT(*)::int AS n FROM users')).rows[0].n;
         const res = await request(app).post('/api/employees').set(bearer(w.tokens.owner)).send({
@@ -49,16 +50,18 @@ describe('C1: only the Organisation Owner creates privileged accounts', () => {
         expect(await sql("SELECT column_name FROM information_schema.columns WHERE table_name = 'employees' AND column_name = 'role'")).toMatchObject({ rows: [] });
     });
 
-    it('a Branch Admin cannot invite, assign or remove Branch Admins', async () => {
-        const invite = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.sarah)).send({ email: 'friend@abc.test', location_ids: [w.abc.melbourne] });
-        const assign = await request(app).put(`/api/branch-admins/${w.users.sarah.id}/branches`).set(bearer(w.tokens.sarah)).send({ location_ids: [w.abc.melbourne, w.abc.richmond, w.abc.geelong] });
-        const remove = await request(app).delete(`/api/branch-admins/${w.users.greg.id}`).set(bearer(w.tokens.sarah));
+    it('an Admin (no users.manage) cannot invite, assign or remove anyone', async () => {
+        const admin = await systemRoleId(w.abc.id, 'ADMIN');
+        const invite = await request(app).post('/api/team/invitations').set(bearer(w.tokens.sarah)).send({ email: 'friend@abc.test', role_id: admin, scope: { branch_ids: [w.abc.melbourne] } });
+        const assign = await request(app).post(`/api/team/${w.users.sarah.id}/roles`).set(bearer(w.tokens.sarah)).send({ role_id: admin, scope: { all: true } });
+        const remove = await request(app).delete(`/api/team/${w.users.greg.id}`).set(bearer(w.tokens.sarah));
         expect([invite.status, assign.status, remove.status]).toEqual([403, 403, 403]);
         expect((await sql('SELECT COUNT(*)::int AS n FROM branch_admin_invitations')).rows[0].n).toBe(0);
-        expect((await sql('SELECT COUNT(*)::int AS n FROM branch_admins WHERE user_id = $1', [w.users.sarah.id])).rows[0].n).toBe(2);
+        expect((await sql('SELECT COUNT(*)::int AS n FROM user_roles WHERE user_id = $1', [w.users.sarah.id])).rows[0].n).toBe(1);
+        expect((await sql('SELECT COUNT(*)::int AS n FROM user_roles WHERE user_id = $1', [w.users.greg.id])).rows[0].n).toBe(1);
     });
 
-    it('a Branch Admin cannot take or give ownership', async () => {
+    it('an Admin cannot take or give ownership', async () => {
         const res = await request(app).post('/api/organisation/transfer-ownership').set(bearer(w.tokens.sarah)).send({ user_id: w.users.sarah.id, current_password: PASSWORD });
         expect(res.status).toBe(403);
         expect((await sql('SELECT owner_user_id FROM organisations WHERE id = $1', [w.abc.id])).rows[0].owner_user_id).toBe(w.users.owner.id);
@@ -77,7 +80,8 @@ describe('C1: only the Organisation Owner creates privileged accounts', () => {
 
 describe('C2: an invitation token never authenticates anyone', () => {
     async function invite(email: string) {
-        const res = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner)).send({ email, location_ids: [w.abc.melbourne] });
+        const admin = await systemRoleId(w.abc.id, 'ADMIN');
+        const res = await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner)).send({ email, role_id: admin, scope: { branch_ids: [w.abc.melbourne] } });
         expect(res.status).toBe(201);
         expect(JSON.stringify(res.body)).not.toMatch(/[a-f0-9]{64}/);
         return tokenFrom(lastEmailTo(email).text || '');
@@ -92,51 +96,51 @@ describe('C2: an invitation token never authenticates anyone', () => {
 
     it('existing account: the invitation is refused without that account’s password and attaches nothing', async () => {
         const token = await invite(w.users.xavier.email);
-        const res = await request(app).post('/api/branch-admins/invitations/accept').send({ token, password: 'WrongPassword1' });
+        const res = await request(app).post('/api/team/invitations/accept').send({ token, password: 'WrongPassword1' });
         expect(res.status).toBe(401);
         expect(JSON.stringify(res.body)).not.toMatch(/eyJ/); // no JWT of any kind
-        expect((await sql('SELECT COUNT(*)::int AS n FROM branch_admins WHERE user_id = $1', [w.users.xavier.id])).rows[0].n).toBe(0);
+        expect((await sql('SELECT COUNT(*)::int AS n FROM user_roles WHERE user_id = $1', [w.users.xavier.id])).rows[0].n).toBe(0);
     });
 
     it('existing account: the right password attaches the branch once and still issues no session', async () => {
         const token = await invite(w.users.xavier.email);
-        const ok = await request(app).post('/api/branch-admins/invitations/accept').send({ token, password: PASSWORD });
+        const ok = await request(app).post('/api/team/invitations/accept').send({ token, password: PASSWORD });
         expect(ok.status).toBe(200);
         expect(ok.body.data.token).toBeUndefined();
         expect(ok.body.data.login_path).toBe(`/login/${w.abc.portalSlug}`);
-        expect((await sql('SELECT location_id FROM branch_admins WHERE user_id = $1 AND org_id = $2', [w.users.xavier.id, w.abc.id])).rows).toEqual([{ location_id: w.abc.melbourne }]);
-        const replay = await request(app).post('/api/branch-admins/invitations/accept').send({ token, password: PASSWORD });
+        expect((await sql('SELECT urb.location_id FROM user_roles ur JOIN user_role_branches urb ON urb.user_role_id = ur.id WHERE ur.user_id = $1 AND ur.org_id = $2', [w.users.xavier.id, w.abc.id])).rows).toEqual([{ location_id: w.abc.melbourne }]);
+        const replay = await request(app).post('/api/team/invitations/accept').send({ token, password: PASSWORD });
         expect(replay.status).toBe(400);
     });
 
     it('new account: sets a password, grants exactly the invited branch, issues no session', async () => {
         const token = await invite('newcomer@abc.test');
-        const res = await request(app).post('/api/branch-admins/invitations/accept').send({ token, password: 'Newcomer123', full_name: 'New Comer' });
+        const res = await request(app).post('/api/team/invitations/accept').send({ token, password: 'Newcomer123', full_name: 'New Comer' });
         expect(res.status).toBe(200);
         expect(res.body.data.token).toBeUndefined();
-        const rows = await sql('SELECT ba.location_id FROM branch_admins ba JOIN users u ON u.id = ba.user_id WHERE u.email = $1', ['newcomer@abc.test']);
+        const rows = await sql('SELECT urb.location_id FROM user_roles ur JOIN user_role_branches urb ON urb.user_role_id = ur.id JOIN users u ON u.id = ur.user_id WHERE u.email = $1', ['newcomer@abc.test']);
         expect(rows.rows).toEqual([{ location_id: w.abc.melbourne }]);
     });
 
     it('the stored hash, an expired, a revoked or a replaced token are all refused', async () => {
         const token = await invite('a@abc.test');
         const hash = crypto.createHash('sha256').update(token).digest('hex');
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token: hash, password: 'Newcomer123' })).status).toBe(400);
+        expect((await request(app).post('/api/team/invitations/accept').send({ token: hash, password: 'Newcomer123' })).status).toBe(400);
 
         await sql("UPDATE branch_admin_invitations SET expires_at = NOW() - INTERVAL '1 minute'");
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token, password: 'Newcomer123' })).status).toBe(400);
+        expect((await request(app).post('/api/team/invitations/accept').send({ token, password: 'Newcomer123' })).status).toBe(400);
 
         const second = await invite('b@abc.test');
         const id = (await sql('SELECT id FROM branch_admin_invitations WHERE email = $1', ['b@abc.test'])).rows[0].id;
-        await request(app).delete(`/api/branch-admins/invitations/${id}`).set(bearer(w.tokens.owner));
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token: second, password: 'Newcomer123' })).status).toBe(400);
+        await request(app).delete(`/api/team/invitations/${id}`).set(bearer(w.tokens.owner));
+        expect((await request(app).post('/api/team/invitations/accept').send({ token: second, password: 'Newcomer123' })).status).toBe(400);
 
         const third = await invite('c@abc.test');
         const cId = (await sql('SELECT id FROM branch_admin_invitations WHERE email = $1', ['c@abc.test'])).rows[0].id;
-        await request(app).post(`/api/branch-admins/invitations/${cId}/resend`).set(bearer(w.tokens.owner));
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token: third, password: 'Newcomer123' })).status).toBe(400);
+        await request(app).post(`/api/team/invitations/${cId}/resend`).set(bearer(w.tokens.owner));
+        expect((await request(app).post('/api/team/invitations/accept').send({ token: third, password: 'Newcomer123' })).status).toBe(400);
         const rotated = tokenFrom(lastEmailTo('c@abc.test').text || '');
-        expect((await request(app).post('/api/branch-admins/invitations/accept').send({ token: rotated, password: 'Newcomer123' })).status).toBe(200);
+        expect((await request(app).post('/api/team/invitations/accept').send({ token: rotated, password: 'Newcomer123' })).status).toBe(200);
     });
 });
 
@@ -176,7 +180,7 @@ describe('C3: login verification is bound to one challenge', () => {
         const ok = await request(app).post('/api/auth/verify-login').send({ challenge_id: challengeId, code });
         expect(ok.status).toBe(200);
         expect(ok.body.data.organisation.id).toBe(w.abc.id);
-        expect(ok.body.data.role).toBe('BRANCH_ADMIN');
+        expect(ok.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
         expect((await request(app).post('/api/auth/verify-login').send({ challenge_id: challengeId, code })).status).toBe(400);
     });
 
@@ -211,7 +215,7 @@ describe('C3: login verification is bound to one challenge', () => {
 
     it('a challenge is refused once the account has lost access to the organisation', async () => {
         const { challengeId, code } = await startChallenge(w.users.greg.email);
-        await sql('DELETE FROM branch_admins WHERE user_id = $1', [w.users.greg.id]);
+        await sql('DELETE FROM user_roles WHERE user_id = $1', [w.users.greg.id]);
         const res = await request(app).post('/api/auth/verify-login').send({ challenge_id: challengeId, code });
         expect(res.status).toBe(400);
         expect(res.body.data?.token).toBeUndefined();
@@ -299,14 +303,16 @@ describe('C4: email is never rerouted and fails closed', () => {
     });
 });
 
-describe('Invited emails that already own the organisation', () => {
-    it('the owner cannot invite themselves as a Branch Admin', async () => {
-        const res = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner)).send({ email: w.users.owner.email, location_ids: [w.abc.melbourne] });
+describe('Invited emails that already have access', () => {
+    it('the owner cannot invite themselves', async () => {
+        const admin = await systemRoleId(w.abc.id, 'ADMIN');
+        const res = await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner)).send({ email: w.users.owner.email, role_id: admin, scope: { branch_ids: [w.abc.melbourne] } });
         expect(res.status).toBe(400);
     });
 
-    it('an existing Branch Admin is changed through assignments, not a second invitation', async () => {
-        const res = await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner)).send({ email: w.users.sarah.email, location_ids: [w.abc.geelong] });
+    it('an existing team member is changed through assignments, not a second invitation', async () => {
+        const admin = await systemRoleId(w.abc.id, 'ADMIN');
+        const res = await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner)).send({ email: w.users.sarah.email, role_id: admin, scope: { branch_ids: [w.abc.geelong] } });
         expect(res.status).toBe(409);
     });
 });

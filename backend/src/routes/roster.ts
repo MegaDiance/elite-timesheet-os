@@ -31,18 +31,18 @@ async function readBulkRequest(req: AuthRequest, permission: Permission) {
     };
 }
 
-router.post('/auto-roster', requirePermission(Permission.ROSTERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/auto-roster', requirePermission(Permission.ROSTERS_CREATE), async (req: AuthRequest, res: Response) => {
     try {
-        const result = await autoRosterAll(await readBulkRequest(req, Permission.ROSTERS_MANAGE));
+        const result = await autoRosterAll(await readBulkRequest(req, Permission.ROSTERS_CREATE));
         res.json({ success: true, data: result });
     } catch (err) {
         sendError(res, err, 'ROSTER AUTO-ROSTER ERROR');
     }
 });
 
-router.post('/auto-log', requirePermission(Permission.TIMESHEETS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/auto-log', requirePermission(Permission.TIMESHEETS_CREATE), async (req: AuthRequest, res: Response) => {
     try {
-        const result = await autoLogAll(await readBulkRequest(req, Permission.TIMESHEETS_MANAGE));
+        const result = await autoLogAll(await readBulkRequest(req, Permission.TIMESHEETS_CREATE));
         res.json({ success: true, data: result });
     } catch (err) {
         sendError(res, err, 'ROSTER AUTO-LOG ERROR');

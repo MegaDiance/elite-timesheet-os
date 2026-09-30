@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../services/auth';
 import { validateSession, touchSession, revokeSession } from '../services/sessionService';
-import { AccessContext, HttpError, Permission, hasPermission, resolveAccess } from '../services/policy';
+import { AccessContext, HttpError, Permission, hasAnyPermission, hasManagementAccess, hasPermission, resolveAccess } from '../services/policy';
 
 export { Permission, AccessContext };
 
@@ -29,9 +29,10 @@ const SESSION_MESSAGES: Record<string, { code: string; message: string }> = {
  * Authenticates the request and resolves the caller's role and branch scope.
  *
  *   token {sub, sid} → server session (active, not idle, not expired, same user)
- *                    → session.org_id → organisation active → OWNER or BRANCH_ADMIN
+ *                    → session.org_id → organisation active → role assignments → permissions → branch scope
  *
- * Any failure or error denies. There is no session-less mode and no role claim.
+ * Any failure or error denies. There is no session-less mode and no role or permission claim: the
+ * organisation comes from the session row, the permissions from the database, on every request.
  */
 export const requireAuth: PolicyHandler = Object.assign(
     async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -75,9 +76,13 @@ export const requireAuth: PolicyHandler = Object.assign(
                 fullName: session.user_full_name || null,
                 orgId: session.org_id,
                 sessionId: session.id,
-                role: access.role,
+                roles: access.roles,
+                isOwner: access.isOwner,
+                grants: access.grants,
+                allBranchIds: access.allBranchIds,
                 branchIds: access.branchIds,
                 employeeId: access.employeeId,
+                employeeBranchId: access.employeeBranchId,
             };
             next();
         } catch (err) {
@@ -89,8 +94,8 @@ export const requireAuth: PolicyHandler = Object.assign(
 );
 
 /**
- * Coarse gate: the caller's role must hold `permission`. Branch-scoped permissions are held by
- * both roles, so handlers must additionally authorise against the resource's own branch with
+ * Coarse gate: the caller must hold `permission` somewhere. Branch-level permissions are held per
+ * branch, so handlers must additionally authorise against the resource's own branch with
  * loadWorker / loadBranch / resolveBranchFilter from services/policy.
  */
 export function requirePermission(permission: Permission): PolicyHandler {
@@ -106,11 +111,47 @@ export function requirePermission(permission: Permission): PolicyHandler {
     );
 }
 
-/** Coarse gate for employee-only (portal) routes. Owners and Branch Admins are denied here too. */
+/** Coarse gate for a screen that several permissions open (each caller still only sees what its own permission covers). */
+export function requireAnyPermission(...permissions: Permission[]): PolicyHandler {
+    return Object.assign(
+        (req: AuthRequest, res: Response, next: NextFunction) => {
+            if (!req.auth) return deny(res, 401, 'UNAUTHENTICATED', 'Unauthorized');
+            if (!hasAnyPermission(req.auth, permissions)) {
+                return deny(res, 403, 'FORBIDDEN', 'You do not have access to this.');
+            }
+            next();
+        },
+        { policy: `any(${permissions.join('|')})` }
+    );
+}
+
+/** Coarse gate for shared management screens (holidays, noticeboard, dashboard): the caller must hold at least one management permission. */
+export const requireManagement: PolicyHandler = Object.assign(
+    (req: AuthRequest, res: Response, next: NextFunction) => {
+        if (!req.auth) return deny(res, 401, 'UNAUTHENTICATED', 'Unauthorized');
+        if (!hasManagementAccess(req.auth)) {
+            return deny(res, 403, 'FORBIDDEN', 'You do not have access to this.');
+        }
+        next();
+    },
+    { policy: 'management' }
+);
+
+/** For the few actions no role can hold: only the organisation's owner (e.g. transferring ownership). */
+export const requireOwner: PolicyHandler = Object.assign(
+    (req: AuthRequest, res: Response, next: NextFunction) => {
+        if (!req.auth) return deny(res, 401, 'UNAUTHENTICATED', 'Unauthorized');
+        if (!req.auth.isOwner) return deny(res, 403, 'FORBIDDEN', 'You do not have access to this.');
+        next();
+    },
+    { policy: 'owner' }
+);
+
+/** Coarse gate for the employee portal: an active worker record linked to this login, and the portal permission. */
 export const requireEmployee: PolicyHandler = Object.assign(
     (req: AuthRequest, res: Response, next: NextFunction) => {
         if (!req.auth) return deny(res, 401, 'UNAUTHENTICATED', 'Unauthorized');
-        if (req.auth.role !== 'EMPLOYEE') {
+        if (!req.auth.employeeId || !hasPermission(req.auth, Permission.PORTAL_ACCESS)) {
             return deny(res, 403, 'FORBIDDEN', 'You do not have access to this.');
         }
         next();

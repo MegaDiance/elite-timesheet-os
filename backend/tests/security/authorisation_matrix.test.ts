@@ -3,9 +3,9 @@
  *
  * Columns (see tests/helpers/fixtures.ts):
  *   owner   — Organisation Owner of ABC Health
- *   sarah   — Branch Admin of Melbourne + Richmond (the resource is in Melbourne: in scope)
- *   greg    — Branch Admin of Geelong (same organisation, other branch: out of scope)
- *   xavier  — Organisation Owner of XYZ Care (another organisation)
+ *   sarah   — Admin role for Melbourne + Richmond (the resource is in Melbourne: in scope)
+ *   greg    — Admin role for Geelong (same organisation, other branch: out of scope)
+ *   xavier  — Owner of XYZ Care (another organisation)
  *   anon    — no token
  *
  * Unless a row says otherwise, the target resource belongs to ABC Health / Melbourne.
@@ -37,17 +37,19 @@ const EVERYONE = { owner: 200, sarah: 200, greg: 200, xavier: 200, anon: 401 };
 const rows: Row[] = [
     // Account
     { name: 'GET /auth/me', method: 'get', path: () => '/api/auth/me', expect: EVERYONE },
-    { name: 'GET /auth/organisations', method: 'get', path: () => '/api/auth/organisations', expect: EVERYONE },
+    // The switch list needs a password re-entry on the session first (security/organisation_switching.test.ts).
+    { name: 'GET /auth/organisations', method: 'get', path: () => '/api/auth/organisations', expect: { owner: 403, sarah: 403, greg: 403, xavier: 403, anon: 401 } },
+    { name: 'POST /auth/reauthenticate', method: 'post', path: () => '/api/auth/reauthenticate', body: () => ({ password: PASSWORD }), expect: EVERYONE },
     { name: 'GET /auth/security/activity', method: 'get', path: () => '/api/auth/security/activity', expect: EVERYONE },
     { name: 'GET /auth/2fa/status', method: 'get', path: () => '/api/auth/2fa/status', expect: EVERYONE },
 
-    // Organisation (Owner only)
+    // Organisation (permissions the Admin role does not hold)
     { name: 'GET /organisation/me', method: 'get', path: () => '/api/organisation/me', expect: EVERYONE },
     { name: 'PUT /organisation/settings', method: 'put', path: () => '/api/organisation/settings', body: () => ({ break_mins_weekday: 30 }), expect: OWNER_ONLY_OWN_ORG },
     { name: 'POST /organisation/regenerate-portal-url', method: 'post', path: () => '/api/organisation/regenerate-portal-url', expect: OWNER_ONLY_OWN_ORG },
     { name: 'PUT /organisation/lock-passwords', method: 'put', path: () => '/api/organisation/lock-passwords', body: () => ({ current_password: PASSWORD, new_roster_lock_password: 'roster1' }), expect: OWNER_ONLY_OWN_ORG },
     {
-        name: 'POST /organisation/transfer-ownership (to ABC Branch Admin)', method: 'post', path: () => '/api/organisation/transfer-ownership',
+        name: 'POST /organisation/transfer-ownership (to an ABC team member)', method: 'post', path: () => '/api/organisation/transfer-ownership',
         body: (w) => ({ user_id: w.users.greg.id, current_password: PASSWORD }),
         expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 },
     },
@@ -63,19 +65,36 @@ const rows: Row[] = [
     { name: 'POST /locations/:melbourne/deactivate', method: 'post', path: (w) => `/api/locations/${w.abc.melbourne}/deactivate`, expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
     { name: 'POST /locations/:melbourne/reactivate', method: 'post', path: (w) => `/api/locations/${w.abc.melbourne}/reactivate`, expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
 
-    // Branch Admin management (Owner only)
-    { name: 'GET /branch-admins', method: 'get', path: () => '/api/branch-admins', expect: OWNER_ONLY_OWN_ORG },
+    // Team and roles (users.manage / roles.manage: the owner only, by default)
+    { name: 'GET /team', method: 'get', path: () => '/api/team', expect: OWNER_ONLY_OWN_ORG },
     {
-        name: 'POST /branch-admins/invitations (ABC Melbourne)', method: 'post', path: () => '/api/branch-admins/invitations',
-        body: (w) => ({ email: 'new.admin@abc.test', location_ids: [w.abc.melbourne] }),
+        name: 'POST /team/invitations (ABC Melbourne)', method: 'post', path: () => '/api/team/invitations',
+        body: (w) => ({ email: 'new.admin@abc.test', role_id: w.roles.abcAdmin, scope: { branch_ids: [w.abc.melbourne] } }),
         expect: { owner: 201, sarah: 403, greg: 403, xavier: 404, anon: 401 },
     },
     {
-        name: 'PUT /branch-admins/:greg/branches', method: 'put', path: (w) => `/api/branch-admins/${w.users.greg.id}/branches`,
-        body: (w) => ({ location_ids: [w.abc.geelong, w.abc.melbourne] }),
+        name: 'PUT /team/:greg/roles/:assignment', method: 'put', path: (w) => `/api/team/${w.users.greg.id}/roles/${w.assignments.greg}`,
+        body: (w) => ({ scope: { branch_ids: [w.abc.geelong, w.abc.melbourne] } }),
         expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 },
     },
-    { name: 'DELETE /branch-admins/:greg', method: 'delete', path: (w) => `/api/branch-admins/${w.users.greg.id}`, expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
+    {
+        name: 'POST /team/:sarah/roles', method: 'post', path: (w) => `/api/team/${w.users.sarah.id}/roles`,
+        body: (w) => ({ role_id: w.roles.abcAdmin, scope: { all: true } }),
+        // Sarah already holds the Admin role (409 for the owner); xavier cannot see Sarah at all.
+        expect: { owner: 409, sarah: 403, greg: 403, xavier: 404, anon: 401 },
+    },
+    { name: 'DELETE /team/:greg', method: 'delete', path: (w) => `/api/team/${w.users.greg.id}`, expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
+    { name: 'POST /team/:greg/reset-password-link', method: 'post', path: (w) => `/api/team/${w.users.greg.id}/reset-password-link`, expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
+    { name: 'GET /roles', method: 'get', path: () => '/api/roles', expect: OWNER_ONLY_OWN_ORG },
+    { name: 'GET /roles/permissions', method: 'get', path: () => '/api/roles/permissions', expect: OWNER_ONLY_OWN_ORG },
+    { name: 'GET /roles/:abcAdmin', method: 'get', path: (w) => `/api/roles/${w.roles.abcAdmin}`, expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
+    { name: 'POST /roles', method: 'post', path: () => '/api/roles', body: () => ({ name: 'Payroll Manager', permissions: ['payroll.view'] }), expect: { owner: 201, sarah: 403, greg: 403, xavier: 201, anon: 401 } },
+    {
+        name: 'PUT /roles/:abcAdmin', method: 'put', path: (w) => `/api/roles/${w.roles.abcAdmin}`,
+        body: () => ({ permissions: ['employees.view', 'payroll.view'] }),
+        expect: { owner: 200, sarah: 403, greg: 403, xavier: 404, anon: 401 },
+    },
+    { name: 'DELETE /roles/:abcAdmin (built in)', method: 'delete', path: (w) => `/api/roles/${w.roles.abcAdmin}`, expect: { owner: 403, sarah: 403, greg: 403, xavier: 404, anon: 401 } },
 
     // Workers
     { name: 'GET /employees', method: 'get', path: () => '/api/employees', expect: EVERYONE },
@@ -156,16 +175,15 @@ describe('Authorisation matrix', () => {
     }
 
     /**
-     * EMPLOYEE holds none of the Permission values (ROLE_PERMISSIONS.EMPLOYEE is an empty set,
-     * see policy.ts and role_removal.test.ts), so every requirePermission-gated route above must
-     * reject an employee token with 403 — the entire existing admin surface, unmodified, is
-     * employee-proof by construction. The only legitimate exceptions are the handful of
+     * The Employee role holds only the employee-portal permissions (permissions.ts), so every
+     * route above that needs a management permission must reject an employee token with 403 — the
+     * entire admin surface is employee-proof by construction. The only legitimate exceptions are the handful of
      * requireAuth-only "any authenticated account" routes that are personal-account or org-context
      * reads an employee also needs (session/2FA self-service, switching between their own
      * organisations, and the organisation profile the portal itself will read from).
      */
     const OPEN_TO_EMPLOYEE = new Set([
-        'GET /auth/me', 'GET /auth/organisations', 'GET /auth/security/activity', 'GET /auth/2fa/status',
+        'GET /auth/me', 'POST /auth/reauthenticate', 'GET /auth/security/activity', 'GET /auth/2fa/status',
         'GET /organisation/me',
     ]);
 

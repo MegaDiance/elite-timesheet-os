@@ -1,14 +1,16 @@
 import { Router, Response } from 'express';
 import { query } from '../services/db';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { badRequest, hasPermission, isUuid, resolveBranchFilter } from '../services/policy';
+import { requireAuth, requireManagement, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { AccessContext, badRequest, forbidden, hasPermission, isUuid, scopedBranchIds } from '../services/policy';
 import { publicBaseUrl } from '../services/authUtils';
 import { usablePortalPath } from '../services/portalLink';
 import { addDays, fmtISO, getFortnightStart, isIsoDate } from '../services/periodUtils';
 
 /**
  * Management dashboard: what is happening today in the branches the caller may act in.
- * The Organisation Owner sees every branch; a Branch Admin sees their assigned branches.
+ * Each figure is limited to the branches where the caller holds the permission that shows it
+ * (rosters.view for who is rostered, timesheets.view for timesheet status, leave.view for leave),
+ * and a requested branch outside everything the caller can see is refused.
  */
 const router = Router();
 router.use(requireAuth);
@@ -40,32 +42,50 @@ function readDate(value: unknown): string | null {
 }
 
 /**
+ * The branches (within a permission's scope) the caller asked for. `requested` must be one of the
+ * branches the caller can see at all; the permission then narrows it further, possibly to none.
+ */
+function visibleScope(ctx: AccessContext, permission: Permission, requested: unknown): string[] {
+    const scope = scopedBranchIds(ctx, permission);
+    return requested === null ? scope : scope.filter(id => id === requested);
+}
+
+/** Validates `?location_id=` against everything the caller can see; null means "all of it". */
+function readRequestedBranch(ctx: AccessContext, value: unknown): string | null {
+    if (value === undefined || value === null || value === '') return null;
+    if (!isUuid(value)) throw badRequest('INVALID_BRANCH', 'location_id must be a branch id.');
+    if (!ctx.branchIds.includes(value)) throw forbidden('You do not have access to this branch.');
+    return value;
+}
+
+/**
  * GET /api/dashboard/attention?location_id=
  * Small counts for the navigation badges: timesheets still waiting for approval this pay period,
  * and leave requests waiting for a decision — only for the branches the caller may act in, and
  * leave only when the caller can review it.
  */
-router.get('/attention', requirePermission(Permission.BRANCH_VIEW), async (req: AuthRequest, res: Response) => {
+router.get('/attention', requireManagement, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const scope = resolveBranchFilter(ctx, Permission.BRANCH_VIEW, req.query.location_id);
+        const requested = readRequestedBranch(ctx, req.query.location_id);
+        const timesheetScope = visibleScope(ctx, Permission.TIMESHEETS_APPROVE, requested);
+        const leaveScope = visibleScope(ctx, Permission.LEAVE_APPROVE, requested);
         const fortnightStart = fmtISO(getFortnightStart(todayInTimezone(null)));
-        const canReview = hasPermission(ctx, Permission.TIMESHEETS_MANAGE);
         const [timesheets, leave] = await Promise.all([
-            canReview
+            timesheetScope.length > 0
                 ? query(
                     `SELECT COUNT(*)::int AS n FROM employees e
                       WHERE e.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND e.is_active = true
                         AND NOT EXISTS (SELECT 1 FROM timesheet_submissions ts
                                          WHERE ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $3 AND ts.status = 'Approved')`,
-                    [ctx.orgId, scope, fortnightStart])
+                    [ctx.orgId, timesheetScope, fortnightStart])
                 : Promise.resolve({ rows: [{ n: 0 }] }),
-            canReview
+            leaveScope.length > 0
                 ? query(
                     `SELECT COUNT(*)::int AS n FROM leave_requests lr
                        JOIN employees e ON e.id = lr.employee_id AND e.org_id = lr.org_id
                       WHERE lr.org_id = $1 AND e.location_id = ANY($2::uuid[]) AND lr.status = 'Pending'`,
-                    [ctx.orgId, scope])
+                    [ctx.orgId, leaveScope])
                 : Promise.resolve({ rows: [{ n: 0 }] }),
         ]);
         res.json({ success: true, data: { timesheets_waiting: timesheets.rows[0].n, leave_pending: leave.rows[0].n, fortnight_start: fortnightStart } });
@@ -77,10 +97,11 @@ router.get('/attention', requirePermission(Permission.BRANCH_VIEW), async (req: 
 /**
  * GET /api/dashboard/today?location_id=&date=
  */
-router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: AuthRequest, res: Response) => {
+router.get('/today', requireManagement, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const branchFilter = resolveBranchFilter(ctx, Permission.BRANCH_VIEW, req.query.location_id);
+        const requestedBranch = readRequestedBranch(ctx, req.query.location_id);
+        const branchFilter = requestedBranch ? [requestedBranch] : ctx.branchIds;
         const requestedDate = readDate(req.query.date);
         // Deactivated branches are left out unless one was asked for by id (already checked against the caller's scope above).
         const includeInactive = isUuid(req.query.location_id);
@@ -101,7 +122,11 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
         const fortnightStart = getFortnightStart(date);
         const fortnightStartIso = fmtISO(fortnightStart);
         const fortnightEndIso = fmtISO(addDays(fortnightStart, 13));
-        const isOwnerView = hasPermission(ctx, Permission.ORGANISATION_MANAGE);
+        // What each part of the page may show depends on the permission behind it, branch by branch.
+        const rosterScope = visibleScope(ctx, Permission.ROSTERS_VIEW, requestedBranch);
+        const timesheetScope = visibleScope(ctx, Permission.TIMESHEETS_VIEW, requestedBranch);
+        const workerScope = Array.from(new Set([...rosterScope, ...timesheetScope, ...visibleScope(ctx, Permission.EMPLOYEES_VIEW, requestedBranch)]));
+        const showOrganisation = hasPermission(ctx, Permission.SECURITY_MANAGE) || hasPermission(ctx, Permission.USERS_MANAGE);
 
         const [holidayRes, lockRes, scheduledRes, workerRes, orgRes] = await Promise.all([
             query('SELECT name FROM public_holidays WHERE org_id = $1 AND holiday_date = $2', [ctx.orgId, date]),
@@ -125,7 +150,7 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
                     AND e.location_id = ANY($3::uuid[])
                     AND e.is_active = true
                   ORDER BY ss.roster_in ASC NULLS LAST, e.full_name ASC`,
-                [ctx.orgId, date, scope]
+                [ctx.orgId, date, rosterScope]
             ),
             query(
                 `SELECT e.id AS employee_id, e.full_name, e.department, e.location_id,
@@ -137,12 +162,12 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
                     AND e.location_id = ANY($3::uuid[])
                     AND e.is_active = true
                   ORDER BY e.full_name ASC`,
-                [ctx.orgId, fortnightStartIso, scope]
+                [ctx.orgId, fortnightStartIso, workerScope]
             ),
-            isOwnerView
+            showOrganisation
                 ? query(
                     `SELECT o.name,
-                            (SELECT COUNT(DISTINCT ba.user_id)::int FROM branch_admins ba WHERE ba.org_id = o.id) AS branch_admins
+                            (SELECT COUNT(DISTINCT ur.user_id)::int FROM user_roles ur WHERE ur.org_id = o.id) AS team_members
                        FROM organisations o
                       WHERE o.id = $1`,
                     [ctx.orgId]
@@ -209,6 +234,8 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
             const status = branchStatus.get(worker.location_id);
             if (!status) continue;
             status.active_workers++;
+            // Timesheet status is only shown for branches where the caller may view timesheets.
+            if (!timesheetScope.includes(worker.location_id)) continue;
             if (worker.status === 'Approved') {
                 status.timesheets_approved++;
                 approvedCount++;
@@ -227,19 +254,19 @@ router.get('/today', requirePermission(Permission.BRANCH_VIEW), async (req: Auth
 
         // 3. Organisation card (Owner only). The link is built from server configuration.
         const org = orgRes?.rows[0];
-        const signInPath = org ? await usablePortalPath(ctx.orgId) : null;
+        const signInPath = org && hasPermission(ctx, Permission.SECURITY_MANAGE) ? await usablePortalPath(ctx.orgId) : null;
         const organisation = org
             ? {
                 name: org.name,
                 sign_in_link: signInPath ? `${publicBaseUrl()}${signInPath}` : null,
-                branch_admins: org.branch_admins,
+                team_members: hasPermission(ctx, Permission.USERS_MANAGE) ? org.team_members : null,
             }
             : null;
 
         res.json({
             success: true,
             data: {
-                role: ctx.role,
+                roles: ctx.roles.map(r => r.name),
                 date,
                 active_fortnight: fortnightStartIso,
                 fortnight_end: fortnightEndIso,

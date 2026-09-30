@@ -1,8 +1,8 @@
 import { Router, Response } from 'express';
 import { query, withTransaction } from '../services/db';
 import { comparePassword, hashPassword } from '../services/auth';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { badRequest, forbidden, isUuid, notFound, writeAudit } from '../services/policy';
+import { requireAuth, requireOwner, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
 import { RateLimitedRequest, checkRateLimit, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
 import { currentPortalLink, issuePortalLink, parseExpiry, resolvePortalToken } from '../services/portalLink';
@@ -31,7 +31,7 @@ router.get('/lookup/:slug', checkRateLimit, async (req: RateLimitedRequest, res:
     }
 });
 
-/** Organisation profile. Both roles can read it; only the Owner sees the private sign-in link. */
+/** Organisation profile. Anyone signed in can read it; only holders of security.manage see the private sign-in link. */
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
@@ -45,15 +45,14 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
             [ctx.orgId]
         );
         const org = result.rows[0];
-        const isOwner = ctx.role === 'OWNER';
-        const link = isOwner ? await currentPortalLink(ctx.orgId) : null;
+        const link = hasPermission(ctx, Permission.SECURITY_MANAGE) ? await currentPortalLink(ctx.orgId) : null;
 
         res.json({
             success: true,
             data: {
                 id: org.id,
                 name: org.name,
-                is_owner: isOwner,
+                is_owner: ctx.isOwner,
                 portal_slug: link?.token,
                 portal_url: link ? `${publicBaseUrl()}${link.path}` : undefined,
                 portal_link_expires_at: link?.expiresAt,
@@ -76,13 +75,12 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 /**
  * PUT /api/organisation/settings
  *
- * Two authorisation tiers in one route: the original organisation-wide fields (break rules,
- * name) stay Owner-only, exactly as `organisation.manage` always meant. The three workforce
- * booleans below them are policy toggles a Branch Admin also needs day-to-day, so they check
- * role directly instead — deliberately not via `Permission.ORGANISATION_MANAGE` (Owner-only)
- * or a new branch-scoped Permission (they are organisation-wide, not per-branch). Each tier is
- * checked before any update is built, so a Branch Admin can never smuggle an Owner-only field
- * into the same request as a workforce boolean.
+ * Two authorisation tiers in one route: the organisation-wide fields (break rules, name) need
+ * organisation.edit, which is only ever effective organisation-wide. The three workforce booleans
+ * below them are leave and timesheet policy that the people who run leave need day-to-day, so they
+ * need leave.manage instead (a permission a branch-scoped Admin holds by default). Each tier is
+ * checked before any update is built, so nobody can smuggle a field from the stricter tier into
+ * the same request as a workforce boolean.
  */
 router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
@@ -97,11 +95,11 @@ router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => 
             ['break_threshold_hours', 0, 24],
         ];
         const ownerFieldsPresent = numeric.some(([field]) => body[field] !== undefined) || body.name !== undefined;
-        if (ownerFieldsPresent && ctx.role !== 'OWNER') throw forbidden();
+        if (ownerFieldsPresent && !hasPermission(ctx, Permission.ORGANISATION_EDIT)) throw forbidden();
 
         const workforceBooleans = ['employees_can_submit_timesheets', 'automatically_merge_leave_with_roster', 'leave_requests_require_approval'];
         const workforceFieldsPresent = workforceBooleans.some(field => body[field] !== undefined);
-        if (workforceFieldsPresent && ctx.role !== 'OWNER' && ctx.role !== 'BRANCH_ADMIN') throw forbidden();
+        if (workforceFieldsPresent && !hasPermission(ctx, Permission.LEAVE_MANAGE)) throw forbidden();
 
         for (const [field, min, max] of numeric) {
             if (body[field] === undefined) continue;
@@ -226,35 +224,43 @@ router.put('/lock-passwords', requireAuth, requirePermission(Permission.SECURITY
 /**
  * POST /api/organisation/transfer-ownership  { user_id, current_password }
  *
- * Owner only, with password re-entry. The new owner must already be a Branch Admin of this
- * organisation (an account that has accepted an invitation here). The outgoing owner keeps
- * working access as a Branch Admin of every active branch; the new owner can remove it.
- * An organisation therefore always has exactly one owner.
+ * Owner only (not a permission any role can hold), with password re-entry. The new owner must
+ * already be a team member of this organisation (someone who accepted an invitation here). The
+ * outgoing owner keeps working access as an Admin of every active branch; the new owner can remove
+ * it. An organisation therefore always has exactly one owner, and ownership can only move through
+ * this explicit, re-authenticated, audited step.
  */
-router.post('/transfer-ownership', requireAuth, requirePermission(Permission.SECURITY_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/transfer-ownership', requireAuth, requireOwner, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { user_id, current_password } = req.body || {};
         await requireCurrentPassword(ctx.userId, current_password);
-        if (!isUuid(user_id) || user_id === ctx.userId) throw badRequest('VALIDATION_FAILED', 'Choose a Branch Admin to become the new owner.');
+        if (!isUuid(user_id) || user_id === ctx.userId) throw badRequest('VALIDATION_FAILED', 'Choose a team member to become the new owner.');
 
         const target = await query(
             `SELECT u.id, u.email FROM users u
               WHERE u.id = $1 AND u.is_active = true
-                AND EXISTS (SELECT 1 FROM branch_admins ba WHERE ba.user_id = u.id AND ba.org_id = $2)`,
+                AND EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.org_id = $2)`,
             [user_id, ctx.orgId]
         );
-        if (target.rows.length === 0) throw notFound('Branch Admin');
+        if (target.rows.length === 0) throw notFound('Team member');
 
         await withTransaction(async (tx) => {
             const moved = await tx('UPDATE organisations SET owner_user_id = $1 WHERE id = $2 AND owner_user_id = $3 RETURNING id', [user_id, ctx.orgId, ctx.userId]);
             if (moved.rows.length === 0) throw forbidden();
-            await tx('DELETE FROM branch_admins WHERE org_id = $1 AND user_id = $2', [ctx.orgId, user_id]);
+            // The new owner's access now comes from ownership itself, so their assignments are removed.
+            await tx('DELETE FROM user_roles WHERE org_id = $1 AND user_id = $2', [ctx.orgId, user_id]);
+            const admin = (await tx("SELECT id FROM roles WHERE org_id = $1 AND system_key = 'ADMIN'", [ctx.orgId])).rows[0];
+            const assignment = (await tx(
+                `INSERT INTO user_roles (org_id, user_id, role_id, scope_all, assigned_by) VALUES ($1, $2, $3, false, $4)
+                 ON CONFLICT (user_id, role_id) DO UPDATE SET scope_all = false, updated_at = NOW() RETURNING id`,
+                [ctx.orgId, ctx.userId, admin.id, user_id]
+            )).rows[0];
+            await tx('DELETE FROM user_role_branches WHERE user_role_id = $1', [assignment.id]);
             await tx(
-                `INSERT INTO branch_admins (org_id, location_id, user_id, assigned_by)
-                 SELECT org_id, id, $2, $3 FROM locations WHERE org_id = $1 AND is_active = true
-                 ON CONFLICT (location_id, user_id) DO NOTHING`,
-                [ctx.orgId, ctx.userId, user_id]
+                `INSERT INTO user_role_branches (user_role_id, org_id, location_id)
+                 SELECT $2, org_id, id FROM locations WHERE org_id = $1 AND is_active = true`,
+                [ctx.orgId, assignment.id]
             );
         });
 

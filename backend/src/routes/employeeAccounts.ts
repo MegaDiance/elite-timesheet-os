@@ -17,11 +17,11 @@ import { usablePortalPath } from '../services/portalLink';
  *
  * A worker (the `employees` table) is an operational record. It optionally gains an
  * employee-portal login via `employees.user_id` — one login per worker app-wide, enforced by a
- * partial unique index. Only the Organisation Owner or the worker's own Branch Admin may invite
+ * partial unique index. Only someone holding employees.manage_access in the worker's branch may invite
  * or revoke it (the same `WORKERS_MANAGE` permission and branch scope that already governs
  * everything else about a worker).
  *
- * Modeled directly on branchAdmins.ts's invitation flow: the token is random, stored hashed,
+ * Modeled directly on team.ts's invitation flow: the token is random, stored hashed,
  * expires after 7 days, is single use, and never creates a session — after accepting, the
  * person signs in normally through the organisation's private sign-in link. While email is
  * turned off, the link is handed back to the inviter to copy and share, exactly as branch admin
@@ -153,7 +153,7 @@ router.post('/invitations/accept', checkRateLimit, async (req: RateLimitedReques
 });
 
 // ---------------------------------------------------------------------------
-// Management (Owner, or the worker's own Branch Admin) from here
+// Management (employees.manage_access in the worker's branch) from here
 // ---------------------------------------------------------------------------
 router.use(requireAuth);
 
@@ -163,7 +163,7 @@ interface InvitationDelivery {
     link?: string;
 }
 
-/** Mirrors branchAdmins.ts's deliverInvitation exactly. */
+/** Mirrors team.ts's deliverInvitation exactly. */
 async function deliverInvitation(invitationId: string, email: string, rawToken: string, organisationName: string): Promise<InvitationDelivery> {
     const link = `${publicBaseUrl()}/accept-employee-invite?token=${rawToken}`;
     if (!isEmailSendingEnabled()) {
@@ -179,10 +179,10 @@ async function deliverInvitation(invitationId: string, email: string, rawToken: 
     return { delivered: result.success };
 }
 
-router.post('/:employeeId/invitations', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:employeeId/invitations', requirePermission(Permission.EMPLOYEES_MANAGE_ACCESS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.employeeId);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_MANAGE_ACCESS, req.params.employeeId);
         if (!worker.is_active) throw badRequest('WORKER_INACTIVE', 'This worker is deactivated.');
         if (worker.user_id) throw new HttpError(409, 'ALREADY_LINKED', 'This worker already has portal access.');
         if (!worker.email) throw badRequest('VALIDATION_FAILED', 'This worker needs an email address before they can be invited.');
@@ -225,10 +225,10 @@ router.post('/:employeeId/invitations', requirePermission(Permission.WORKERS_MAN
     }
 });
 
-router.post('/:employeeId/invitations/resend', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:employeeId/invitations/resend', requirePermission(Permission.EMPLOYEES_MANAGE_ACCESS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.employeeId);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_MANAGE_ACCESS, req.params.employeeId);
 
         const token = newSecretToken();
         const updated = await query(
@@ -254,10 +254,10 @@ router.post('/:employeeId/invitations/resend', requirePermission(Permission.WORK
     }
 });
 
-router.delete('/:employeeId/invitations', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.delete('/:employeeId/invitations', requirePermission(Permission.EMPLOYEES_MANAGE_ACCESS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.employeeId);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_MANAGE_ACCESS, req.params.employeeId);
         const revoked = await query(
             'UPDATE employee_invitations SET revoked_at = NOW() WHERE employee_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING id',
             [worker.id]
@@ -272,14 +272,14 @@ router.delete('/:employeeId/invitations', requirePermission(Permission.WORKERS_M
 
 /**
  * POST /api/employee-accounts/:employeeId/reset-password-link
- * The no-email way for a locked-out employee to get back in. Mirrors branchAdmins.ts's version.
+ * The no-email way for a locked-out employee to get back in. Mirrors team.ts's version.
  */
-router.post('/:employeeId/reset-password-link', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/:employeeId/reset-password-link', requirePermission(Permission.EMPLOYEES_MANAGE_ACCESS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.employeeId);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_MANAGE_ACCESS, req.params.employeeId);
         if (!worker.user_id) throw badRequest('NO_PORTAL_ACCESS', 'This worker does not have portal access yet.');
-        await assertResettableLogin(worker.user_id, ctx.orgId, { allowBranchAdminHere: false });
+        await assertResettableLogin(worker.user_id, ctx.orgId, { allowTeamMemberHere: false });
 
         const token = newSecretToken();
         await query('DELETE FROM reset_tokens WHERE user_id = $1', [worker.user_id]);
@@ -305,16 +305,16 @@ router.post('/:employeeId/reset-password-link', requirePermission(Permission.WOR
  * Revokes portal access without touching the worker record itself (roster/timesheet history,
  * name, branch, etc. are untouched — only the login link is removed).
  */
-router.delete('/:employeeId', requirePermission(Permission.WORKERS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.delete('/:employeeId', requirePermission(Permission.EMPLOYEES_MANAGE_ACCESS), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const worker = await loadWorker(ctx, Permission.WORKERS_MANAGE, req.params.employeeId);
+        const worker = await loadWorker(ctx, Permission.EMPLOYEES_MANAGE_ACCESS, req.params.employeeId);
         if (!worker.user_id) throw notFound('Employee account');
 
         const userId = worker.user_id;
         await query('UPDATE employees SET user_id = NULL WHERE id = $1', [worker.id]);
         // Only end their sessions here if this worker link was their only access to the organisation —
-        // removing portal access must never sign out the same login's Owner/Branch Admin sessions.
+        // removing portal access must never sign out the same login's team-member sessions.
         if (!(await resolveAccess(userId, ctx.orgId))) await revokeUserSessionsInOrganisation(userId, ctx.orgId);
 
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'EMPLOYEE_ACCOUNT_REVOKED', entityType: 'employee', entityId: worker.id, targetUserId: userId, branchId: worker.location_id });

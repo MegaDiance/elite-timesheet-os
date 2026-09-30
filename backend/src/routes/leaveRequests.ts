@@ -5,20 +5,20 @@ import { badRequest, isUuid, loadWorker, notFound, resolveBranchFilter, writeAud
 import { materializeLeaveRequest } from '../services/leaveRequests';
 
 /**
- * Leave request review (Owner, or the worker's own Branch Admin — the same scope
- * `TIMESHEETS_MANAGE` already grants for every other worker-day action).
+ * Leave request review: leave.view to see requests and leave.approve to decide them, each within
+ * the branches the permission covers (the worker's own branch, as for every other worker-day action).
  *
  * Requests are created by employees via POST /api/portal/leave-requests. This file only reviews
  * them; when `leave_requests_require_approval` is off, a request is auto-approved and
  * materialized at creation time instead, and never appears here as Pending.
  */
 const router = Router();
-router.use(requireAuth, requirePermission(Permission.TIMESHEETS_MANAGE));
+router.use(requireAuth);
 
-router.get('/', async (req: AuthRequest, res: Response) => {
+router.get('/', requirePermission(Permission.LEAVE_VIEW), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
-        const branchIds = resolveBranchFilter(ctx, Permission.TIMESHEETS_MANAGE, req.query.location_id);
+        const branchIds = resolveBranchFilter(ctx, Permission.LEAVE_VIEW, req.query.location_id);
         const status = typeof req.query.status === 'string' ? req.query.status : undefined;
 
         const params: any[] = [ctx.orgId, branchIds];
@@ -43,7 +43,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     }
 });
 
-router.post('/:id/review', async (req: AuthRequest, res: Response) => {
+router.post('/:id/review', requirePermission(Permission.LEAVE_APPROVE), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         if (!isUuid(req.params.id)) throw notFound('Leave request');
@@ -53,9 +53,9 @@ router.post('/:id/review', async (req: AuthRequest, res: Response) => {
         if (!request) throw notFound('Leave request');
         if (request.status !== 'Pending') throw badRequest('ALREADY_REVIEWED', 'This request has already been reviewed.');
 
-        // Authorises the caller against the worker's own branch — a Branch Admin can only review
-        // requests from workers in branches assigned to them, exactly like every other worker-day action.
-        const worker = await loadWorker(ctx, Permission.TIMESHEETS_MANAGE, request.employee_id);
+        // Authorises the caller against the worker's own branch — a reviewer can only decide
+        // requests from workers in branches their permission covers, exactly like every other worker-day action.
+        const worker = await loadWorker(ctx, Permission.LEAVE_APPROVE, request.employee_id);
 
         const { decision, rejection_reason } = req.body || {};
         if (decision !== 'approve' && decision !== 'reject') throw badRequest('VALIDATION_FAILED', 'decision must be "approve" or "reject".');

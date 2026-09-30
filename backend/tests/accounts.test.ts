@@ -1,6 +1,6 @@
 /**
- * Account lifecycle for the two roles: organisation sign-up (becoming an Owner), Branch Admin
- * invitations and assignments, and ownership transfer.
+ * Account lifecycle: organisation sign-up (becoming an Owner), team invitations and role
+ * assignments, and ownership transfer.
  */
 import request from 'supertest';
 import crypto from 'crypto';
@@ -8,7 +8,7 @@ import app from '../src/index';
 import { clearAllRateLimits } from '../src/services/authUtils';
 import { getTestOutbox, clearTestOutbox } from '../src/services/emailService';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from './helpers/testDb';
-import { PASSWORD, World, bearer, buildWorld } from './helpers/fixtures';
+import { PASSWORD, World, bearer, buildWorld, systemRoleId } from './helpers/fixtures';
 
 let w: World;
 beforeAll(connectTestDb);
@@ -48,7 +48,8 @@ describe('organisation sign-up', () => {
         expect((await sql("SELECT l.name FROM locations l JOIN organisations o ON o.id = l.org_id WHERE o.name = 'New Clinic'")).rows).toEqual([{ name: 'Carlton' }]);
 
         const login = await request(app).post('/api/auth/login').send({ email: 'founder@new.test', password: 'Founder123', organisation_slug: linkToken });
-        expect(login.body.data.role).toBe('OWNER');
+        expect(login.body.data.roles.map((r: any) => r.name)).toEqual(['Owner']);
+        expect(login.body.data.is_owner).toBe(true);
     });
 
     it('the link is single use and expires; weak passwords are refused', async () => {
@@ -68,36 +69,54 @@ describe('organisation sign-up', () => {
         const token = lastTokenTo(w.users.sarah.email);
         expect((await complete(token, { password: 'WrongPassword1' })).status).toBe(401);
         expect((await complete(token, { password: PASSWORD })).status).toBe(201);
+        await request(app).post('/api/auth/reauthenticate').set(bearer(w.tokens.sarah)).send({ password: PASSWORD });
         const orgs = await request(app).get('/api/auth/organisations').set(bearer(w.tokens.sarah));
-        expect(orgs.body.data.map((o: any) => [o.name, o.role]).sort()).toEqual([['ABC Health', 'BRANCH_ADMIN'], ['New Clinic', 'OWNER']]);
+        expect(orgs.body.data.map((o: any) => [o.name, o.roles]).sort()).toEqual([['ABC Health', ['Admin']], ['New Clinic', ['Owner']]]);
     });
 });
 
-describe('Branch Admin management', () => {
-    it('lists Branch Admins with their branches and pending invitations — never tokens', async () => {
-        await request(app).post('/api/branch-admins/invitations').set(bearer(w.tokens.owner)).send({ email: 'pending@abc.test', location_ids: [w.abc.geelong, w.abc.richmond] });
-        const res = await request(app).get('/api/branch-admins').set(bearer(w.tokens.owner));
-        const sarah = res.body.data.branch_admins.find((a: any) => a.email === w.users.sarah.email);
-        expect(sarah.branches.map((b: any) => b.name)).toEqual(['Melbourne', 'Richmond']);
+/** The assignment of `roleName` held by `userId`, as GET /api/team reports it. */
+async function assignmentOf(token: string, userId: string, roleName: string) {
+    const list = await request(app).get('/api/team').set(bearer(token));
+    const member = list.body.data.members.find((m: any) => m.user_id === userId);
+    return member?.assignments.find((a: any) => a.role_name === roleName);
+}
+
+describe('team management', () => {
+    it('lists people with their roles and scope, and pending invitations — never tokens', async () => {
+        const admin = await systemRoleId(w.abc.id, 'ADMIN');
+        await request(app).post('/api/team/invitations').set(bearer(w.tokens.owner)).send({ email: 'pending@abc.test', role_id: admin, scope: { branch_ids: [w.abc.geelong, w.abc.richmond] } });
+        const res = await request(app).get('/api/team').set(bearer(w.tokens.owner));
+        expect(res.status).toBe(200);
+        const sarah = res.body.data.members.find((m: any) => m.user_id === w.users.sarah.id);
+        expect(sarah.assignments).toHaveLength(1);
+        expect(sarah.assignments[0].role_name).toBe('Admin');
+        expect(sarah.assignments[0].scope.all).toBe(false);
+        expect(sarah.assignments[0].scope.branches.map((b: any) => b.name)).toEqual(['Melbourne', 'Richmond']);
+        expect(res.body.data.members.find((m: any) => m.is_owner).user_id).toBe(w.users.owner.id);
+        expect(res.body.data.invitations[0].role_name).toBe('Admin');
         expect(res.body.data.invitations[0].branches.map((b: any) => b.name)).toEqual(['Geelong', 'Richmond']);
         expect(JSON.stringify(res.body)).not.toMatch(/token|[a-f0-9]{64}/);
     });
 
-    it('one account can hold several branches, and assignments can be changed', async () => {
-        const res = await request(app).put(`/api/branch-admins/${w.users.greg.id}/branches`).set(bearer(w.tokens.owner)).send({ location_ids: [w.abc.geelong, w.abc.melbourne] });
+    it('a role can be applied to more branches, and the change takes effect on the next request', async () => {
+        const greg = await assignmentOf(w.tokens.owner, w.users.greg.id, 'Admin');
+        const res = await request(app).put(`/api/team/${w.users.greg.id}/roles/${greg.id}`).set(bearer(w.tokens.owner)).send({ scope: { branch_ids: [w.abc.geelong, w.abc.melbourne] } });
         expect(res.status).toBe(200);
         const list = await request(app).get('/api/employees').set(bearer(w.tokens.greg));
         expect(list.body.data.map((e: any) => e.full_name).sort()).toEqual(['Gee Worker', 'Mel Worker']);
     });
 
-    it('assignments cannot be given to someone who is not yet a Branch Admin here (they must accept an invitation)', async () => {
-        const res = await request(app).put(`/api/branch-admins/${w.users.xavier.id}/branches`).set(bearer(w.tokens.owner)).send({ location_ids: [w.abc.melbourne] });
+    it('roles cannot be given to someone who does not belong to the organisation (they must accept an invitation)', async () => {
+        const admin = await systemRoleId(w.abc.id, 'ADMIN');
+        const res = await request(app).post(`/api/team/${w.users.xavier.id}/roles`).set(bearer(w.tokens.owner)).send({ role_id: admin, scope: { branch_ids: [w.abc.melbourne] } });
         expect(res.status).toBe(404);
     });
 
     it('deactivated branches cannot be assigned', async () => {
         await request(app).post(`/api/locations/${w.abc.richmond}/deactivate`).set(bearer(w.tokens.owner));
-        const res = await request(app).put(`/api/branch-admins/${w.users.greg.id}/branches`).set(bearer(w.tokens.owner)).send({ location_ids: [w.abc.richmond] });
+        const greg = await assignmentOf(w.tokens.owner, w.users.greg.id, 'Admin');
+        const res = await request(app).put(`/api/team/${w.users.greg.id}/roles/${greg.id}`).set(bearer(w.tokens.owner)).send({ scope: { branch_ids: [w.abc.richmond] } });
         expect(res.status).toBe(404);
     });
 
@@ -110,14 +129,15 @@ describe('Branch Admin management', () => {
     });
 
     it('assignment changes are audited with before and after', async () => {
-        await request(app).put(`/api/branch-admins/${w.users.sarah.id}/branches`).set(bearer(w.tokens.owner)).send({ location_ids: [w.abc.geelong] });
-        const row = (await sql("SELECT previous_value, new_value, target_user_id FROM audit_logs WHERE action = 'BRANCH_ADMIN_BRANCHES_CHANGED'")).rows[0];
-        expect(row).toEqual({ previous_value: 'Melbourne, Richmond', new_value: 'Geelong', target_user_id: w.users.sarah.id });
+        const sarah = await assignmentOf(w.tokens.owner, w.users.sarah.id, 'Admin');
+        await request(app).put(`/api/team/${w.users.sarah.id}/roles/${sarah.id}`).set(bearer(w.tokens.owner)).send({ scope: { branch_ids: [w.abc.geelong] } });
+        const row = (await sql("SELECT previous_value, new_value, target_user_id FROM audit_logs WHERE action = 'ROLE_SCOPE_CHANGED'")).rows[0];
+        expect(row).toEqual({ previous_value: 'Admin: Melbourne, Richmond', new_value: 'Admin: Geelong', target_user_id: w.users.sarah.id });
     });
 });
 
 describe('ownership transfer', () => {
-    it('needs the owner’s password and a current Branch Admin; the old owner keeps branch access', async () => {
+    it('needs the owner’s password and a current team member; the old owner keeps Admin access to every branch', async () => {
         const wrong = await request(app).post('/api/organisation/transfer-ownership').set(bearer(w.tokens.owner)).send({ user_id: w.users.sarah.id, current_password: 'WrongPassword1' });
         expect(wrong.status).toBe(403);
         const outsider = await request(app).post('/api/organisation/transfer-ownership').set(bearer(w.tokens.owner)).send({ user_id: w.users.xavier.id, current_password: PASSWORD });
@@ -126,10 +146,11 @@ describe('ownership transfer', () => {
         const ok = await request(app).post('/api/organisation/transfer-ownership').set(bearer(w.tokens.owner)).send({ user_id: w.users.sarah.id, current_password: PASSWORD });
         expect(ok.status).toBe(200);
         expect((await sql('SELECT owner_user_id FROM organisations WHERE id = $1', [w.abc.id])).rows[0].owner_user_id).toBe(w.users.sarah.id);
-        expect((await sql('SELECT COUNT(*)::int AS n FROM branch_admins WHERE user_id = $1', [w.users.sarah.id])).rows[0].n).toBe(0);
+        expect((await sql('SELECT COUNT(*)::int AS n FROM user_roles WHERE user_id = $1', [w.users.sarah.id])).rows[0].n).toBe(0);
 
         const me = await request(app).get('/api/auth/me').set(bearer(w.tokens.owner));
-        expect(me.body.data.role).toBe('BRANCH_ADMIN');
+        expect(me.body.data.is_owner).toBe(false);
+        expect(me.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
         expect(me.body.data.branches).toHaveLength(3);
         expect((await request(app).put('/api/organisation/settings').set(bearer(w.tokens.owner)).send({ break_mins_weekday: 30 })).status).toBe(403);
     });

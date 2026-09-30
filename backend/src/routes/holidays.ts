@@ -1,13 +1,13 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
+import { requireAuth, requireManagement, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { badRequest, isUuid, notFound, writeAudit } from '../services/policy';
 import { isIsoDate } from '../services/periodUtils';
 
 /**
  * Public holidays are organisation-wide: every branch rosters and reports against the same list.
- * Both roles may read it; only the Organisation Owner changes it.
+ * Anyone who manages the organisation's data may read it; changing it needs organisation.edit.
  */
 const router = Router();
 router.use(requireAuth);
@@ -24,7 +24,7 @@ function readHolidayFields(body: any) {
 }
 
 /** GET /api/organisation/holidays — public holidays of the caller's organisation. */
-router.get('/', requirePermission(Permission.BRANCH_VIEW), async (req: AuthRequest, res: Response) => {
+router.get('/', requireManagement, async (req: AuthRequest, res: Response) => {
     try {
         const result = await query(
             'SELECT id, holiday_date, name, created_at FROM public_holidays WHERE org_id = $1 ORDER BY holiday_date ASC',
@@ -37,7 +37,7 @@ router.get('/', requirePermission(Permission.BRANCH_VIEW), async (req: AuthReque
 });
 
 /** POST /api/organisation/holidays — adds a public holiday, or renames the one already on that date. */
-router.post('/', requirePermission(Permission.HOLIDAYS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.post('/', requirePermission(Permission.ORGANISATION_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         const { holidayDate, name } = readHolidayFields(req.body);
@@ -60,7 +60,7 @@ router.post('/', requirePermission(Permission.HOLIDAYS_MANAGE), async (req: Auth
 });
 
 /** DELETE /api/organisation/holidays/:id */
-router.delete('/:id', requirePermission(Permission.HOLIDAYS_MANAGE), async (req: AuthRequest, res: Response) => {
+router.delete('/:id', requirePermission(Permission.ORGANISATION_EDIT), async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
         if (!isUuid(req.params.id)) throw notFound('Holiday');

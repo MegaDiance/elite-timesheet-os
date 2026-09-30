@@ -3,12 +3,12 @@ import crypto from 'crypto';
 import { query } from '../services/db';
 import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword } from '../services/auth';
 import { requireAuth, AuthRequest, sendError } from '../middleware/auth';
-import { ROLE_PERMISSIONS, listAccessibleOrganisations, resolveAccess, writeAudit, isUuid } from '../services/policy';
+import { countOtherOrganisations, hasManagementAccess, listAccessibleOrganisations, resolveAccess, writeAudit, isUuid } from '../services/policy';
 import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate, isEmailSendingEnabled } from '../services/emailService';
-import { createSession, touchSession, revokeSession, revokeAllUserSessions, getActiveUserSessions, recordLoginAttempt } from '../services/sessionService';
+import { createSession, touchSession, revokeSession, revokeAllUserSessions, getActiveUserSessions, recordLoginAttempt, markReauthenticated, hasFreshReauthentication, REAUTH_WINDOW_MS } from '../services/sessionService';
 import { ClientInfo, parseClientInfo, assessLoginRisk, createLoginChallenge } from '../services/securityService';
 import {
-    RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit,
+    RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit, accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
     isStrongPassword, sha256Hex, hashesEqual, newSecretToken, newSixDigitCode, publicBaseUrl, maskEmail
 } from '../services/authUtils';
 import { resolvePortalToken, usablePortalPath } from '../services/portalLink';
@@ -78,20 +78,30 @@ async function describeAccess(userId: string, orgId: string) {
         query('SELECT id, name, address, timezone, is_active FROM locations WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name ASC', [orgId, access.branchIds]),
     ]);
     const org = orgRes.rows[0];
+    const scopes: Record<string, { all: boolean; branch_ids: string[] }> = {};
+    for (const [permission, grant] of access.grants) {
+        scopes[permission] = { all: grant.all, branch_ids: grant.all ? [] : [...grant.branchIds].sort() };
+    }
     return {
         user: userRes.rows[0],
         organisation: { id: org.id, name: org.name },
-        role: access.role,
-        permissions: Array.from(ROLE_PERMISSIONS[access.role]),
+        roles: access.roles.map(r => ({ id: r.id, name: r.name, system_key: r.systemKey })),
+        is_owner: access.isOwner,
+        is_employee: access.employeeId !== null,
+        is_manager: hasManagementAccess(access),
+        // What this account can do and where. For showing and hiding screens only; every request is authorised again on the server.
+        permissions: Object.keys(scopes),
+        scopes,
         branches: branchRes.rows,
-        ...(access.role === 'EMPLOYEE' ? { employee_capabilities: { can_submit_timesheets: org.employees_can_submit_timesheets } } : {}),
+        has_other_organisations: (await countOtherOrganisations(userId, orgId)) > 0,
+        ...(access.employeeId ? { employee_capabilities: { can_submit_timesheets: org.employees_can_submit_timesheets } } : {}),
     };
 }
 
 /**
  * Final login step, shared by every path (password, suspicious-login verification, 2FA).
- * Access is resolved again here, so a session is only ever created for an OWNER or an
- * assigned BRANCH_ADMIN of the target organisation.
+ * Access is resolved again here, so a session is only ever created for someone with access to the
+ * target organisation (the owner, a role assignment or a linked worker record).
  */
 async function completeLogin(user: any, orgId: string, clientInfo: ClientInfo, authMethod: string, status: 'SUCCESS' | 'CHALLENGE_VERIFIED') {
     const access = await resolveAccess(user.id, orgId);
@@ -478,8 +488,47 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     }
 });
 
+/**
+ * POST /api/auth/reauthenticate  { password }
+ *
+ * Sensitive steps (switching organisation) ask the signed-in person for their account password
+ * again. The password is checked here, on the server, against the same account password used to
+ * sign in, and the result is remembered on the server-side session for a few minutes. A wrong
+ * password says only that it is not correct: it never reveals whether the account is locked, what
+ * organisations exist or anything else about the account. Failures count against the same per-account
+ * limit as the sign-in page.
+ */
+router.post('/reauthenticate', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const accountKey = accountRateLimitKey(ctx.email);
+        if (isRateLimited(accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
+
+        const password = req.body?.password;
+        const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [ctx.userId]);
+        const ok = typeof password === 'string' && password.length > 0 && password.length <= 1000
+            && Boolean(userRes.rows[0]?.password_hash) && await comparePassword(password, userRes.rows[0].password_hash);
+        const clientInfo = parseClientInfo(req);
+        if (!ok) {
+            recordFailedAttempt(accountKey);
+            await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'REAUTHENTICATION_FAILED', entityType: 'sessions', entityId: ctx.sessionId, details: 'Password re-entry failed (organisation switch)', ip: clientInfo.ip });
+            return res.status(403).json({ success: false, error: { code: 'INVALID_PASSWORD', message: 'That password is not correct.' } });
+        }
+        clearRateLimit(accountKey);
+        await markReauthenticated(ctx.sessionId);
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'REAUTHENTICATION_SUCCEEDED', entityType: 'sessions', entityId: ctx.sessionId, details: 'Password re-entered (organisation switch)', ip: clientInfo.ip });
+        res.json({ success: true, data: { valid_for_seconds: REAUTH_WINDOW_MS / 1000 } });
+    } catch (err) {
+        sendError(res, err, 'REAUTHENTICATE ERROR');
+    }
+});
+
+const REAUTH_REQUIRED = { success: false, code: 'REAUTH_REQUIRED', error: { code: 'REAUTH_REQUIRED', message: 'Enter your password to continue.' } };
+
+/** The organisations this login can switch to. Only shown after the password was re-entered on this session. */
 router.get('/organisations', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+        if (!(await hasFreshReauthentication(req.auth!.sessionId))) return res.status(403).json(REAUTH_REQUIRED);
         const orgs = await listAccessibleOrganisations(req.auth!.userId);
         res.json({ success: true, data: orgs.map(o => ({ ...o, is_current: o.id === req.auth!.orgId })) });
     } catch (err) {
@@ -488,20 +537,33 @@ router.get('/organisations', requireAuth, async (req: AuthRequest, res: Response
 });
 
 /**
- * POST /api/auth/switch-organisation
- * Ends the current session and starts a new one bound to the target organisation.
+ * POST /api/auth/switch-organisation  { organisation_id }
+ *
+ * Needs a password re-entry on this session (POST /auth/reauthenticate) in the last few minutes.
+ * Ends the current session and starts a new one bound to the target organisation, so nothing about
+ * the previous organisation (its roles, permissions, branches) can carry over: the new session's
+ * access is resolved from scratch for the new organisation. The organisation id from the client is
+ * only a request; the switch happens only if this login holds access to it.
  */
 router.post('/switch-organisation', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const ctx = req.auth!;
+        if (!(await hasFreshReauthentication(ctx.sessionId))) return res.status(403).json(REAUTH_REQUIRED);
+
         const { organisation_id } = req.body || {};
-        if (!isUuid(organisation_id) || !(await resolveAccess(ctx.userId, organisation_id))) {
+        if (!isUuid(organisation_id) || organisation_id === ctx.orgId || !(await resolveAccess(ctx.userId, organisation_id))) {
             return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You do not have access to that organisation.' } });
         }
 
         const clientInfo = parseClientInfo(req);
+        // The password re-entry belongs to this switch only: it dies with the old session.
         await revokeSession(ctx.sessionId);
         const data = await completeLogin({ id: ctx.userId, email: ctx.email }, organisation_id, clientInfo, 'organisation_switch', 'SUCCESS');
+        if (!data) return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You do not have access to that organisation.' } });
+
+        // Recorded in both organisations' audit trails, each showing only its own side of the switch.
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'ORGANISATION_SWITCHED_AWAY', entityType: 'sessions', entityId: ctx.sessionId, details: `Switched to another organisation`, ip: clientInfo.ip });
+        await writeAudit({ orgId: organisation_id, actorId: ctx.userId, action: 'ORGANISATION_SWITCHED_IN', entityType: 'sessions', entityId: null, details: `Switched in from another organisation`, ip: clientInfo.ip });
         res.json({ success: true, data });
     } catch (err) {
         sendError(res, err, 'SWITCH ORGANISATION ERROR');
@@ -582,7 +644,7 @@ router.post('/forgot-password', throttle, async (req: RateLimitedRequest, res: R
     // Same message regardless of whether the account exists, so this never reveals that — but
     // while email is off, no reset can be emailed to anyone, so that fact alone is safe to state.
     if (!isEmailSendingEnabled()) {
-        return res.json({ success: true, message: 'Password reset by email is currently turned off. Ask your organisation owner to generate a reset link for you from Branch Admins.' });
+        return res.json({ success: true, message: 'Password reset by email is currently turned off. Ask your organisation owner or administrator to generate a reset link for you from Settings → Roles & permissions.' });
     }
     const generic = { success: true, message: 'If an account exists, a reset link was sent.' };
 

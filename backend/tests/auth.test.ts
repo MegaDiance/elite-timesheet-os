@@ -9,7 +9,7 @@ import app from '../src/index';
 import { clearAllRateLimits } from '../src/services/authUtils';
 import { getTestOutbox, clearTestOutbox } from '../src/services/emailService';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from './helpers/testDb';
-import { PASSWORD, World, bearer, buildWorld, createUser } from './helpers/fixtures';
+import { PASSWORD, World, assignBranchAdmin, bearer, buildWorld, createUser } from './helpers/fixtures';
 
 let w: World;
 beforeAll(connectTestDb);
@@ -27,18 +27,24 @@ const login = (email: string, password = PASSWORD, extra: object = { organisatio
 const lastMailTo = (to: string) => [...getTestOutbox()].reverse().find(m => m.to === to)!;
 
 describe('login', () => {
-    it('the Owner signs in through the private link and gets OWNER over every branch', async () => {
+    it('the Owner signs in through the private link and holds every permission over every branch', async () => {
         const res = await login(w.users.owner.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
         expect(res.status).toBe(200);
-        expect(res.body.data.role).toBe('OWNER');
+        expect(res.body.data.roles).toEqual([{ id: null, name: 'Owner', system_key: 'OWNER' }]);
+        expect(res.body.data.is_owner).toBe(true);
         expect(res.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Geelong', 'Melbourne', 'Richmond']);
+        expect(res.body.data.permissions).toEqual(expect.arrayContaining(['users.manage', 'roles.manage', 'audit.view']));
+        expect(res.body.data.scopes['roles.manage']).toEqual({ all: true, branch_ids: [] });
     });
 
-    it('a Branch Admin gets BRANCH_ADMIN over their assigned branches only', async () => {
+    it('an Admin gets the Admin permissions over their assigned branches only', async () => {
         const res = await login(w.users.sarah.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
-        expect(res.body.data.role).toBe('BRANCH_ADMIN');
+        expect(res.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+        expect(res.body.data.is_owner).toBe(false);
         expect(res.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Melbourne', 'Richmond']);
-        expect(res.body.data.permissions).not.toContain('branch_admins.manage');
+        expect(res.body.data.permissions).not.toContain('users.manage');
+        expect(res.body.data.permissions).not.toContain('roles.manage');
+        expect(res.body.data.scopes['timesheets.approve']).toEqual({ all: false, branch_ids: [w.abc.melbourne, w.abc.richmond].sort() });
     });
 
     it('the token carries identity only: no role, organisation or branch', async () => {
@@ -86,7 +92,7 @@ describe('login', () => {
     });
 
     it('someone with access to two organisations signs in to whichever portal link they use', async () => {
-        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
+        await assignBranchAdmin(w.xyz.id, w.xyz.sydney, w.users.greg.id);
         const abc = await login(w.users.greg.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
         expect(abc.body.data.organisation.name).toBe('ABC Health');
         const xyz = await login(w.users.greg.email, PASSWORD, { organisation_slug: w.xyz.portalSlug });
@@ -119,13 +125,13 @@ describe('two-step verification', () => {
         expect(wrong.status).toBe(400);
         const ok = await request(app).post('/api/auth/verify-2fa').send({ temp_token: first.body.temp_token, code });
         expect(ok.status).toBe(200);
-        expect(ok.body.data.role).toBe('BRANCH_ADMIN');
+        expect(ok.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
     });
 
     it('a code is refused once the account has lost access in between', async () => {
         await sql('UPDATE users SET two_factor_enabled = true WHERE id = $1', [w.users.greg.id]);
         const first = await login(w.users.greg.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
-        await sql('DELETE FROM branch_admins WHERE user_id = $1', [w.users.greg.id]);
+        await sql('DELETE FROM user_roles WHERE user_id = $1', [w.users.greg.id]);
         const code = /\b(\d{6})\b/.exec(lastMailTo(w.users.greg.email).text || '')![1];
         const res = await request(app).post('/api/auth/verify-2fa').send({ temp_token: first.body.temp_token, code });
         expect(res.status).toBe(401);
@@ -146,14 +152,7 @@ describe('sessions', () => {
         expect(res.body.code).toBe('SESSION_EXPIRED');
     });
 
-    it('switching organisation needs access there and replaces the session', async () => {
-        expect((await request(app).post('/api/auth/switch-organisation').set(bearer(w.tokens.sarah)).send({ organisation_id: w.xyz.id })).status).toBe(403);
-        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.sarah.id]);
-        const res = await request(app).post('/api/auth/switch-organisation').set(bearer(w.tokens.sarah)).send({ organisation_id: w.xyz.id });
-        expect(res.status).toBe(200);
-        expect(res.body.data.organisation.name).toBe('XYZ Care');
-        expect((await request(app).get('/api/auth/me').set(bearer(w.tokens.sarah))).status).toBe(401);
-    });
+    // Organisation switching (password re-entry, fresh context) is covered in security/organisation_switching.test.ts.
 
     it('you can revoke only your own sessions', async () => {
         const { sid } = jwt.decode(w.tokens.greg) as any;
@@ -192,7 +191,7 @@ describe('password reset', () => {
     });
 
     it('with two organisations, the portal the reset was requested from wins; a foreign portal is ignored', async () => {
-        await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [w.xyz.id, w.xyz.sydney, w.users.greg.id]);
+        await assignBranchAdmin(w.xyz.id, w.xyz.sydney, w.users.greg.id);
         expect((await resetVia(w.users.greg.email, w.xyz.portalSlug)).body.data.login_path).toBe(`/login/${w.xyz.portalSlug}`);
         // No portal context and two organisations: ambiguous, so nothing is listed or guessed.
         expect((await resetVia(w.users.greg.email)).body.data.login_path).toBeNull();

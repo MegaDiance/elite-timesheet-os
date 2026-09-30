@@ -46,8 +46,35 @@ export async function createBranch(orgId: string, name: string): Promise<string>
     return res.rows[0].id;
 }
 
-export async function assignBranchAdmin(orgId: string, branchId: string, userId: string): Promise<void> {
-    await sql('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [orgId, branchId, userId]);
+/** The built-in role of an organisation ('OWNER' | 'ADMIN' | 'EMPLOYEE'); created for every organisation by a database trigger. */
+export async function systemRoleId(orgId: string, key: 'OWNER' | 'ADMIN' | 'EMPLOYEE'): Promise<string> {
+    return (await sql('SELECT id FROM roles WHERE org_id = $1 AND system_key = $2', [orgId, key])).rows[0].id;
+}
+
+/** A custom role holding exactly `permissions`. */
+export async function createRole(orgId: string, name: string, permissions: string[], createdBy?: string): Promise<string> {
+    const id = (await sql('INSERT INTO roles (org_id, name, created_by) VALUES ($1, $2, $3) RETURNING id', [orgId, name, createdBy ?? null])).rows[0].id;
+    for (const key of permissions) await sql('INSERT INTO role_permissions (role_id, permission_key) VALUES ($1, $2)', [id, key]);
+    return id;
+}
+
+/** Gives a person a role: across the whole organisation (`branchIds` = 'all') or in the listed branches. Adds branches to an existing assignment. */
+export async function assignRole(orgId: string, userId: string, roleId: string, branchIds: string[] | 'all'): Promise<string> {
+    let assignment = (await sql('SELECT id FROM user_roles WHERE user_id = $1 AND role_id = $2', [userId, roleId])).rows[0];
+    if (!assignment) {
+        assignment = (await sql('INSERT INTO user_roles (org_id, user_id, role_id, scope_all) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, userId, roleId, branchIds === 'all'])).rows[0];
+    }
+    if (branchIds !== 'all') {
+        for (const branchId of branchIds) {
+            await sql('INSERT INTO user_role_branches (user_role_id, org_id, location_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [assignment.id, orgId, branchId]);
+        }
+    }
+    return assignment.id;
+}
+
+/** What "Branch Admin" always meant: the Admin role, scoped to the branches given (one call per branch adds to the same assignment). */
+export async function assignBranchAdmin(orgId: string, branchId: string, userId: string): Promise<string> {
+    return assignRole(orgId, userId, await systemRoleId(orgId, 'ADMIN'), [branchId]);
 }
 
 export async function createWorker(orgId: string, branchId: string, fullName: string): Promise<string> {
@@ -83,6 +110,9 @@ export interface World {
         melEmployee: { id: string; email: string }; richEmployee: { id: string; email: string };
     };
     workers: { mel: string; rich: string; gee: string; syd: string };
+    /** The built-in Admin role of each organisation, and the Admin assignments of Sarah (Melbourne + Richmond) and Greg (Geelong). */
+    roles: { abcAdmin: string; xyzAdmin: string };
+    assignments: { sarah: string; greg: string };
     tokens: { owner: string; sarah: string; greg: string; xavier: string; melEmployee: string; richEmployee: string };
 }
 
@@ -96,9 +126,9 @@ export async function buildWorld(): Promise<World> {
     const melbourne = await createBranch(abcOrg.id, 'Melbourne');
     const richmond = await createBranch(abcOrg.id, 'Richmond');
     const geelong = await createBranch(abcOrg.id, 'Geelong');
-    await assignBranchAdmin(abcOrg.id, melbourne, sarah.id);
+    const sarahAssignment = await assignBranchAdmin(abcOrg.id, melbourne, sarah.id);
     await assignBranchAdmin(abcOrg.id, richmond, sarah.id);
-    await assignBranchAdmin(abcOrg.id, geelong, greg.id);
+    const gregAssignment = await assignBranchAdmin(abcOrg.id, geelong, greg.id);
 
     const xyzOrg = await createOrganisation('XYZ Care', xavier.id);
     const sydney = await createBranch(xyzOrg.id, 'Sydney');
@@ -120,6 +150,8 @@ export async function buildWorld(): Promise<World> {
         xyz: { id: xyzOrg.id, portalSlug: xyzOrg.portalSlug, sydney },
         users: { owner, sarah, greg, xavier, melEmployee, richEmployee },
         workers,
+        roles: { abcAdmin: await systemRoleId(abcOrg.id, 'ADMIN'), xyzAdmin: await systemRoleId(xyzOrg.id, 'ADMIN') },
+        assignments: { sarah: sarahAssignment, greg: gregAssignment },
         tokens: {
             owner: await signIn(owner.id, abcOrg.id),
             sarah: await signIn(sarah.id, abcOrg.id),
