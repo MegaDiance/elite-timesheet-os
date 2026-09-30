@@ -6,6 +6,9 @@
 | Last audited against code | 2026-09-21, re-baselined on `main` @ `7fa3094` (see §0.2) |
 | Companion documents | [TRD](./TRD.md) · [UI/UX](./UI-UX-DESIGN.md) · [App Flow](./APP-FLOW.md) · [Backend Schema](./BACKEND-SCHEMA.md) · [Implementation Plan](./IMPLEMENTATION-PLAN.md) |
 
+
+> **Roles and permissions changed (2026-09-30).** The fixed Owner / Branch Admin model described below has been replaced by flexible roles with per-assignment branch scope. Where this document describes roles, permissions, scope or organisation switching, [ROLES-AND-PERMISSIONS.md](./ROLES-AND-PERMISSIONS.md) is authoritative. Tenant and branch isolation rules are unchanged.
+
 ---
 
 ## 0. How to read this document

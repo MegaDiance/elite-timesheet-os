@@ -155,3 +155,10 @@ real worker or payroll data:
    Two-step verification (Settings → My account) is the dependable second factor.
 5. After the two-role migrations have been checked on the deployed data,
    `legacy_archive` (a JSON copy of every dropped legacy row) can be dropped.
+6. Migration `…800_roles_and_permissions` moves every Branch Admin into the new
+   roles tables (as an Admin assignment scoped to the same branches). Take a
+   backup first. The old `branch_admins` table is left in place but is no longer
+   read; dropping it is the contract step and needs explicit approval. After
+   deploying, confirm on the Owner's People screen that each former Branch Admin
+   shows an Admin role for the same branches. Migrations `…706` and `…707`
+   (private links, tutorial progress) must also be applied.

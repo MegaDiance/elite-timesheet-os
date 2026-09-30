@@ -6,7 +6,7 @@ This document outlines the architecture, engineering standards, and mandatory ve
 
 ## 📚 Source of Truth — Read Before Changing Anything
 
-These six documents are the authoritative specification for SimpleHours. Read the relevant ones before any feature, schema, auth or permission change. If code and documents disagree, raise it — do not silently "fix" either one.
+These documents are the authoritative specification for SimpleHours. Read the relevant ones before any feature, schema, auth or permission change. If code and documents disagree, raise it — do not silently "fix" either one.
 
 | Document | Covers |
 |---|---|
@@ -16,6 +16,7 @@ These six documents are the authoritative specification for SimpleHours. Read th
 | [docs/APP-FLOW.md](docs/APP-FLOW.md) | Every important flow with its backend action, authorisation check and failure states |
 | [docs/BACKEND-SCHEMA.md](docs/BACKEND-SCHEMA.md) | Current schema assessment, target schema, constraints, migration strategy |
 | [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) | Phased delivery order, completion criteria, open decisions |
+| [docs/ROLES-AND-PERMISSIONS.md](docs/ROLES-AND-PERMISSIONS.md) | **Current** roles, permissions, scope, escalation rules, organisation switching and the API. Wins over the six documents above wherever they describe roles differently. |
 
 `docs/security/hierarchy-audit-and-design.md` is an earlier audit and design proposal. Its findings are mapped into `docs/PRD.md` §12, and its design is reconciled in `docs/IMPLEMENTATION-PLAN.md` §R. Where it differs from the six documents, the six documents win.
 
@@ -23,17 +24,19 @@ Documents label everything **[CURRENT] / [REQUIRED] / [PROPOSED] / [DEFERRED]**.
 
 ### Non-negotiable architecture rules
 
-1. **The hierarchy is fixed:** Organisation → Branch → User → Assignment → Role → Scope → Permission → Resource. Do not change it without updating the documents and getting approval.
-2. **Roles and scopes are separate.** A role means nothing without its scope (organisation, a named branch, or self). Never collapse to `User → Role`.
-3. **One person, one account.** A user may hold many assignments (e.g. Employee at one branch, Branch Manager at another). Never require a second account.
+1. **The hierarchy is fixed:** Organisation → Branch → User → Assignment → Role → Scope → Permission → Resource. Do not change it without updating the documents and getting approval. An assignment is one person holding one role *with its scope*; effective access is the union of a person's assignments (`docs/ROLES-AND-PERMISSIONS.md`).
+2. **Roles and scopes are separate.** A role is only a set of permissions; where it applies (the entire organisation, or chosen branches) belongs to each assignment. Organisation-level permissions (users, roles, audit, security, organisation settings, branches) only count from an entire-organisation assignment.
+3. **One person, one account.** A user may hold many assignments (e.g. Admin at one branch, Payroll Manager at another) and be an employee as well. Never require a second account.
 4. **Authorisation is server-side only.** Every protected request checks authentication → session → organisation membership → assignments → scope → permission → resource relationship. Frontend hiding is **not** security.
 5. **Organisation isolation is mandatory.** The active organisation comes from the server session only. Never trust a client-supplied `organisation_id`.
 6. **Branch isolation is mandatory.** Authorise against the resource's own branch as stored in the database. Never trust a client-supplied `location_id`/`branch_id`/`x-location-id` to choose permissions.
-7. **Organisation ownership ≠ operational access.** Owners/Org Admins do not see branch timesheets, shifts, leave or payroll lines without an explicit assignment.
+7. **Ask for permissions, never for roles.** Code asks "does this caller hold permission P (in branch B)?" (`requirePermission`, `loadWorker`, `resolveBranchFilter` in `services/policy.ts`). Never branch on a role name or `system_key` outside role administration; a test enforces it. The Owner is `organisations.owner_user_id` and holds every permission organisation-wide; the Employee role is the linked worker record and holds only the employee-portal permissions; everyone else has exactly what their assignments grant.
 8. **Deny by default.** Errors, missing data or ambiguous scope must deny, never `next()`.
-9. **No self-escalation.** Nobody grants others roles outside the grant table (`docs/TRD.md` §5.7) or grants themselves anything, except the audited, re-authenticated Owner self-grant (`docs/PRD.md` §5.2). Nobody approves their own timesheet or leave.
+9. **No self-escalation.** Nobody gives, changes or takes away access they do not hold themselves; nobody edits their own access; nobody assigns or removes the owner (`services/roleAdmin.ts`). Ownership moves only through the owner's password-confirmed, audited transfer. Nobody approves their own timesheet or leave.
 10. **Never destructively delete production data without verification** — follow the expand → migrate → verify → contract process in `docs/BACKEND-SCHEMA.md` §9, with a backup and explicit approval.
-11. **Authorisation changes require tests** — add or update cases in the authorisation matrix (cross-organisation, cross-branch, IDOR, escalation) and run them against real PostgreSQL where the plan requires it, not only pg-mem.
+11. **Authorisation changes require tests** — add or update cases in the authorisation matrix (`tests/security/authorisation_matrix.test.ts`), the per-permission tests (`permission_enforcement.test.ts`) and the escalation tests (cross-organisation, cross-branch, IDOR, escalation). Tests run against real PostgreSQL.
+12. **A new permission arrives with the feature it guards**, in three places at once: `services/permissions.ts`, a migration that seeds the `permissions` table (a test compares the two), and the route that uses it. Do not add permissions for capabilities the product does not have.
+13. **Organisation switching needs the account password again** (`POST /auth/reauthenticate`, then `/auth/switch-organisation`); the frontend reloads and clears all remembered branch state afterwards.
 
 ---
 

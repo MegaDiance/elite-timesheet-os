@@ -7,6 +7,9 @@
 | Labels | **[CURRENT] [REQUIRED] [PROPOSED] [DEFERRED]** — defined in [PRD §0.1](./PRD.md#01-status-labels) |
 | Companion documents | [PRD](./PRD.md) · [UI/UX](./UI-UX-DESIGN.md) · [App Flow](./APP-FLOW.md) · [Backend Schema](./BACKEND-SCHEMA.md) · [Implementation Plan](./IMPLEMENTATION-PLAN.md) |
 
+
+> **Roles and permissions changed (2026-09-30).** The fixed Owner / Branch Admin model described below has been replaced by flexible roles with per-assignment branch scope. Where this document describes roles, permissions, scope or organisation switching, [ROLES-AND-PERMISSIONS.md](./ROLES-AND-PERMISSIONS.md) is authoritative. Tenant and branch isolation rules are unchanged.
+
 ---
 
 ## 1. System architecture
