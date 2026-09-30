@@ -12,9 +12,9 @@ export type TourGroup = 'Set up once' | 'Every fortnight';
 export interface TourChapter {
   id: 'organisation' | 'branches' | 'workers' | 'roster' | 'hours' | 'approve' | 'report';
   group: TourGroup;
-  /** Short name for the chapter buttons. */
+  /** Short name of the chapter. */
   title: string;
-  /** Headline shown with the caption and in the transcript. */
+  /** Headline shown in the on-stage caption and in the transcript. */
   heading: string;
   /** What the chapter shows, in one or two sentences. Doubles as the caption and the transcript. */
   caption: string;
@@ -102,10 +102,11 @@ export const TOUR_TOTAL_MS = TOUR_CHAPTERS.reduce((sum, chapter) => sum + chapte
 export const TOUR_TOTAL_SECONDS = Math.round(TOUR_TOTAL_MS / 1000);
 
 /**
- * The stage keeps one height per breakpoint for every chapter, so nothing below it moves while the
- * tour plays, and the placeholder shown while the player loads takes exactly the same space.
+ * The screen area of the stage keeps one height per breakpoint for every chapter, so nothing below
+ * it moves while the tour plays, and the placeholder shown while the player loads takes exactly the
+ * same space.
  */
 export const TOUR_STAGE_HEIGHT = 'h-[28rem] sm:h-[29.5rem] lg:h-[30rem]';
 
-/** Room for the longest caption at each width, so the player keeps its height from chapter to chapter. */
-export const TOUR_CAPTION_HEIGHT = 'min-h-[10.25rem] min-[360px]:min-h-[7.5rem] sm:min-h-[5.75rem] lg:min-h-[4.5rem]';
+/** The caption strip under the screen: room for the longest caption at each width, so the stage keeps its height from chapter to chapter. */
+export const TOUR_CAPTION_HEIGHT = 'min-h-[9.75rem] min-[360px]:min-h-[7.5rem] min-[414px]:min-h-[6.375rem] min-[640px]:min-h-[7.375rem] min-[680px]:min-h-24 min-[1200px]:min-h-[4.5rem]';

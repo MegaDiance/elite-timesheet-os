@@ -157,6 +157,14 @@ describe('tour script', () => {
     }
   });
 
+  it('keeps every caption short enough for the on-stage strip', () => {
+    // The strip's heights (TOUR_CAPTION_HEIGHT) were measured against captions up to this long.
+    for (const chapter of TOUR_CHAPTERS) {
+      assert.ok(chapter.heading.length <= 36, `${chapter.id} heading is ${chapter.heading.length} characters`);
+      assert.ok(chapter.caption.length <= 170, `${chapter.id} caption is ${chapter.caption.length} characters`);
+    }
+  });
+
   it('never claims features SimpleHours does not have', () => {
     const notOffered = /\b(Xero|MYOB|KeyPay|Employment Hero|integrat\w*|clock[- ]?in|GPS|award rates?|penalty rates?|overtime|superannuation|tax|pay rates?|wages?|notif\w*)\b/i;
     for (const chapter of TOUR_CHAPTERS) {

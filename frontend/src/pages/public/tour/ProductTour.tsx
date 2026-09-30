@@ -1,7 +1,8 @@
 import { Component, Suspense, lazy, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Point, SectionIntro } from '../ui';
-import { TOUR_CAPTION_HEIGHT, TOUR_CHAPTERS, TOUR_STAGE_HEIGHT, TOUR_TOTAL_SECONDS } from './chapters';
+import { TOUR_CHAPTERS, TOUR_STAGE_HEIGHT, TOUR_TOTAL_SECONDS } from './chapters';
 import { loadTourPlayer } from './loadPlayer';
+import { TOUR_FOOTNOTE_ROW, TourCaption } from './TourCaption';
 import { TourTranscript } from './Transcript';
 
 /**
@@ -50,33 +51,15 @@ class TourBoundary extends Component<{ fallback: ReactNode; children: ReactNode 
 
 /** Same frame and height as the player, so nothing moves when it arrives. */
 function TourPlaceholder() {
-  const first = TOUR_CHAPTERS[0];
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-sm">
-      <div className={`${TOUR_STAGE_HEIGHT} bg-[var(--bg)]`} />
-      <div className="border-t border-[var(--border)] px-3 pt-3 pb-3 sm:px-4">
-        <div aria-hidden="true" className="hidden grid-cols-7 gap-1.5 pb-1 text-[11px] font-semibold tracking-wide text-[var(--text)]/60 uppercase md:grid">
-          <span className="col-span-3">Set up once</span>
-          <span className="col-span-4">Every fortnight</span>
-        </div>
-        <ol className="grid grid-cols-7 gap-1.5">
-          {TOUR_CHAPTERS.map((chapter, i) => (
-            <li key={chapter.id} className="flex min-h-8 flex-col justify-center gap-1.5 py-1 lg:min-h-0">
-              <span className="block h-1 rounded-full bg-[var(--border-hover)]" />
-              <span className="sr-only text-xs font-medium text-[var(--text)]/70 lg:not-sr-only lg:block lg:truncate">
-                {i + 1}. {chapter.title}
-              </span>
-            </li>
-          ))}
-        </ol>
-        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-5">
-          {/* Where the player's buttons go. */}
-          <div className="h-10 w-64 shrink-0 sm:h-9" />
-          <div className={`${TOUR_CAPTION_HEIGHT} min-w-0 flex-1`}>
-            <p className="text-[15px] font-semibold text-[var(--text)]">{first.heading}</p>
-            <p className="mt-0.5 text-sm leading-relaxed text-[var(--text)]/75">{first.caption}</p>
-          </div>
-        </div>
+    <div>
+      <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-sm">
+        <div className={`${TOUR_STAGE_HEIGHT} bg-[var(--bg)]`} />
+        <TourCaption index={0} />
+      </div>
+      <div className={TOUR_FOOTNOTE_ROW}>
+        <p className="font-medium text-[var(--text)]/80 underline underline-offset-4">Read the tour as text</p>
+        <p>Example organisation: names, times and hours are made up.</p>
       </div>
     </div>
   );
