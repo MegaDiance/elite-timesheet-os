@@ -88,9 +88,39 @@ export function normaliseOrganisationName(raw: string): string {
     return raw.trim();
 }
 
+/**
+ * The same comparison in SQL: edge whitespace removed (as `trim()` does), case folded, nothing else.
+ * Inner whitespace is never collapsed. Used by recovery and by the duplicate-name checks so that
+ * "the same name" means one thing everywhere.
+ */
+export const SQL_NAME_KEY = (column: string) => `LOWER(regexp_replace(${column}, '^\\s+|\\s+$', '', 'g'))`;
+
+/**
+ * The address the IP limit counts. An IPv4-mapped IPv6 address counts as its IPv4 address, and an
+ * IPv6 address counts as its /64 — a single subscriber routinely controls a whole /64, so
+ * counting single addresses would let one machine rotate through billions of them.
+ */
+export function ipLimitKey(rawIp: string): string {
+    const ip = (rawIp || '127.0.0.1').split('%')[0].toLowerCase().replace(/^::ffff:/, '');
+    if (!ip.includes(':')) return ip;
+    const [head, tail] = ip.split('::');
+    const h = head ? head.split(':') : [];
+    const t = ip.includes('::') && tail ? tail.split(':') : [];
+    const groups = ip.includes('::') ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+    if (groups.length !== 8 || groups.some(g => !/^[0-9a-f]{1,4}$/.test(g))) return ip;
+    return `${groups.slice(0, 4).map(g => parseInt(g, 16).toString(16)).join(':')}::/64`;
+}
+
+/** Two spellings of the same name — case, Unicode compatibility forms, edge whitespace — count as one target. */
+const foldForKey = (value: string) => normaliseOrganisationName(value).normalize('NFKC').toLowerCase();
+
 const limitKeys = (ip: string, email: string, orgName: string) => ({
-    ip: `recover:ip:${ip}`,
-    target: `recover:target:${sha256Hex(`${email}\n${orgName.toLowerCase()}`)}`,
+    ip: `recover:ip:${ipLimitKey(ip)}`,
+    // One organisation name for one email: the pair being guessed at.
+    target: `recover:target:${sha256Hex(`${email}\n${foldForKey(orgName)}`)}`,
+    // The email alone, so trying many organisation names against one email escalates too.
+    email: `recover:email:${sha256Hex(email)}`,
+    // The sign-in page's per-account budget, shared so recovery cannot guess faster than it.
     account: accountRateLimitKey(email),
 });
 
@@ -99,7 +129,6 @@ const limitKeys = (ip: string, email: string, orgName: string) => ({
 // ---------------------------------------------------------------------------
 
 export type RecoveryOutcome =
-    | { kind: 'invalid-input' }
     | { kind: 'rate-limited' }
     | { kind: 'unverified' }
     | { kind: 'recovered'; loginPath: string; loginUrl: string; expiresAt: string | null };
@@ -116,7 +145,7 @@ const describeClient = (c: ClientInfo) => `${c.deviceInfo}, ${c.approxLocation}`
 export async function ownerHasOrganisationNamed(ownerId: string, name: string, exceptOrgId?: string): Promise<boolean> {
     const res = await query(
         `SELECT 1 FROM organisations
-          WHERE owner_user_id = $1 AND LOWER(BTRIM(name)) = LOWER($2) AND ($3::uuid IS NULL OR id <> $3::uuid)
+          WHERE owner_user_id = $1 AND ${SQL_NAME_KEY('name')} = LOWER($2) AND ($3::uuid IS NULL OR id <> $3::uuid)
           LIMIT 1`,
         [ownerId, normaliseOrganisationName(name), exceptOrgId ?? null]
     );
@@ -128,19 +157,28 @@ export async function recoverLoginLink(
     client: ClientInfo
 ): Promise<RecoveryOutcome> {
     const { organisation_name: rawName, email: rawEmail, password } = input;
+    const ip = client.ip || '127.0.0.1';
+
+    // Malformed or missing input is not told apart from a wrong answer: it gets the same response,
+    // takes about as long, and counts against the address. (The form checks these fields itself;
+    // this only stops the API describing what a "well-formed" attempt looks like.)
     if (
         typeof rawName !== 'string' || !normaliseOrganisationName(rawName) || normaliseOrganisationName(rawName).length > NAME_MAX_LENGTH ||
         !isValidEmail(rawEmail) ||
         typeof password !== 'string' || !password || password.length > PASSWORD_MAX_LENGTH
     ) {
-        return { kind: 'invalid-input' };
+        const ipKey = `recover:ip:${ipLimitKey(ip)}`;
+        if (isLocked(ipKey)) return { kind: 'rate-limited' };
+        await comparePassword('x', await dummyPasswordHash);
+        recordFailure(ipKey, IP_FAILURES_BEFORE_LOCK);
+        return { kind: 'unverified' };
     }
 
     const email = rawEmail.trim().toLowerCase();
     const orgName = normaliseOrganisationName(rawName);
-    const keys = limitKeys(client.ip || '127.0.0.1', email, orgName);
+    const keys = limitKeys(ip, email, orgName);
 
-    if (isLocked(keys.ip) || isLocked(keys.target) || isRateLimited(keys.account)) {
+    if (isLocked(keys.ip) || isLocked(keys.target) || isLocked(keys.email) || isRateLimited(keys.account)) {
         return { kind: 'rate-limited' };
     }
 
@@ -151,7 +189,7 @@ export async function recoverLoginLink(
                 u.id AS user_id, u.email, u.is_active AS user_active, u.password_hash
            FROM users u
            JOIN organisations o ON o.owner_user_id = u.id
-          WHERE LOWER(u.email) = $1 AND LOWER(BTRIM(o.name)) = LOWER($2)`,
+          WHERE LOWER(u.email) = $1 AND ${SQL_NAME_KEY('o.name')} = LOWER($2)`,
         [email, orgName]
     );
     const candidate = found.rows[0];
@@ -176,6 +214,7 @@ export async function recoverLoginLink(
 
     // Verified. The failure counters for this target start again; the IP counter is left alone.
     buckets.delete(keys.target);
+    buckets.delete(keys.email);
     clearRateLimit(keys.account);
 
     await writeAudit({
@@ -219,6 +258,7 @@ async function fail(
 ): Promise<RecoveryOutcome> {
     const ipLocked = recordFailure(keys.ip, IP_FAILURES_BEFORE_LOCK);
     const targetLocked = recordFailure(keys.target, TARGET_FAILURES_BEFORE_LOCK);
+    const emailLocked = recordFailure(keys.email, TARGET_FAILURES_BEFORE_LOCK);
     recordFailedAttempt(keys.account);
 
     // Every failed attempt goes to the sign-in security log (the organisation may not exist, so it
@@ -227,7 +267,7 @@ async function fail(
     await recordLoginAttempt({
         userId: candidate?.user_id, orgId: candidate?.org_id, email, status: 'FAILED', clientInfo: client, authMethod: 'login_link_recovery',
     });
-    if (ipLocked || targetLocked) {
+    if (ipLocked || targetLocked || emailLocked) {
         await recordLoginAttempt({ userId: candidate?.user_id, orgId: candidate?.org_id, email, status: 'RATE_LIMITED', clientInfo: client, authMethod: 'login_link_recovery' });
     }
 

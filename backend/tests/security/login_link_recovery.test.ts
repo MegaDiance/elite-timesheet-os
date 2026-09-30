@@ -9,7 +9,7 @@ import crypto from 'crypto';
 import request from 'supertest';
 import app from '../../src/index';
 import { clearAllRateLimits } from '../../src/services/authUtils';
-import { resetRecoveryLimits } from '../../src/services/loginLinkRecovery';
+import { ipLimitKey, resetRecoveryLimits } from '../../src/services/loginLinkRecovery';
 import { currentPortalLink, resolvePortalToken, hashPortalToken } from '../../src/services/portalLink';
 import { clearTestOutbox, getTestOutbox } from '../../src/services/emailService';
 import { comparePassword } from '../../src/services/auth';
@@ -148,6 +148,11 @@ describe('who can recover', () => {
             ['this owner naming another organisation', owner({ organisation_name: 'XYZ Care' })],
             ['inactive owner, correct details', { organisation_name: 'Inactive Owner Co', email: inactiveOwner.email, password: PASSWORD }],
             ['inactive organisation, correct details', { organisation_name: 'Dormant Co', email: inactiveOrgOwner.email, password: PASSWORD }],
+            ['empty body', {}],
+            ['empty fields', { organisation_name: '', email: '', password: '' }],
+            ['malformed email', owner({ email: 'not-an-email' })],
+            ['organisation name of only spaces', owner({ organisation_name: '   ' })],
+            ['missing password', owner({ password: undefined })],
         ];
         return cases;
     };
@@ -205,20 +210,34 @@ describe('who can recover', () => {
 });
 
 describe('input validation', () => {
-    it('rejects missing, malformed and mistyped fields before touching any account', async () => {
+    it('answers missing, malformed and mistyped fields exactly like any wrong answer, and writes nothing', async () => {
+        const wrong = await recover(owner({ password: WRONG }));
         const bad: Array<Record<string, unknown>> = [
             {}, owner({ organisation_name: undefined }), owner({ email: undefined }), owner({ password: undefined }),
             owner({ organisation_name: '   ' }), owner({ password: '' }), owner({ email: 'not-an-email' }), owner({ email: 'a@b' }),
             owner({ organisation_name: { $ne: 'x' } }), owner({ email: ['olivia@abc.test'] }), owner({ password: 12345678 }),
             owner({ organisation_name: 'x'.repeat(121) }), owner({ password: 'x'.repeat(2000) }),
         ];
+        const before = (await sql('SELECT count(*)::int n FROM login_history')).rows[0].n;
+        for (const body of bad) {
+            resetLimits();
+            const res = await recover(body);
+            expect({ body, status: res.status, json: res.body }).toEqual({ body, status: wrong.status, json: wrong.body });
+        }
+        expect((await sql('SELECT count(*)::int n FROM login_history')).rows[0].n).toBe(before);
+        expect(await currentToken(w.abc.id)).toBe(w.abc.portalSlug);
+    });
+
+    it('still spends a password comparison on malformed input, so it is not quicker than a real attempt', async () => {
         const compare = comparePassword as jest.Mock;
         compare.mockClear();
-        for (const body of bad) {
-            const res = await recover(body);
-            expect({ body, status: res.status, code: res.body.error?.code }).toEqual({ body, status: 400, code: 'VALIDATION_FAILED' });
-        }
-        expect(compare).not.toHaveBeenCalled();
+        await recover({});
+        expect(compare).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts malformed input against the address', async () => {
+        for (let i = 0; i < 10; i++) expect((await recover({})).status).toBe(401);
+        expect((await recover(owner())).status).toBe(429);
     });
 
     it('ignores any organisation or user id in the request', async () => {
@@ -277,6 +296,50 @@ describe('rate limiting', () => {
         resetLimits();
         for (let i = 0; i < 5; i++) await request(app).post('/api/auth/login').send({ email: w.users.owner.email, password: WRONG, organisation_slug: w.abc.portalSlug });
         expect((await recover(owner())).status).toBe(429);
+    });
+
+    it('changing the case or edge whitespace of the name does not give a fresh allowance', async () => {
+        for (const name of ['ABC Health', 'abc health', 'ABC HEALTH', 'aBc hEaLtH', '  abc health  ']) {
+            expect((await recover(owner({ organisation_name: name, password: WRONG }))).status).toBe(401);
+        }
+        clearAllRateLimits(); // the sign-in page's budget is not what stops this
+        expect((await recover(owner())).status).toBe(429);
+    });
+
+    it('trying many organisation names against one email is stopped by the email alone', async () => {
+        for (const name of ['One', 'Two', 'abc  health', 'ABC-Health', 'XYZ Care']) {
+            expect((await recover(owner({ organisation_name: name, password: WRONG }))).status).toBe(401);
+        }
+        clearAllRateLimits();
+        expect((await recover(owner())).status).toBe(429);
+        expect(await currentToken(w.abc.id)).toBe(w.abc.portalSlug);
+    });
+
+    it('changing the email case does not give a fresh allowance', async () => {
+        for (const email of ['olivia@abc.test', 'OLIVIA@ABC.TEST', ' Olivia@Abc.Test ', 'olivia@abc.TEST', 'Olivia@abc.test']) {
+            await recover(owner({ email, password: WRONG }));
+        }
+        clearAllRateLimits();
+        expect((await recover(owner())).status).toBe(429);
+    });
+
+    it('locks made-up and real targets on the same schedule (the limiter cannot be used to find real ones)', async () => {
+        const timeline = async (target: Record<string, unknown>) => {
+            resetLimits();
+            const seen: number[] = [];
+            for (let i = 0; i < 7; i++) seen.push((await recover({ ...target, password: WRONG })).status);
+            return seen;
+        };
+        expect(await timeline(owner())).toEqual(await timeline({ organisation_name: 'No Such Company', email: 'nobody@nowhere.test' }));
+    });
+
+    it('counts an IPv4-mapped address as the IPv4 address, and an IPv6 address as its /64', () => {
+        expect(ipLimitKey('::ffff:203.0.113.9')).toBe(ipLimitKey('203.0.113.9'));
+        expect(ipLimitKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe(ipLimitKey('2001:0db8:0001:0002:1:2:3:4'));
+        expect(ipLimitKey('2001:db8:1:2::1')).toBe(ipLimitKey('2001:db8:1:2:ffff::'));
+        expect(ipLimitKey('2001:db8:1:3::1')).not.toBe(ipLimitKey('2001:db8:1:2::1'));
+        expect(ipLimitKey('::1')).toBe(ipLimitKey('0:0:0:0:5:6:7:8')); // same /64
+        expect(ipLimitKey('203.0.113.9')).not.toBe(ipLimitKey('203.0.113.10'));
     });
 
     it('a successful recovery starts the failure count again', async () => {
@@ -444,5 +507,53 @@ describe('the standard sign-in stays private', () => {
         expect(hash).toMatch(/^\$2[aby]\$/);
         expect(hash).not.toContain(PASSWORD);
         expect(crypto.createHash('sha256').update(PASSWORD).digest('hex')).not.toBe(hash);
+    });
+});
+
+describe('organisation name integrity', () => {
+    it('matches a stored name that has stray edge whitespace, but never collapses inner whitespace', async () => {
+        await sql("UPDATE organisations SET name = E'\\t ABC Health \\n' WHERE id = $1", [w.abc.id]);
+        expect((await recover(owner({ organisation_name: 'abc health' }))).status).toBe(200);
+        resetLimits();
+        expect((await recover(owner({ organisation_name: 'abc  health' }))).status).toBe(401);
+    });
+
+    it('refuses a duplicate name however the case or edge spacing differs', async () => {
+        const second = await createOrganisation('Second Org', w.users.owner.id);
+        const token = await signIn(w.users.owner.id, second.id);
+        for (const name of ['ABC Health', 'abc health', '  ABC HEALTH  ']) {
+            const res = await request(app).put('/api/organisation/settings').set(bearer(token)).send({ name });
+            expect({ name, status: res.status }).toEqual({ name, status: 400 });
+        }
+        // Inner spacing is a different name, exactly as recovery treats it.
+        expect((await request(app).put('/api/organisation/settings').set(bearer(token)).send({ name: 'ABC  Health' })).status).toBe(200);
+    });
+
+    it('ownership cannot be transferred to someone who already owns an organisation with the same name', async () => {
+        const successor = await createUser('successor@abc.test');
+        await assignRole(w.abc.id, successor.id, w.roles.abcAdmin, 'all');
+        await createOrganisation('abc HEALTH', successor.id);
+        const res = await request(app).post('/api/organisation/transfer-ownership').set(bearer(w.tokens.owner)).send({ user_id: successor.id, current_password: PASSWORD });
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('ORGANISATION_NAME_IN_USE');
+        expect((await sql('SELECT owner_user_id FROM organisations WHERE id = $1', [w.abc.id])).rows[0].owner_user_id).toBe(w.users.owner.id);
+    });
+});
+
+describe('production headers', () => {
+    it('sends HSTS and no localhost allowance in production only', async () => {
+        const saved = process.env.NODE_ENV;
+        try {
+            process.env.NODE_ENV = 'production';
+            const prod = await request(app).get('/health');
+            expect(prod.headers['strict-transport-security']).toMatch(/max-age=\d+/);
+            expect(prod.headers['content-security-policy']).not.toMatch(/localhost|127\.0\.0\.1/);
+            process.env.NODE_ENV = 'test';
+            const dev = await request(app).get('/health');
+            expect(dev.headers['strict-transport-security']).toBeUndefined();
+            expect(dev.headers['content-security-policy']).toMatch(/localhost/);
+        } finally {
+            process.env.NODE_ENV = saved;
+        }
     });
 });

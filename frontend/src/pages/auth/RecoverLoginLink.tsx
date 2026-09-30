@@ -52,7 +52,8 @@ export default function RecoverLoginLink() {
       const res = await api.post('/recovery/login-link', { organisation_name: organisationName.trim(), email: email.trim(), password });
       const data = res.data?.data;
       setPassword('');
-      setLink({ path: data.login_path, url: data.login_url, expiresAt: data.expires_at ?? null });
+      // Built from the address this page was opened at, so it is never a placeholder or a development URL.
+      setLink({ path: data.login_path, url: `${window.location.origin}${data.login_path}`, expiresAt: data.expires_at ?? null });
     } catch (err: any) {
       setFailure(recoveryFailureMessage(err?.response?.status, err?.response?.data?.error?.message));
     } finally {
@@ -98,7 +99,7 @@ export default function RecoverLoginLink() {
             Keep this link somewhere secure. Anyone who has access to it may be able to access the associated SimpleHours account, so don’t share it publicly.
           </p>
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            This is a new link. The previous one no longer works, so anyone who used it will need the new one.
+            Your previous login link is no longer valid. Anyone who used it will need this new link.
             {link.expiresAt ? ` This link expires on ${new Date(link.expiresAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}.` : ''}
           </p>
 

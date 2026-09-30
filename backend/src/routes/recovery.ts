@@ -24,8 +24,6 @@ router.post('/login-link', async (req: Request, res: Response) => {
     try {
         const outcome = await recoverLoginLink(req.body || {}, parseClientInfo(req));
         switch (outcome.kind) {
-            case 'invalid-input':
-                return res.status(400).json({ success: false, error: { code: 'VALIDATION_FAILED', message: 'Enter the organisation name, the owner’s email address and the owner’s password.' } });
             case 'rate-limited':
                 return res.status(429).json({ success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please wait a while before trying again.' } });
             case 'unverified':

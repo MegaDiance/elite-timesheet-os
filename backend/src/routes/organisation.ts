@@ -249,6 +249,11 @@ router.post('/transfer-ownership', requireAuth, requireOwner, async (req: AuthRe
             [user_id, ctx.orgId]
         );
         if (target.rows.length === 0) throw notFound('Team member');
+        // Login link recovery finds an organisation by its owner's email and its name, so a person must not end up owning two with the same name.
+        const orgName = (await query('SELECT name FROM organisations WHERE id = $1', [ctx.orgId])).rows[0]?.name;
+        if (orgName && await ownerHasOrganisationNamed(user_id, orgName)) {
+            throw badRequest('ORGANISATION_NAME_IN_USE', 'That person already owns an organisation with this name. Rename one of them before transferring ownership.');
+        }
 
         await withTransaction(async (tx) => {
             const moved = await tx('UPDATE organisations SET owner_user_id = $1 WHERE id = $2 AND owner_user_id = $3 RETURNING id', [user_id, ctx.orgId, ctx.userId]);
