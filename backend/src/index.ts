@@ -13,6 +13,7 @@ import employeeAccountsRoutes from './routes/employeeAccounts';
 import portalRoutes from './routes/portal';
 import leaveRequestsRoutes from './routes/leaveRequests';
 import signupRoutes from './routes/signup';
+import recoveryRoutes from './routes/recovery';
 import rosterRoutes from './routes/roster';
 import submissionsRoutes from './routes/submissions';
 import holidaysRoutes from './routes/holidays';
@@ -89,6 +90,7 @@ app.get('/health', (_req, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/signup', signupRoutes);
+app.use('/api/recovery', recoveryRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/roles', rolesRoutes);
 app.use('/api/employee-accounts', employeeAccountsRoutes);

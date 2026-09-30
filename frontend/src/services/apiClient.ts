@@ -30,7 +30,7 @@ api.interceptors.response.use((response) => {
         window.dispatchEvent(new Event('access-stale'));
     }
     if (error.response?.status === 401) {
-        const publicPrefixes = ['/login/', '/features', '/pricing', '/signup', '/setup-organisation', '/forgot-password', '/reset-password', '/accept-invite', '/accept-employee-invite', '/verify-login'];
+        const publicPrefixes = ['/login/', '/features', '/pricing', '/signup', '/setup-organisation', '/forgot-password', '/reset-password', '/accept-invite', '/accept-employee-invite', '/verify-login', '/recover-login-link'];
         const isPublicRoute = window.location.pathname === '/' || publicPrefixes.some(p => window.location.pathname.startsWith(p));
         
         if (!isPublicRoute) {

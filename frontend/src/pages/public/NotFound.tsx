@@ -5,10 +5,11 @@ import { Button } from '../../components/ui/Button';
 
 /**
  * Shown for any address that is not a SimpleHours page — including /login, which is deliberately
- * not a sign-in page (the server answers it with a real 404 too). Nothing here mentions signing in,
- * so the page gives no hint that a sign-in system exists or where it lives.
+ * not a sign-in page (the server answers it with a real 404 too). Nothing here offers to sign in.
+ * The one exception is a quiet "Lost your login link?" line, shown only where `offerLinkRecovery` is
+ * set (/login), which leads to the owner-only recovery page — never to a form that signs anyone in.
  */
-export default function NotFound() {
+export default function NotFound({ offerLinkRecovery = false }: { offerLinkRecovery?: boolean }) {
   const signedIn = Boolean(localStorage.getItem('token'));
   return (
     <main className="min-h-screen flex items-center justify-center p-4 bg-[var(--bg)]">
@@ -23,6 +24,11 @@ export default function NotFound() {
         <Link to={signedIn ? '/app' : '/'} className="block pt-2">
           <Button variant="primary" size="md" className="w-full">{signedIn ? 'Go to my home page' : 'Go to the SimpleHours home page'}</Button>
         </Link>
+        {offerLinkRecovery && (
+          <Link to="/recover-login-link" className="inline-block text-xs text-[var(--muted)] hover:text-[var(--text)] hover:underline">
+            Lost your login link?
+          </Link>
+        )}
       </Card>
     </main>
   );

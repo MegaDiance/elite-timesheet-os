@@ -6,6 +6,7 @@ import { badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } fr
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
 import { RateLimitedRequest, checkRateLimit, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
 import { currentPortalLink, issuePortalLink, parseExpiry, resolvePortalToken } from '../services/portalLink';
+import { ownerHasOrganisationNamed } from '../services/loginLinkRecovery';
 
 const router = Router();
 
@@ -113,6 +114,10 @@ router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => 
         if (body.name !== undefined) {
             const name = typeof body.name === 'string' ? body.name.trim() : '';
             if (!name || name.length > 120) throw badRequest('VALIDATION_FAILED', 'Organisation name is required (120 characters at most).');
+            const ownerId = (await query('SELECT owner_user_id FROM organisations WHERE id = $1', [ctx.orgId])).rows[0]?.owner_user_id;
+            if (ownerId && await ownerHasOrganisationNamed(ownerId, name, ctx.orgId)) {
+                throw badRequest('ORGANISATION_NAME_IN_USE', 'The owner already has another organisation with this name. Choose a different name.');
+            }
             params.push(name);
             updates.push(`name = $${params.length}`);
         }

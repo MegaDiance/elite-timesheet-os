@@ -10,6 +10,7 @@ import {
     isStrongPassword, isValidEmail, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
 import { issuePortalLink } from '../services/portalLink';
+import { ownerHasOrganisationNamed } from '../services/loginLinkRecovery';
 
 /**
  * Organisation sign-up. This is how an Organisation Owner comes to exist:
@@ -115,6 +116,10 @@ router.post('/complete', checkRateLimit, async (req: RateLimitedRequest, res: Re
             const strength = isStrongPassword(body.password);
             if (!strength.valid) throw badRequest('WEAK_PASSWORD', strength.reason!);
             newPasswordHash = await hashPassword(body.password);
+        }
+        // Login link recovery names an organisation by its owner's email and its name, so one owner cannot have two with the same name.
+        if (existingUser && await ownerHasOrganisationNamed(existingUser.id, orgName)) {
+            throw badRequest('ORGANISATION_NAME_IN_USE', 'You already own an organisation with this name. Choose a different name.');
         }
 
         for (const field of ['roster_lock_password', 'timesheet_lock_password']) {

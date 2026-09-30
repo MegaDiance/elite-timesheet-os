@@ -53,6 +53,9 @@ const ACTION_LABEL: Record<string, string> = {
   ORGANISATION_SWITCHED_AWAY: 'Switched to another organisation',
   ORGANISATION_SWITCHED_IN: 'Switched in from another organisation',
   OWNERSHIP_TRANSFERRED: 'Ownership transferred',
+  LOGIN_LINK_RECOVERY_SUCCESS: 'Login link recovered by the owner',
+  LOGIN_LINK_RECOVERY_FAILURE: 'Login link recovery attempt failed',
+  LOGIN_LINK_ROTATED: 'Login link replaced during recovery',
   // From before roles were flexible: these stay in the history under their old names.
   BRANCH_ADMIN_INVITED: 'Branch Admin invited',
   BRANCH_ADMIN_INVITATION_ACCEPTED: 'Branch Admin invitation accepted',
@@ -78,7 +81,7 @@ function formatDetails(details: string | null): string {
 }
 
 function actionTone(action: string): string {
-  if (/DELETE|REMOVE|REVOKE|DEACTIVATE|FAILED|REJECT|BLOCKED/.test(action)) return 'bg-[var(--danger-light)] text-[var(--danger)]';
+  if (/DELETE|REMOVE|REVOKE|DEACTIVATE|FAILED|FAILURE|REJECT|BLOCKED/.test(action)) return 'bg-[var(--danger-light)] text-[var(--danger)]';
   if (/CREATE|ADD|APPROVE|INVITE|ACCEPT|REACTIVATE|CONFIGURED/.test(action)) return 'bg-[var(--success-light)] text-[var(--success)]';
   if (/UPDATE|CHANGE|LOCK|MOVE|TRANSFER|REGENERATE|REOPEN/.test(action)) return 'bg-[var(--primary-light)] text-[var(--primary-text)]';
   return 'bg-[var(--glass-8)] text-[var(--muted)]';

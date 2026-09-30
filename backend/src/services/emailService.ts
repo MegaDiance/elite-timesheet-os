@@ -386,6 +386,54 @@ export function buildPasswordResetEmailTemplate(params: { resetLink: string, rec
 }
 
 /**
+ * Security notice for the Organisation Owner after their private login link was recovered and
+ * replaced. It deliberately contains no link: the notice is for spotting an unauthorised recovery.
+ */
+export function buildLoginLinkRecoveredEmailTemplate(params: { organisationName: string, when: string, deviceInfo: string, approxLocation: string }): { subject: string, html: string, text: string } {
+    const subject = 'Your SimpleHours login link was recovered';
+    const org = escapeHtml(params.organisationName);
+    const details = `${params.deviceInfo}, ${params.approxLocation}`;
+    const text = `Your login link was recovered\n\nThe private login link for ${params.organisationName} was recovered using the Organisation Owner's email address and password, and it was replaced with a new link. The previous link no longer works.\n\nWhen: ${params.when}\nFrom: ${details}\n\nIf this was you, nothing more is needed. If it was not, change your password now and replace the login link from Settings.`;
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 40px 20px; }
+        .card { max-width: 540px; margin: 0 auto; background-color: #1e293b; border-radius: 20px; border: 1px solid #334155; padding: 36px; }
+        .brand { font-size: 20px; font-weight: 800; color: #6366f1; letter-spacing: -0.5px; margin-bottom: 24px; }
+        .title { font-size: 24px; font-weight: 800; color: #ffffff; margin-bottom: 12px; line-height: 1.3; }
+        .desc { font-size: 14px; line-height: 1.6; color: #94a3b8; margin-bottom: 20px; }
+        .facts { font-size: 14px; line-height: 1.7; color: #cbd5e1; background-color: #0f172a; border-radius: 12px; padding: 14px 18px; margin-bottom: 20px; }
+        .footer { margin-top: 28px; padding-top: 20px; border-top: 1px solid #334155; font-size: 12px; color: #64748b; line-height: 1.5; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="brand">SIMPLEHOURS</div>
+        <div class="title">Your login link was recovered</div>
+        <p class="desc">
+          The private login link for <strong>${org}</strong> was recovered using the Organisation Owner's email address and password. It was replaced with a new link, and the previous link no longer works.
+        </p>
+        <div class="facts">
+          When: ${escapeHtml(params.when)}<br>
+          From: ${escapeHtml(details)}
+        </div>
+        <p class="desc">
+          If this was you, nothing more is needed. If it was not, change your password now and replace the login link from Settings.
+        </p>
+        <div class="footer">This email does not contain the login link.</div>
+      </div>
+    </body>
+    </html>
+    `;
+
+    return { subject, html, text };
+}
+
+/**
  * Generates branded HTML template for Two-Step Verification (2FA) OTP
  */
 export function buildTwoFactorEmailTemplate(params: { code: string, recipientEmail: string }): { subject: string, html: string, text: string } {

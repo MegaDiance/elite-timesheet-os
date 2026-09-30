@@ -218,9 +218,14 @@ export const OrgLogin: React.FC = () => {
           {lookupState === 'unavailable' ? (
             <Button variant="primary" size="md" className="w-full" onClick={() => setLookupAttempt(n => n + 1)}>Try again</Button>
           ) : (
-            <Link to="/" className="block pt-2">
-              <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
-            </Link>
+            <>
+              <Link to="/" className="block pt-2">
+                <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
+              </Link>
+              <Link to="/recover-login-link" className="inline-block text-xs text-[var(--muted)] hover:text-[var(--text)] hover:underline">
+                Lost your login link?
+              </Link>
+            </>
           )}
         </Card>
       </div>

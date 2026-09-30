@@ -9,6 +9,7 @@ import { OrgLogin } from './pages/auth/OrgLogin';
 import VerifyLogin from './pages/auth/VerifyLogin';
 import AcceptInvite from './pages/auth/AcceptInvite';
 import SignUp from './pages/auth/SignUp';
+import RecoverLoginLink from './pages/auth/RecoverLoginLink';
 import SetupOrganisation from './pages/SetupOrganisation';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
@@ -116,7 +117,8 @@ export default function App() {
         {/* Sign-in and account set-up */}
         {/* Sign-in only exists at an organisation's own link. /login is deliberately not a sign-in page. */}
         <Route path="/login/:slug" element={<OrgLogin />} />
-        <Route path="/login" element={<NotFound />} />
+        <Route path="/login" element={<NotFound offerLinkRecovery />} />
+        <Route path="/recover-login-link" element={<RecoverLoginLink />} />
         <Route path="/verify-login" element={<VerifyLogin />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
