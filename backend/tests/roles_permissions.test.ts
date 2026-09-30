@@ -244,3 +244,63 @@ describe('deleting roles', () => {
         expect((await sql('SELECT COUNT(*)::int AS n FROM roles WHERE org_id = $1 AND system_key IS NOT NULL', [w.abc.id])).rows[0].n).toBe(3);
     });
 });
+
+describe('invitations carry a role and where it applies', () => {
+    const invite = (body: object, token = w.tokens.owner) => request(app).post('/api/team/invitations').set(bearer(token)).send(body);
+    const tokenOf = (link: string) => /token=([a-f0-9]{64})/.exec(link)![1];
+    beforeEach(() => { process.env.EMAIL_ENABLED = 'false'; });
+    afterEach(() => { delete process.env.EMAIL_ENABLED; });
+
+    it('an organisation-wide custom role: the invitation says so, and accepting it gives exactly that', async () => {
+        const hr = await createRole(w.abc.id, 'HR Manager', ['users.manage', 'audit.view', 'employees.view']);
+        const created = await invite({ email: 'hr@abc.test', full_name: 'Hana HR', role_id: hr, scope: { all: true } });
+        expect(created.status).toBe(201);
+        const token = tokenOf(created.body.data.invite_link);
+
+        const verify = await request(app).get(`/api/team/invitations/verify?token=${token}`);
+        expect(verify.body.data).toMatchObject({ role_name: 'HR Manager', all_branches: true, branches: [], organisation_name: 'ABC Health' });
+
+        expect((await request(app).post('/api/team/invitations/accept').send({ token, password: 'Newcomer123' })).status).toBe(200);
+        const login = await request(app).post('/api/auth/login').send({ email: 'hr@abc.test', password: 'Newcomer123', organisation_slug: w.abc.portalSlug });
+        expect(login.body.data.roles.map((r: any) => r.name)).toEqual(['HR Manager']);
+        expect(login.body.data.scopes['users.manage']).toEqual({ all: true, branch_ids: [] });
+        expect((await request(app).get('/api/audit').set(bearer(login.body.data.token))).status).toBe(200);
+        expect((await audit('TEAM_INVITATION_ACCEPTED'))[0].new_value).toBe('HR Manager: entire organisation');
+    });
+
+    it('a branch-scoped role: accepting gives those branches only', async () => {
+        const created = await invite({ email: 'gee@abc.test', role_id: w.roles.abcAdmin, scope: { branch_ids: [w.abc.geelong, w.abc.richmond] } });
+        const token = tokenOf(created.body.data.invite_link);
+        await request(app).post('/api/team/invitations/accept').send({ token, password: 'Newcomer123' });
+        const login = await request(app).post('/api/auth/login').send({ email: 'gee@abc.test', password: 'Newcomer123', organisation_slug: w.abc.portalSlug });
+        expect(login.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Geelong', 'Richmond']);
+        expect(login.body.data.permissions).not.toContain('users.manage');
+    });
+
+    it('a pending invitation dies with its role, and a role that cannot be assigned or is not in the organisation is refused', async () => {
+        const temp = await createRole(w.abc.id, 'Temporary', ['employees.view']);
+        const created = await invite({ email: 'tmp@abc.test', role_id: temp, scope: { all: true } });
+        const token = tokenOf(created.body.data.invite_link);
+        await request(app).delete(`/api/roles/${temp}`).set(owner());
+        expect((await request(app).post('/api/team/invitations/accept').send({ token, password: 'Newcomer123' })).status).toBe(400);
+        expect((await sql("SELECT COUNT(*)::int AS n FROM users WHERE email = 'tmp@abc.test'")).rows[0].n).toBe(0);
+
+        expect((await invite({ email: 'a@abc.test', role_id: 'not-a-uuid', scope: { all: true } })).status).toBe(404);
+        expect((await invite({ email: 'b@abc.test', role_id: w.roles.abcAdmin, scope: {} })).status).toBe(400);
+        expect((await invite({ email: 'c@abc.test', role_id: w.roles.abcAdmin, scope: { branch_ids: [] } })).status).toBe(400);
+    });
+
+    it('an employee who accepts a management role keeps their employee access and gains only the role', async () => {
+        const created = await invite({ email: w.users.melEmployee.email, role_id: w.roles.abcAdmin, scope: { branch_ids: [w.abc.melbourne] } });
+        expect(created.status).toBe(201);
+        const token = tokenOf(created.body.data.invite_link);
+        // An existing account must prove its password.
+        expect((await request(app).post('/api/team/invitations/accept').send({ token, password: 'WrongPassword1' })).status).toBe(401);
+        expect((await request(app).post('/api/team/invitations/accept').send({ token, password: 'Password123' })).status).toBe(200);
+        const me = await request(app).get('/api/auth/me').set(bearer(await signIn(w.users.melEmployee.id, w.abc.id)));
+        expect(me.body.data.is_employee).toBe(true);
+        expect(me.body.data.is_manager).toBe(true);
+        expect(me.body.data.roles.map((r: any) => r.name).sort()).toEqual(['Admin', 'Employee']);
+        expect(me.body.data.scopes['timesheets.approve']).toEqual({ all: false, branch_ids: [w.abc.melbourne] });
+    });
+});

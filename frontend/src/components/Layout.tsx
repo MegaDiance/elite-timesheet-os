@@ -21,21 +21,19 @@ import {
   Pin,
   PinOff,
   MapPin,
-  UserCog,
+  ShieldCheck,
   History,
 } from 'lucide-react';
 import api from '../services/apiClient';
-import { OrgSwitchModal, type OrganisationChoice } from './modals/OrgSwitchModal';
+import { OrgSwitchModal } from './modals/OrgSwitchModal';
 import { BranchSwitchModal } from './modals/BranchSwitchModal';
 import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
 import GuidedTour from './tour/GuidedTour';
 import ContextHelpModal from './ContextHelpModal';
 import { HelpTip } from './ui/HelpTip';
-import { useToast } from './ui/Toast';
-import { ROLE_LABEL, signOut, storeSession, useAccess, type Permission } from '../hooks/useAccess';
+import { holdsHere, roleSummary, signOut, useAccess, type Permission } from '../hooks/useAccess';
 import { forgetActiveBranches, useActiveBranch } from '../hooks/useActiveBranch';
-import { friendlyError } from '../services/errors';
 
 type AttentionKey = 'timesheets' | 'leave';
 
@@ -43,7 +41,10 @@ interface NavItem {
   label: string;
   path: string;
   icon: ReactNode;
-  permission?: Permission;
+  /** Shown only to someone who holds at least one of these (in the branch being worked in, for branch-level ones). */
+  anyOf?: Permission[];
+  /** Shown only to someone who manages the organisation in some way (holds any management permission). */
+  manager?: boolean;
   /** Shows a count of things waiting (e.g. timesheets to approve). */
   attention?: AttentionKey;
 }
@@ -84,13 +85,10 @@ function AttentionBadge({ count, label }: { count: number; label: string }) {
 
 export default function Layout() {
   const location = useLocation();
-  const toast = useToast();
-  const { access, isOwner, can } = useAccess();
+  const { access, isOwner } = useAccess();
   const { activeBranch, activeBranchId, branches: activeBranches, canSwitchBranch, setActiveBranch } = useActiveBranch();
 
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
-  const [organisations, setOrganisations] = useState<OrganisationChoice[]>([]);
-  const [switching, setSwitching] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showOrgSwitchModal, setShowOrgSwitchModal] = useState(false);
   const [showBranchSwitchModal, setShowBranchSwitchModal] = useState(false);
@@ -136,29 +134,6 @@ export default function Layout() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  useEffect(() => {
-    let cancelled = false;
-    api.get('/auth/organisations')
-      .then(res => { if (!cancelled && Array.isArray(res.data?.data)) setOrganisations(res.data.data); })
-      .catch(() => undefined); // the organisation switcher is simply hidden when the list can't be loaded
-    return () => { cancelled = true; };
-  }, [access?.organisation.id]);
-
-  const handleSwitchOrg = async (orgId: string) => {
-    if (!orgId || orgId === access?.organisation.id || switching) return;
-    setSwitching(true);
-    try {
-      const res = await api.post('/auth/switch-organisation', { organisation_id: orgId });
-      const token = res.data?.data?.token;
-      if (!token) throw new Error('No session returned');
-      storeSession(token, res.data?.data?.portal_path);
-      window.location.assign('/app');
-    } catch (err: any) {
-      toast.error(friendlyError(err, 'Could not switch organisation. Please try again.'));
-      setSwitching(false);
-    }
-  };
-
   const handleSignOut = async () => {
     forgetActiveBranches();
     await signOut();
@@ -178,73 +153,79 @@ export default function Layout() {
   // can't use are left out entirely, never shown disabled. Display only: the API checks every call.
   // ---------------------------------------------------------------------------
   const openHelp = () => setShowHelpModal(true);
-  const isEmployee = access?.role === 'EMPLOYEE';
+  const isManager = access?.is_manager === true;
+  const showPortal = access?.is_employee === true && holdsHere(access, 'portal.access', null);
   const canSubmitTimesheets = access?.employee_capabilities?.can_submit_timesheets ?? false;
-  const homePath = isEmployee ? '/my/schedule' : '/dashboard';
-  const attention = useAttention(!isEmployee && can('branch.view'), activeBranchId, location.pathname);
-
-  const employeeSections: NavSection[] = [
-    {
-      title: 'My work',
-      tour: 'daily-nav',
-      items: [
-        { label: 'My schedule', path: '/my/schedule', icon: icon(Calendar) },
-        ...(canSubmitTimesheets ? [
-          { label: 'My timesheet', path: '/my/timesheet', icon: icon(CheckSquare) },
-          { label: 'My past hours', path: '/my/history', icon: icon(History) },
-        ] : []),
-        { label: 'Leave', path: '/my/leave', icon: icon(CalendarDays) },
-      ],
-    },
-  ];
+  const homePath = isManager ? '/dashboard' : '/my/schedule';
+  const attention = useAttention(isManager, activeBranchId, location.pathname);
+  const canHere = (permission: Permission) => holdsHere(access, permission, activeBranchId);
 
   const managerSections: NavSection[] = [
     {
       title: 'Daily work',
       tour: 'daily-nav',
       items: [
-        { label: 'Today', path: '/dashboard', permission: 'branch.view', icon: icon(LayoutDashboard) },
-        { label: 'Roster', path: '/roster', permission: 'rosters.manage', icon: icon(Calendar) },
-        { label: 'Timesheets', path: '/timesheets', permission: 'timesheets.manage', icon: icon(CheckSquare), attention: 'timesheets' },
-        { label: 'Leave requests', path: '/leave-requests', permission: 'timesheets.manage', icon: icon(CalendarDays), attention: 'leave' },
+        { label: 'Today', path: '/dashboard', manager: true, icon: icon(LayoutDashboard) },
+        { label: 'Roster', path: '/roster', anyOf: ['rosters.view'], icon: icon(Calendar) },
+        { label: 'Timesheets', path: '/timesheets', anyOf: ['timesheets.view'], icon: icon(CheckSquare), attention: 'timesheets' },
+        { label: 'Leave requests', path: '/leave-requests', anyOf: ['leave.view'], icon: icon(CalendarDays), attention: 'leave' },
       ],
     },
     {
       title: 'People',
       items: [
-        { label: 'Workers', path: '/workers', permission: 'workers.manage', icon: icon(Users) },
-        { label: 'Branch Admins', path: '/branch-admins', permission: 'branch_admins.manage', icon: icon(UserCog) },
+        { label: 'Workers', path: '/workers', anyOf: ['employees.view', 'rosters.view'], icon: icon(Users) },
       ],
     },
     {
       title: 'Records',
       items: [
-        { label: 'Reports', path: '/reports', permission: 'reports.view', icon: icon(BarChart3) },
-        { label: 'Audit log', path: '/audit', permission: 'audit.view', icon: icon(FileText) },
+        { label: 'Reports', path: '/reports', anyOf: ['payroll.view'], icon: icon(BarChart3) },
+        { label: 'Audit log', path: '/audit', anyOf: ['audit.view'], icon: icon(FileText) },
       ],
     },
     {
       title: 'Organisation',
       items: [
-        { label: 'Branches', path: '/branches', permission: 'branch.view', icon: icon(Building2) },
-        { label: 'Team chat', path: '/announcements', icon: icon(MessageSquare) },
-        { label: 'Settings', path: '/settings', icon: icon(Sliders) },
+        { label: 'Branches', path: '/branches', manager: true, icon: icon(Building2) },
+        { label: 'Roles & permissions', path: '/settings/roles', anyOf: ['roles.manage', 'users.manage'], icon: icon(ShieldCheck) },
+        { label: 'Team chat', path: '/announcements', manager: true, icon: icon(MessageSquare) },
+        { label: 'Settings', path: '/settings', manager: true, icon: icon(Sliders) },
       ],
     },
   ];
 
-  const navSections = (isEmployee ? employeeSections : managerSections)
-    .map(section => ({ ...section, items: section.items.filter(item => !item.permission || can(item.permission)) }))
+  const portalSection: NavSection = {
+    title: 'My work',
+    // The walkthrough's "daily work" anchor is the first group; only an employee-only login has no other.
+    tour: isManager ? undefined : 'daily-nav',
+    items: [
+      { label: 'My schedule', path: '/my/schedule', icon: icon(Calendar) },
+      ...(canSubmitTimesheets ? [
+        { label: 'My timesheet', path: '/my/timesheet', icon: icon(CheckSquare) },
+        { label: 'My past hours', path: '/my/history', icon: icon(History) },
+      ] : []),
+      { label: 'Leave', path: '/my/leave', icon: icon(CalendarDays) },
+    ],
+  };
+
+  const visible = (item: NavItem) => (item.manager ? isManager : true) && (!item.anyOf || item.anyOf.some(canHere));
+  const navSections = [...(isManager ? managerSections : []), ...(showPortal ? [portalSection] : [])]
+    .map(section => ({ ...section, items: section.items.filter(visible) }))
     .filter(section => section.items.length > 0);
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
-  const attentionCount = (key?: AttentionKey) => (key ? attention[key] : 0);
+  // Only what this person can act on is counted: approving is a separate permission from viewing.
+  const attentionCount = (key?: AttentionKey) =>
+    key === 'timesheets' ? (canHere('timesheets.approve') ? attention.timesheets : 0)
+    : key === 'leave' ? (canHere('leave.approve') ? attention.leave : 0)
+    : 0;
 
   const orgName = access?.organisation.name || 'SimpleHours';
   const userEmail = access?.user.email || '';
   const userName = access?.user.full_name || userEmail.split('@')[0];
-  const roleLabel = access ? ROLE_LABEL[access.role] : '';
-  const canSwitchOrganisation = organisations.length > 1;
+  const rolesLabel = roleSummary(access);
+  const canSwitchOrganisation = access?.has_other_organisations === true;
 
   // Phones: the daily tasks in a bottom bar, plus "More" for everything else.
   const bottomItems: NavItem[] = (navSections[0]?.items ?? []).filter(i => i.path !== '/my/history');
@@ -271,7 +252,7 @@ export default function Layout() {
               <HelpTip label="Branch" onDark>
                 {isOwner
                   ? 'You can work in every branch. Pages show the branch chosen here; switch to see another.'
-                  : 'You only have access to the branches assigned to you. Pages show the branch chosen here.'}
+                  : 'You only see the branches your roles cover. Pages show the branch chosen here.'}
               </HelpTip>
             </div>
             <div className="font-semibold text-white truncate flex items-center gap-1.5" title={activeBranch.name}>
@@ -287,8 +268,8 @@ export default function Layout() {
         </div>
       )}
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-[var(--sidebar-text)]">Your role</div>
-        <div className="font-semibold text-white">{roleLabel}</div>
+        <div className="text-[10px] uppercase tracking-wide text-[var(--sidebar-text)]">{(access?.roles.length ?? 0) > 1 ? 'Your roles' : 'Your role'}</div>
+        <div className="font-semibold text-white break-words">{rolesLabel}</div>
       </div>
     </div>
   );
@@ -507,14 +488,7 @@ export default function Layout() {
         </button>
       </nav>
 
-      <OrgSwitchModal
-        isOpen={showOrgSwitchModal}
-        onClose={() => setShowOrgSwitchModal(false)}
-        organisations={organisations}
-        currentOrgId={access?.organisation.id}
-        onSwitch={handleSwitchOrg}
-        switching={switching}
-      />
+      <OrgSwitchModal isOpen={showOrgSwitchModal} onClose={() => setShowOrgSwitchModal(false)} />
 
       <BranchSwitchModal
         isOpen={showBranchSwitchModal}

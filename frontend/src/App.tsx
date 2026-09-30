@@ -1,5 +1,5 @@
 import { useEffect, useRef, type JSX } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { PublicLayout } from './layouts/PublicLayout';
 import { Home } from './pages/public/Home';
@@ -20,7 +20,7 @@ import Roster from './pages/Roster';
 import TimesheetReview from './pages/TimesheetReview';
 import Employees from './pages/Employees';
 import Locations from './pages/Locations';
-import BranchAdmins from './pages/BranchAdmins';
+import RolesPermissions from './pages/RolesPermissions';
 import LeaveRequests from './pages/LeaveRequests';
 import Reports from './pages/Reports';
 import Audit from './pages/Audit';
@@ -30,53 +30,38 @@ import EmployeeSchedule from './pages/EmployeeSchedule';
 import EmployeeTimesheet from './pages/EmployeeTimesheet';
 import EmployeeHistory from './pages/EmployeeHistory';
 import EmployeeLeave from './pages/EmployeeLeave';
-import { useAccess, type Permission } from './hooks/useAccess';
-import { ActiveBranchProvider } from './hooks/useActiveBranch';
+import NoAccess from './components/NoAccess';
+import { holdsHere, useAccess, type Permission } from './hooks/useAccess';
+import { ActiveBranchProvider, useActiveBranch } from './hooks/useActiveBranch';
 
 function Loading() {
   return <div className="p-10 text-center text-sm text-[var(--muted)]">Loading…</div>;
 }
 
-function NoAccess() {
-  const { access } = useAccess();
-  const isEmployee = access?.role === 'EMPLOYEE';
-  return (
-    <div className="max-w-md mx-auto mt-16 p-8 bg-[var(--panel)] border border-[var(--border)] rounded-2xl text-center space-y-3">
-      <h1 className="text-lg font-bold text-[var(--text)]">You don’t have access to this page</h1>
-      <p className="text-sm text-[var(--muted)]">
-        {isEmployee
-          ? 'This area is for managers and owners. If you need it, ask your manager to change your access.'
-          : 'This area is managed by the Organisation Owner. If you need it, ask the owner to change your access.'}
-      </p>
-      <Link to={isEmployee ? '/my/schedule' : '/dashboard'} className="inline-block text-sm font-semibold text-[var(--primary-text)] hover:underline">
-        Go to {isEmployee ? 'my schedule' : 'the dashboard'}
-      </Link>
-    </div>
-  );
+/**
+ * Shows a page only when the signed-in account may use it. Display only — the API authorises every
+ * request itself regardless of what this shows.
+ *   permission: holds it (branch-level permissions are asked for the branch being worked in)
+ *   anyOf:      holds at least one of them
+ *   neither:    any management account (someone who holds at least one management permission)
+ */
+function Guard({ permission, anyOf, children }: { permission?: Permission; anyOf?: Permission[]; children: JSX.Element }) {
+  const { access, loading } = useAccess();
+  const { activeBranchId } = useActiveBranch();
+  if (loading) return <Loading />;
+  if (!access) return <Navigate to={portalLoginPath()} replace />;
+  const needs = permission ? [permission] : anyOf;
+  if (!needs) return access.is_manager ? children : <NoAccess />;
+  const allowed = needs.some(p => holdsHere(access, p, activeBranchId));
+  return allowed ? children : <NoAccess needs={needs} />;
 }
 
-/**
- * Shows a page only when the signed-in account holds `permission`. Employees hold no permissions
- * at all, so any permission check already excludes them; a bare Guard (no permission — team chat,
- * settings) additionally excludes EMPLOYEE explicitly, since those pages are the same
- * "any management account" audience the API itself restricts them to. Display only — the API
- * authorises every request itself regardless of what this shows.
- */
-function Guard({ permission, children }: { permission?: Permission; children: JSX.Element }) {
+/** Shows a page only to someone who works in the employee portal (a linked worker record). The counterpart of Guard. */
+function EmployeeGuard({ requireTimesheets, children }: { requireTimesheets?: boolean; children: JSX.Element }) {
   const { access, loading, can } = useAccess();
   if (loading) return <Loading />;
   if (!access) return <Navigate to={portalLoginPath()} replace />;
-  if (access.role === 'EMPLOYEE') return <NoAccess />;
-  if (permission && !can(permission)) return <NoAccess />;
-  return children;
-}
-
-/** Shows a page only to a signed-in Employee. The counterpart of Guard for the employee portal. */
-function EmployeeGuard({ requireTimesheets, children }: { requireTimesheets?: boolean; children: JSX.Element }) {
-  const { access, loading } = useAccess();
-  if (loading) return <Loading />;
-  if (!access) return <Navigate to={portalLoginPath()} replace />;
-  if (access.role !== 'EMPLOYEE') return <NoAccess />;
+  if (!access.is_employee || !can('portal.access')) return <NoAccess employeePortal />;
   // Employee timesheets switched off: timesheet pages (the timesheet and its history) do not exist
   // for this employee, and the API refuses them too.
   if (requireTimesheets && !access.employee_capabilities?.can_submit_timesheets) return <Navigate to="/my/schedule" replace />;
@@ -108,11 +93,13 @@ function AppShell() {
   );
 }
 
-/** Employees land on their schedule; every other role lands on the dashboard. */
+/** Managers land on the dashboard; someone who is only an employee lands on their schedule. */
 function DefaultLanding() {
   const { access, loading } = useAccess();
   if (loading) return <Loading />;
-  return <Navigate to={access?.role === 'EMPLOYEE' ? '/my/schedule' : '/dashboard'} replace />;
+  if (access?.is_manager) return <Navigate to="/dashboard" replace />;
+  if (access?.is_employee) return <Navigate to="/my/schedule" replace />;
+  return <NoAccess />;
 }
 
 export default function App() {
@@ -135,23 +122,23 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/setup-organisation" element={<SetupOrganisation />} />
-        <Route path="/accept-invite" element={<AcceptInvite kind="branch-admin" />} />
+        <Route path="/accept-invite" element={<AcceptInvite kind="team" />} />
         <Route path="/accept-employee-invite" element={<AcceptInvite kind="employee" />} />
 
         {/* Signed-in application */}
         <Route element={<AppShell />}>
           <Route path="/app" element={<DefaultLanding />} />
-          <Route path="/dashboard" element={<Guard permission="branch.view"><Dashboard /></Guard>} />
-          <Route path="/roster" element={<Guard permission="rosters.manage"><Roster /></Guard>} />
-          <Route path="/timesheets" element={<Guard permission="timesheets.manage"><TimesheetReview /></Guard>} />
-          <Route path="/leave-requests" element={<Guard permission="timesheets.manage"><LeaveRequests /></Guard>} />
-          <Route path="/workers" element={<Guard permission="workers.manage"><Employees /></Guard>} />
-          <Route path="/reports" element={<Guard permission="reports.view"><Reports /></Guard>} />
-          <Route path="/branches" element={<Guard permission="branch.view"><Locations /></Guard>} />
-          <Route path="/branch-admins" element={<Guard permission="branch_admins.manage"><BranchAdmins /></Guard>} />
+          <Route path="/dashboard" element={<Guard><Dashboard /></Guard>} />
+          <Route path="/roster" element={<Guard permission="rosters.view"><Roster /></Guard>} />
+          <Route path="/timesheets" element={<Guard permission="timesheets.view"><TimesheetReview /></Guard>} />
+          <Route path="/leave-requests" element={<Guard permission="leave.view"><LeaveRequests /></Guard>} />
+          <Route path="/workers" element={<Guard anyOf={['employees.view', 'rosters.view']}><Employees /></Guard>} />
+          <Route path="/reports" element={<Guard permission="payroll.view"><Reports /></Guard>} />
+          <Route path="/branches" element={<Guard><Locations /></Guard>} />
           <Route path="/audit" element={<Guard permission="audit.view"><Audit /></Guard>} />
           <Route path="/announcements" element={<Guard><Announcements /></Guard>} />
           <Route path="/settings" element={<Guard><Settings /></Guard>} />
+          <Route path="/settings/roles" element={<Guard anyOf={['roles.manage', 'users.manage']}><RolesPermissions /></Guard>} />
 
           {/* Employee portal */}
           <Route path="/my/schedule" element={<EmployeeGuard><EmployeeSchedule /></EmployeeGuard>} />

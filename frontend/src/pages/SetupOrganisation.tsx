@@ -234,12 +234,12 @@ export default function SetupOrganisation() {
         <h1 className="text-2xl font-bold text-[var(--text)]">Your organisation is ready</h1>
         <p className="text-sm text-[var(--muted)] leading-relaxed max-w-md mx-auto">
           {organisationName.trim()} has been set up with its first branch, {branchName.trim()}. Sign in to add workers,
-          build your first roster and invite Branch Admins.
+          build your first roster and invite your team.
         </p>
         <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-left space-y-1">
           <div className="font-semibold text-[var(--text)]">Your organisation's private sign-in link</div>
           <div className="font-mono text-[var(--primary-text)] break-all">{fullLink}</div>
-          <div className="text-[var(--muted)]">Bookmark it. You and your Branch Admins sign in here.</div>
+          <div className="text-[var(--muted)]">Bookmark it. You and your team sign in here.</div>
         </div>
         <Link to={loginPath} className="inline-block">
           <Button variant="primary" size="lg" rightIcon={<ArrowRight className="w-4 h-4" />}>Sign in</Button>
@@ -283,7 +283,7 @@ export default function SetupOrganisation() {
         {step === 0 && (
           <>
             <p className="text-xs text-[var(--muted)] leading-relaxed">
-              You'll be the Organisation Owner: you can see every branch, invite Branch Admins and change organisation settings.
+              You'll be the Organisation Owner: you can see every branch, invite your team and change organisation settings.
             </p>
             <Field label="Organisation name">
               <input
@@ -423,7 +423,7 @@ export default function SetupOrganisation() {
                 <span>Lock passwords (optional)</span>
               </div>
               <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                Each branch can lock its roster and its timesheets for a fortnight. Shared lock passwords let Branch Admins lock and
+                Each branch can lock its roster and its timesheets for a fortnight. Shared lock passwords let your team lock and
                 unlock; anyone can also use their own sign-in password. Leave blank to skip.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

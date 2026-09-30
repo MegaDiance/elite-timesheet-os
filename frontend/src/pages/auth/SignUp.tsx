@@ -47,7 +47,7 @@ export default function SignUp() {
           </Link>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Set up your organisation</h1>
           <p className="text-xs text-[var(--muted)]">
-            You'll be the Organisation Owner. You can add branches and invite Branch Admins once you're set up.
+            You'll be the Organisation Owner. You can add branches and invite your team once you're set up.
           </p>
         </div>
 

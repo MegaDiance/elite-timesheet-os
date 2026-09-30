@@ -9,11 +9,13 @@ import { TYPE_LABEL, type EntryType } from '../components/roster/day';
 import { LEAVE_TYPE_HELP, LeaveStatusBadge, type LeaveState } from '../components/LeaveStatus';
 import { HelpTip } from '../components/ui/HelpTip';
 import { useToast } from '../components/ui/Toast';
+import { useAccess } from '../hooks/useAccess';
 
 interface AdminLeaveRequest {
   id: string;
   employee_id: string;
   employee_name: string;
+  location_id: string;
   location_name: string;
   leave_type: EntryType;
   start_date: string;
@@ -26,9 +28,10 @@ interface AdminLeaveRequest {
   rejection_reason: string | null;
 }
 
-/** Owner / Branch Admin: decide on leave requests from workers in the branches they manage. */
+/** Leave requests from workers in the branches the person can see; deciding on them needs leave.approve in that branch. */
 export default function LeaveRequests() {
   const toast = useToast();
+  const { can } = useAccess();
   const [status, setStatus] = useState<'Pending' | 'all'>('Pending');
   const [rows, setRows] = useState<AdminLeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,7 +85,9 @@ export default function LeaveRequests() {
             <HelpTip label="Leave types">{LEAVE_TYPE_HELP}</HelpTip>
           </h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            Approving adds the leave to that person’s roster and worked hours for those days. Days that are approved or locked are left as they are and listed.
+            {can('leave.approve')
+              ? 'Approving adds the leave to that person’s roster and worked hours for those days. Days that are approved or locked are left as they are and listed.'
+              : 'Leave requests from workers in your branches. Deciding on them needs more access than your roles include.'}
           </p>
         </div>
         <div role="group" aria-label="Show" className="flex gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]">
@@ -115,7 +120,7 @@ export default function LeaveRequests() {
             <p className="text-sm text-[var(--muted)]">
               {status === 'Pending'
                 ? 'New requests from your workers appear here. Past decisions are under “All”.'
-                : <>Workers with portal access can ask for leave from their phone. Give access on <Link to="/workers" className="text-[var(--primary-text)] font-semibold hover:underline">Workers</Link>. You can also enter leave yourself on the Roster.</>}
+                : <>Workers with portal access can ask for leave from their phone. {can('employees.manage_access') ? <>Give access on <Link to="/workers" className="text-[var(--primary-text)] font-semibold hover:underline">Workers</Link>. </> : null}Leave can also be entered on the Roster.</>}
             </p>
           </div>
         ) : (
@@ -133,7 +138,7 @@ export default function LeaveRequests() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <LeaveStatusBadge status={r.status} />
-                    {r.status === 'Pending' && (
+                    {r.status === 'Pending' && can('leave.approve', r.location_id) && (
                       <>
                         <button type="button" onClick={() => decide(r, 'approve')} disabled={busyId === r.id} className={`${buttonClass.primary} h-10`}>
                           {busyId === r.id ? 'Saving…' : 'Approve'}

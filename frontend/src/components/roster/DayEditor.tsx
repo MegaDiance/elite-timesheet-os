@@ -16,6 +16,15 @@ import {
   type BreakSettings, type DayRecord, type DraftLine, type Entry, type Part, type Scope,
 } from './day';
 
+/** What the signed-in person may do to one side of the day, in the worker's branch. Display only; the server decides. */
+export interface SideAccess {
+  view: boolean;
+  /** Put the first entries on an empty day. */
+  create: boolean;
+  /** Change or clear entries that are already there. */
+  edit: boolean;
+}
+
 interface DayEditorProps {
   worker: { id: string; full_name: string; location_name: string | null };
   dateIso: string;
@@ -31,6 +40,9 @@ interface DayEditorProps {
   timesheetLocked: boolean;
   /** The worker's timesheet for this pay period is approved. */
   approved: boolean;
+  /** What the person may do to the rostered and the worked side. A side they can't change is shown read-only. */
+  rosterAccess: SideAccess;
+  timesheetAccess: SideAccess;
   /** The 14 days of the pay period, for "Copy this day's roster to…". */
   fortnightDays: string[];
   /** Other active workers in the same branch, for "Copy this day's roster to…". */
@@ -60,17 +72,26 @@ const TARGETS: { value: Scope; label: string; hint: string }[] = [
  * the worked hours, or both — so a roster change can never touch worked hours.
  */
 export default function DayEditor({
-  worker, dateIso, day, breakSettings, mergeLeave, rosterLocked, timesheetLocked, approved, fortnightDays, branchWorkers, onClose, onSaved, onCopied,
+  worker, dateIso, day, breakSettings, mergeLeave, rosterLocked, timesheetLocked, approved, rosterAccess, timesheetAccess, fortnightDays, branchWorkers, onClose, onSaved, onCopied,
 }: DayEditorProps) {
   const id = useId();
-  const rosterReadOnly = approved || rosterLocked;
-  const workedReadOnly = approved || timesheetLocked;
 
   const [saved, setSaved] = useState<Saved>(() => ({ roster: day?.roster ?? [], timesheet: day?.timesheet ?? [], note: day?.note ?? '' }));
-  const isFreshDay = (s: Saved) => !approved && !rosterLocked && !timesheetLocked && s.roster.length === 0 && s.timesheet.length === 0;
+  // A side can be changed with the permission that matches what is on it: create for an empty side, edit for one with entries.
+  const mayChange = (access: SideAccess, entries: Entry[]) => (entries.length === 0 ? access.create : access.edit);
+  const rosterPermitted = mayChange(rosterAccess, saved.roster);
+  const workedPermitted = timesheetAccess.view && mayChange(timesheetAccess, saved.timesheet);
+  const rosterReadOnly = approved || rosterLocked || !rosterPermitted;
+  const workedReadOnly = approved || timesheetLocked || !workedPermitted;
+  const anyWritable = !rosterReadOnly || !workedReadOnly;
+  const showWorked = timesheetAccess.view;
+  // Where a brand-new day may go: only to the sides the person can create on.
+  const targets = TARGETS.filter(t => (t.value !== 'TIMESHEET' || timesheetAccess.create) && (t.value !== 'ROSTER' || rosterAccess.create)
+    && (t.value !== 'BOTH' || (rosterAccess.create && timesheetAccess.create)));
+  const isFreshDay = (s: Saved) => !approved && !rosterLocked && !timesheetLocked && targets.length > 0 && s.roster.length === 0 && s.timesheet.length === 0;
   // A day with nothing on it yet is entered as one list, with an explicit choice of where it goes.
   const [fresh, setFresh] = useState(() => isFreshDay(saved));
-  const [target, setTarget] = useState<Scope>('ROSTER');
+  const [target, setTarget] = useState<Scope>(() => targets[0]?.value ?? 'ROSTER');
   const [rosterLines, setRosterLines] = useState<DraftLine[]>(() => linesFor(saved.roster));
   const [workedLines, setWorkedLines] = useState<DraftLine[]>(() => linesFor(saved.timesheet));
   const [note, setNote] = useState(saved.note);
@@ -103,7 +124,7 @@ export default function DayEditor({
 
   const rosterChanged = !rosterReadOnly && partKey(rosterEntries) !== partKey(saved.roster);
   const workedChanged = !workedReadOnly && partKey(workedEntries) !== partKey(saved.timesheet);
-  const noteChanged = !approved && note.trim() !== saved.note.trim();
+  const noteChanged = !approved && anyWritable && note.trim() !== saved.note.trim();
   const scope: Scope | null = rosterChanged && workedChanged ? 'BOTH'
     : rosterChanged ? 'ROSTER'
       : workedChanged ? 'TIMESHEET'
@@ -130,7 +151,8 @@ export default function DayEditor({
 
   const blockReason = approved
     ? 'This timesheet is approved. Reopen the timesheet to change it.'
-    : problem || (scope === null ? 'No changes yet.' : null);
+    : !anyWritable ? 'You can view this day but not change it.'
+      : problem || (scope === null ? 'No changes yet.' : null);
 
   const saveLabel = rosterChanged && workedChanged ? 'Save roster and worked hours'
     : rosterChanged ? 'Save roster'
@@ -227,6 +249,9 @@ export default function DayEditor({
   const lockReason = (part: Part): string | null => {
     if (approved) return null;
     const branch = worker.location_name ?? 'this branch';
+    // A lock is the reason shown when there is one; otherwise it is the person's access.
+    if (part === 'roster' && !rosterLocked && !rosterPermitted) return `Your access lets you view the roster for ${branch}, not change it.`;
+    if (part === 'timesheet' && !timesheetLocked && !workedPermitted) return `Your access lets you view worked hours for ${branch}, not change them.`;
     if (part === 'roster' && rosterLocked) return `The roster for ${branch} is locked for this pay period.`;
     if (part === 'timesheet' && timesheetLocked) return `Timesheets for ${branch} are locked for this pay period.`;
     return null;
@@ -308,13 +333,13 @@ export default function DayEditor({
 
   const renderFresh = () => {
     const part: Part = target === 'TIMESHEET' ? 'timesheet' : 'roster';
-    const current = TARGETS.find(t => t.value === target)!;
+    const current = targets.find(t => t.value === target) ?? targets[0];
     return (
       <>
         <fieldset className="mb-3">
           <legend className="text-xs font-semibold text-[var(--text)] mb-1.5">Add to</legend>
-          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]">
-            {TARGETS.map(t => (
+          <div className={`grid ${targets.length === 3 ? 'grid-cols-3' : targets.length === 2 ? 'grid-cols-2' : 'grid-cols-1'} gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]`}>
+            {targets.map(t => (
               <label
                 key={t.value}
                 className="flex items-center justify-center text-center min-h-11 md:min-h-9 px-2 rounded-lg text-xs font-semibold text-[var(--muted)] cursor-pointer select-none has-[:checked]:bg-[var(--panel)] has-[:checked]:text-[var(--text)] has-[:checked]:shadow-sm has-[:checked]:ring-1 has-[:checked]:ring-[var(--border)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]"
@@ -394,7 +419,7 @@ export default function DayEditor({
               <button type="button" onClick={requestClose} disabled={saving} className={`${buttonClass.secondary} max-md:flex-1 max-md:h-11`}>
                 {scope ? 'Cancel' : 'Close'}
               </button>
-              <button
+              {anyWritable && <button
                 type="submit"
                 data-tour="save-day"
                 disabled={Boolean(blockReason) || saving}
@@ -402,7 +427,7 @@ export default function DayEditor({
                 className={`${buttonClass.primary} max-md:flex-1 max-md:h-11`}
               >
                 {saving ? 'Saving…' : saveLabel}
-              </button>
+              </button>}
             </div>
           </div>
         </div>
@@ -419,7 +444,7 @@ export default function DayEditor({
         {fresh ? renderFresh() : (
           <>
             {renderPart('roster')}
-            {renderPart('timesheet')}
+            {showWorked && renderPart('timesheet')}
           </>
         )}
 
@@ -433,14 +458,14 @@ export default function DayEditor({
               rows={2}
               maxLength={500}
               value={note}
-              readOnly={approved}
+              readOnly={approved || !anyWritable}
               placeholder="e.g. Covering for Rich"
               onChange={e => { setNote(e.target.value); setServerError(null); }}
               className="w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-lg px-2.5 py-2 text-base md:text-xs text-[var(--text)] outline-none focus:border-[var(--primary)] focus:ring-1 focus:ring-[var(--primary)] read-only:opacity-70 resize-y"
             />
           </div>
         ) : (
-          !approved && (
+          !approved && anyWritable && (
             <button type="button" onClick={() => setNoteOpen(true)} className={`${buttonClass.quiet} max-md:h-11 -ml-2.5`}>
               <MessageSquarePlus className="w-3.5 h-3.5" aria-hidden="true" /> Add a note
             </button>
@@ -448,7 +473,7 @@ export default function DayEditor({
         )}
 
         {/* Copy this day's roster */}
-        <div className="border-t border-[var(--border)] pt-3">
+        {(rosterAccess.create || rosterAccess.edit) && <div className="border-t border-[var(--border)] pt-3">
           <button
             type="button"
             onClick={() => setShowCopy(v => !v)}
@@ -476,10 +501,10 @@ export default function DayEditor({
               />
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Breaks: this day's break is on each work line above; these set it across the fortnight */}
-        <section data-tour="break-controls" aria-labelledby={`${id}-breaks`} className="rounded-xl border border-[var(--border)] p-3 space-y-2">
+        {rosterAccess.edit && <section data-tour="break-controls" aria-labelledby={`${id}-breaks`} className="rounded-xl border border-[var(--border)] p-3 space-y-2">
           <h3 id={`${id}-breaks`} className="text-sm font-bold text-[var(--text)] flex items-center gap-1">
             <Coffee className="w-4 h-4 text-[var(--muted)]" aria-hidden="true" /> Breaks
             <HelpTip label="Breaks">
@@ -495,7 +520,7 @@ export default function DayEditor({
               Choose days…
             </button>
           </div>
-        </section>
+        </section>}
       </div>
 
       {applyBreakMode && (

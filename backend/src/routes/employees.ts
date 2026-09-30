@@ -154,6 +154,13 @@ router.put('/:id', requirePermission(Permission.EMPLOYEES_EDIT), async (req: Aut
         const ctx = req.auth!;
         const worker = await loadWorker(ctx, Permission.EMPLOYEES_EDIT, req.params.id);
         const fields = readWorkerFields(req.body);
+        // Contact details belong to employees.view. Someone who may edit a worker but not see their
+        // contact details cannot have been shown them, so saving must not blank or replace them.
+        if (!canAccessBranch(ctx, Permission.EMPLOYEES_VIEW, worker.location_id)) {
+            const stored = (await query('SELECT email, phone FROM employees WHERE id = $1 AND org_id = $2', [worker.id, ctx.orgId])).rows[0];
+            fields.email = stored.email;
+            fields.phone = stored.phone;
+        }
 
         // Moving a worker needs access to the branch they are in (loadWorker) and the branch they are going to.
         // Without a location_id in the body the worker stays where they are.

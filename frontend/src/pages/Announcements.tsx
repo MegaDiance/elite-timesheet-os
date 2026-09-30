@@ -176,7 +176,7 @@ export default function Announcements() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-[var(--text)] tracking-tight">Team chat</h1>
           <p className="text-xs sm:text-sm text-[var(--muted)] mt-1">
-            Notices and discussion for your organisation's Owner and Branch Admins. Workers do not see this page.
+            Notices and discussion for the people who manage your organisation. Workers do not see this page.
           </p>
         </div>
         <Button
@@ -245,7 +245,7 @@ export default function Announcements() {
               <MessageSquare className="w-6 h-6" />
             </div>
             <div className="font-bold text-sm text-[var(--text)]">No messages yet</div>
-            <div className="text-xs mt-1">Messages from the Owner and Branch Admins will appear here.</div>
+            <div className="text-xs mt-1">Messages from the people who manage your organisation will appear here.</div>
           </div>
         ) : (
           posts.map(post => {

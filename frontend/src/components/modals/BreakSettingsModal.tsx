@@ -11,7 +11,7 @@ interface BreakSettingsModalProps {
   onClose: () => void;
 }
 
-/** Organisation Owner only: the unpaid break deducted from each day's hours. */
+/** Needs organisation.edit: the unpaid break deducted from each day's hours. */
 export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, onClose }) => {
   const [form, setForm] = useState({
     break_mins_weekday: 30,

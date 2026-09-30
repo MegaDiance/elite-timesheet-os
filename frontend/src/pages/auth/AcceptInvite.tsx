@@ -10,29 +10,39 @@ import { friendlyError } from '../../services/errors';
 interface Invitation {
   email: string;
   organisation_name: string;
-  /** Branch Admin invitations only. */
+  /** Team invitations only: the role offered and where it applies. */
+  role_name?: string;
+  all_branches?: boolean;
   branches?: string[];
   account_exists: boolean;
 }
 
-type InviteKind = 'branch-admin' | 'employee';
+type InviteKind = 'team' | 'employee';
 
 const API_BASE: Record<InviteKind, string> = {
-  'branch-admin': '/branch-admins/invitations',
+  team: '/team/invitations',
   employee: '/employee-accounts/invitations',
 };
 
+/** "all branches", "Melbourne", "Melbourne and Sydney", "Melbourne, Sydney and Perth". */
+const whereItApplies = (inv: Invitation): string => {
+  if (inv.all_branches) return 'all branches';
+  const names = inv.branches ?? [];
+  if (names.length <= 1) return names[0] ?? 'the branches you are given';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+};
+
 const INVALID_MESSAGE: Record<InviteKind, string> = {
-  'branch-admin': 'This invitation has expired, has already been used or isn’t valid. Ask the Organisation Owner to send you a new one.',
+  team: 'This invitation has expired, has already been used or isn’t valid. Ask the Organisation Owner to send you a new one.',
   employee: 'This invitation has expired, has already been used or isn’t valid. Ask your manager to send you a new one.',
 };
 
 /**
- * Accepts a Branch Admin invitation (/accept-invite) or an employee portal invitation
+ * Accepts a team invitation, a role in the organisation (/accept-invite) or an employee portal invitation
  * (/accept-employee-invite). Accepting never signs anyone in: the server answers with the
  * organisation's own sign-in link, and the person signs in there afterwards.
  */
-export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteKind }) {
+export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
   const [searchParams] = useSearchParams();
   const token = (searchParams.get('token') || '').trim();
 
@@ -157,11 +167,11 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
         <div className="w-12 h-12 rounded-full bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center mx-auto">
           <CheckCircle2 className="w-6 h-6" />
         </div>
-        <h1 className="text-xl font-bold text-[var(--text)]">{kind === 'employee' ? 'Your account is ready' : 'You’re a Branch Admin'}</h1>
+        <h1 className="text-xl font-bold text-[var(--text)]">{kind === 'employee' ? 'Your account is ready' : `You’re now ${invitation.role_name ?? 'a team member'}`}</h1>
         <p className="text-xs text-[var(--muted)] leading-relaxed">
           {kind === 'employee'
             ? `You can now see your schedule for ${invitation.organisation_name}. Sign in to get started, and bookmark the sign-in page — it’s your organisation’s own link.`
-            : `You can now manage ${(invitation.branches ?? []).join(', ')} for ${invitation.organisation_name}. Sign in to get started.`}
+            : `You now have the ${invitation.role_name ?? 'team'} role for ${invitation.organisation_name}, covering ${whereItApplies(invitation)}. Sign in to get started.`}
         </p>
         {loginPath === 'none' ? (
           <p className="text-sm text-[var(--text)] bg-[var(--panel-subtle)] rounded-md p-3">
@@ -187,8 +197,9 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
             <><strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to SimpleHours to see your schedule.</>
           ) : (
             <>
-              <strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to be a Branch Admin for:{' '}
-              <strong className="text-[var(--text)]">{(invitation.branches ?? []).join(', ')}</strong>
+              You’ve been invited to join <strong className="text-[var(--text)]">{invitation.organisation_name}</strong> as{' '}
+              <strong className="text-[var(--text)]">{invitation.role_name ?? 'a team member'}</strong>, covering{' '}
+              <strong className="text-[var(--text)]">{whereItApplies(invitation)}</strong>.
             </>
           )}
         </p>
@@ -202,7 +213,7 @@ export default function AcceptInvite({ kind = 'branch-admin' }: { kind?: InviteK
           <div className="text-[var(--muted)] leading-relaxed">
             {kind === 'employee'
               ? 'You’ll be able to see your roster and request leave, and — if your organisation allows it — record your own hours.'
-              : 'As a Branch Admin you’ll manage the workers, roster and timesheets of these branches.'}
+              : `Your access covers ${whereItApplies(invitation)}. You’ll only see and do what your role allows.`}
           </div>
         </div>
 

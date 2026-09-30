@@ -9,7 +9,6 @@ import {
   Power,
   Search,
   ShieldCheck,
-  UserCog,
   Users,
 } from 'lucide-react';
 import api from '../services/apiClient';
@@ -32,6 +31,7 @@ interface BranchItem {
   timezone: string | null;
   is_active: boolean;
   active_staff_count: number;
+  /** Everyone with access to this branch. Empty unless the caller manages the team, so an empty list does not mean nobody. */
   admins: Array<{ id: string; email: string; full_name: string | null }>;
 }
 
@@ -57,7 +57,7 @@ export default function Locations() {
   const toast = useToast();
   const { can, refresh } = useAccess();
   const canManage = can('branches.manage');
-  const canManageAdmins = can('branch_admins.manage');
+  const canSeeTeam = can('users.manage');
 
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -202,17 +202,17 @@ export default function Locations() {
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Branches</h1>
           <p className="text-xs text-[var(--muted)] mt-1 max-w-2xl">
             {canManage
-              ? 'Each worker belongs to one branch. Branch Admins manage the workers, roster and timesheets of the branches assigned to them.'
-              : 'These are the branches assigned to you. Only the Organisation Owner can add or change branches.'}
+              ? 'Each worker belongs to one branch. Give people access to a branch by assigning them a role for it.'
+              : 'These are the branches your roles cover. Adding or changing branches needs more access than your roles include.'}
           </p>
         </div>
 
         {canManage && (
           <div className="flex items-center gap-2">
-            {canManageAdmins && (
-              <Link to="/branch-admins">
-                <Button variant="outline" size="md" leftIcon={<UserCog className="w-4 h-4" />}>
-                  Branch Admins
+            {canSeeTeam && (
+              <Link to="/settings/roles">
+                <Button variant="outline" size="md" leftIcon={<ShieldCheck className="w-4 h-4" />}>
+                  Roles &amp; permissions
                 </Button>
               </Link>
             )}
@@ -380,34 +380,34 @@ export default function Locations() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-semibold text-[var(--muted)] uppercase tracking-wider">Branch Admins</span>
-                  {canManageAdmins && (
-                    <Link to="/branch-admins" className="text-[var(--primary-text)] hover:underline font-bold">
+              {canSeeTeam && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-semibold text-[var(--muted)] uppercase tracking-wider">Who has access</span>
+                    <Link to="/settings/roles" className="text-[var(--primary-text)] hover:underline font-bold">
                       Manage
                     </Link>
+                  </div>
+                  {branch.admins.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {branch.admins.map(admin => (
+                        <span
+                          key={admin.id}
+                          title={admin.email}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-[11px] font-medium text-[var(--text)]"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)]" />
+                          <span className="truncate max-w-[180px]">{admin.full_name || admin.email}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-[var(--muted)] italic">
+                      No team member has a role for this branch. The organisation owner has access to every branch.
+                    </p>
                   )}
                 </div>
-                {branch.admins.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {branch.admins.map(admin => (
-                      <span
-                        key={admin.id}
-                        title={admin.email}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--panel-subtle)] border border-[var(--border)] text-[11px] font-medium text-[var(--text)]"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)]" />
-                        <span className="truncate max-w-[180px]">{admin.full_name || admin.email}</span>
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-[11px] text-[var(--muted)] italic">
-                    No Branch Admin assigned. The Organisation Owner manages this branch.
-                  </p>
-                )}
-              </div>
+              )}
             </Card>
           ))}
         </div>
@@ -466,7 +466,7 @@ export default function Locations() {
         onClose={() => setDeactivating(null)}
         onConfirm={handleConfirmDeactivate}
         title={`Deactivate ${deactivating?.name ?? 'branch'}?`}
-        message="Branch Admins lose access to this branch straight away. Its workers, rosters, timesheets and audit history are kept, and you can reactivate it at any time."
+        message="People who only have access through this branch lose it straight away. Its workers, rosters, timesheets and audit history are kept, and you can reactivate it at any time."
         confirmLabel="Deactivate branch"
         variant="danger"
         loading={Boolean(deactivating) && togglingId === deactivating?.id}

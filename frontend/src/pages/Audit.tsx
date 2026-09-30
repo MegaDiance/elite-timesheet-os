@@ -33,6 +33,36 @@ const humanise = (code: string | null) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
 
+/** Plain-language names for actions that read badly when just lower-cased. Older entries keep their wording. */
+const ACTION_LABEL: Record<string, string> = {
+  ROLE_CREATED: 'Role created',
+  ROLE_UPDATED: 'Role updated',
+  ROLE_PERMISSIONS_CHANGED: 'Role permissions changed',
+  ROLE_DELETED: 'Role deleted',
+  ROLE_ASSIGNED: 'Role given to a person',
+  ROLE_REMOVED: 'Role taken from a person',
+  ROLE_SCOPE_CHANGED: 'Role’s branches changed',
+  USER_ACCESS_REMOVED: 'All access removed from a person',
+  TEAM_MEMBER_INVITED: 'Team member invited',
+  TEAM_INVITATION_ACCEPTED: 'Team invitation accepted',
+  TEAM_INVITATION_REVOKED: 'Team invitation cancelled',
+  TEAM_PASSWORD_RESET_LINK_CREATED: 'Password reset link created for a team member',
+  ACCESS_ESCALATION_BLOCKED: 'Attempt to give more access than allowed was blocked',
+  REAUTHENTICATION_SUCCEEDED: 'Password re-entered',
+  REAUTHENTICATION_FAILED: 'Password re-entry failed',
+  ORGANISATION_SWITCHED_AWAY: 'Switched to another organisation',
+  ORGANISATION_SWITCHED_IN: 'Switched in from another organisation',
+  OWNERSHIP_TRANSFERRED: 'Ownership transferred',
+  // From before roles were flexible: these stay in the history under their old names.
+  BRANCH_ADMIN_INVITED: 'Branch Admin invited',
+  BRANCH_ADMIN_INVITATION_ACCEPTED: 'Branch Admin invitation accepted',
+  BRANCH_ADMIN_INVITATION_REVOKED: 'Branch Admin invitation cancelled',
+  BRANCH_ADMIN_BRANCHES_CHANGED: 'Branch Admin’s branches changed',
+  BRANCH_ADMIN_REMOVED: 'Branch Admin removed',
+  BRANCH_ADMIN_PASSWORD_RESET_LINK_CREATED: 'Password reset link created for a Branch Admin',
+};
+const actionLabel = (code: string | null) => (code && ACTION_LABEL[code]) || humanise(code);
+
 /** Details are free text or a small JSON object; objects are shown as "key: value" pairs. */
 function formatDetails(details: string | null): string {
   if (!details) return '';
@@ -48,7 +78,7 @@ function formatDetails(details: string | null): string {
 }
 
 function actionTone(action: string): string {
-  if (/DELETE|REMOVE|REVOKE|DEACTIVATE|FAILED|REJECT/.test(action)) return 'bg-[var(--danger-light)] text-[var(--danger)]';
+  if (/DELETE|REMOVE|REVOKE|DEACTIVATE|FAILED|REJECT|BLOCKED/.test(action)) return 'bg-[var(--danger-light)] text-[var(--danger)]';
   if (/CREATE|ADD|APPROVE|INVITE|ACCEPT|REACTIVATE|CONFIGURED/.test(action)) return 'bg-[var(--success-light)] text-[var(--success)]';
   if (/UPDATE|CHANGE|LOCK|MOVE|TRANSFER|REGENERATE|REOPEN/.test(action)) return 'bg-[var(--primary-light)] text-[var(--primary-text)]';
   return 'bg-[var(--glass-8)] text-[var(--muted)]';
@@ -199,7 +229,7 @@ export default function Audit() {
           <Filter className="w-3.5 h-3.5 text-[var(--muted)]" />
           <select aria-label="Action" value={actionFilter} onChange={e => { setActionFilter(e.target.value); setVisible(PAGE_SIZE); }} className={`${controlClass} cursor-pointer`}>
             <option value="">All actions</option>
-            {actions.map(a => <option key={a} value={a}>{humanise(a)}</option>)}
+            {actions.map(a => <option key={a} value={a}>{actionLabel(a)}</option>)}
           </select>
           <select aria-label="Entity" value={entityFilter} onChange={e => { setEntityFilter(e.target.value); setVisible(PAGE_SIZE); }} className={`${controlClass} cursor-pointer`}>
             <option value="">All record types</option>
@@ -261,7 +291,7 @@ export default function Audit() {
                     </td>
                     <td className="py-3 px-4">
                       <span title={log.action} className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap ${actionTone(log.action)}`}>
-                        {humanise(log.action)}
+                        {actionLabel(log.action)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -308,7 +338,7 @@ export default function Audit() {
               return (
                 <li key={log.id} className="p-4 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
-                    <span title={log.action} className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${actionTone(log.action)}`}>{humanise(log.action)}</span>
+                    <span title={log.action} className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${actionTone(log.action)}`}>{actionLabel(log.action)}</span>
                     <span className="text-xs text-[var(--muted)] text-right">{time ? new Date(time).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</span>
                   </div>
                   <p className="text-sm text-[var(--text)]"><span className="font-semibold">{actorLabel(log)}</span>{log.entity_type && <span className="text-[var(--muted)]"> · {humanise(log.entity_type)}</span>}{branch && <span className="text-[var(--muted)]"> · {branch}</span>}</p>

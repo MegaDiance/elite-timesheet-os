@@ -21,7 +21,7 @@ const EMPTY_FORM = {
   current_password: '',
 };
 
-/** Organisation Owner only: sets or clears the shared passwords that can lock and unlock rosters and timesheets. */
+/** Needs security.manage: sets or clears the shared passwords that can lock and unlock rosters and timesheets. */
 export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
   isOpen,
   onClose,

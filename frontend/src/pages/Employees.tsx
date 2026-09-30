@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
-import { useAccess, type Branch } from '../hooks/useAccess';
+import { useAccess, type Branch, type Permission } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -67,7 +67,11 @@ function csvCell(value: unknown): string {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function WorkerContact({ worker }: { worker: Worker }) {
+function WorkerContact({ worker, canSee }: { worker: Worker; canSee: boolean }) {
+  // Without permission to see workers' details in this branch the server leaves them out, so say that rather than "none".
+  if (!canSee && !worker.email && !worker.phone) {
+    return <div className="mt-0.5 text-xs text-[var(--muted)]">Contact details are hidden for your access</div>;
+  }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-[var(--muted)]">
       {worker.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" aria-hidden="true" />{worker.email}</span>}
@@ -93,7 +97,17 @@ export default function Employees() {
   const { activeBranchId } = useActiveBranch();
   const branches = access?.branches ?? [];
   const activeBranches = branches.filter(b => b.is_active);
-  const canManageHolidays = can('holidays.manage');
+  const canManageHolidays = can('organisation.edit');
+  // Each worker belongs to one branch and every permission is held per branch, so actions are asked per worker.
+  const inBranch = (permission: Permission, worker: Worker) => can(permission, worker.location_id);
+  const canSeeContact = (worker: Worker) => inBranch('employees.view', worker);
+  // Editing sends the contact details back, so it is only offered where they are visible (otherwise saving would blank them).
+  const canEditWorker = (worker: Worker) => inBranch('employees.edit', worker) && canSeeContact(worker);
+  const canEditTemplate = (worker: Worker) => inBranch('rosters.edit', worker);
+  const canManageAccess = (worker: Worker) => inBranch('employees.manage_access', worker);
+  const canArchive = (worker: Worker) => inBranch('employees.archive', worker);
+  const hasActions = (worker: Worker) => canEditWorker(worker) || canEditTemplate(worker) || canManageAccess(worker) || canArchive(worker);
+  const canAddWorker = can('employees.create');
 
   // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
   const [branchFilter, setBranchFilter] = useState(activeBranchId || '');
@@ -206,9 +220,12 @@ export default function Employees() {
     URL.revokeObjectURL(url);
   };
 
-  const defaultBranchId = activeBranches.some(b => b.id === branchFilter)
+  // A worker can only be added to (or moved into) a branch where the person may do that.
+  const addBranches = activeBranches.filter(b => can('employees.create', b.id));
+  const defaultBranchId = addBranches.some(b => b.id === branchFilter)
     ? branchFilter
-    : activeBranches.length === 1 ? activeBranches[0].id : '';
+    : addBranches.length === 1 ? addBranches[0].id : '';
+  const anyActions = canAddWorker || workers.some(hasActions);
 
   /** Everyday actions stay visible; deactivate and delete sit behind "More" so they aren't hit by accident. */
   const workerActions = (worker: Worker, large: boolean) => {
@@ -216,10 +233,10 @@ export default function Employees() {
     const btn = `${large ? 'h-11 px-3 text-sm' : 'h-8 px-2.5 text-xs'} rounded-lg font-semibold border border-[var(--border)] bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--hover-row)] cursor-pointer inline-flex items-center`;
     return (
       <div className={`flex flex-wrap gap-1.5 ${large ? '' : 'justify-end'}`}>
-        <button type="button" onClick={() => setTemplateWorker(worker)} className={btn} aria-label={`Default roster for ${worker.full_name}`}>Default roster</button>
-        <button type="button" onClick={() => setPortalWorkerId(worker.id)} className={btn} aria-label={`Portal access for ${worker.full_name}`}>Portal access</button>
-        <button type="button" onClick={() => setFormWorker(worker)} className={btn} aria-label={`Edit ${worker.full_name}`}>Edit</button>
-        <details className="relative">
+        {canEditTemplate(worker) && <button type="button" onClick={() => setTemplateWorker(worker)} className={btn} aria-label={`Default roster for ${worker.full_name}`}>Default roster</button>}
+        {canManageAccess(worker) && <button type="button" onClick={() => setPortalWorkerId(worker.id)} className={btn} aria-label={`Portal access for ${worker.full_name}`}>Portal access</button>}
+        {canEditWorker(worker) && <button type="button" onClick={() => setFormWorker(worker)} className={btn} aria-label={`Edit ${worker.full_name}`}>Edit</button>}
+        {canArchive(worker) && <details className="relative">
           <summary className={`${btn} list-none`} aria-label={`More actions for ${worker.full_name}`}>More…</summary>
           <div onClick={e => e.currentTarget.parentElement?.removeAttribute('open')} className="absolute right-0 z-30 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--panel)] shadow-lg p-1">
             {active ? (
@@ -229,7 +246,7 @@ export default function Employees() {
             )}
             <button type="button" onClick={() => setPendingAction({ kind: 'delete', worker })} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--danger)] hover:bg-[var(--danger-light)]">Delete…</button>
           </div>
-        </details>
+        </details>}
       </div>
     );
   };
@@ -241,7 +258,9 @@ export default function Employees() {
         <div>
           <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Workers</h1>
           <p className="text-sm text-[var(--muted)] max-w-2xl">
-            Workers are the people you roster and pay. Keep their details and default roster here, and give them portal access to see their own schedule.
+            Workers are the people you roster and pay. {anyActions
+              ? 'Keep their details and default roster here, and give them portal access to see their own schedule.'
+              : 'You can see the workers in your branches. Changing them needs more access than your roles include.'}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -259,16 +278,18 @@ export default function Employees() {
           >
             Export CSV
           </Button>
-          <Button
-            variant="primary"
-            size="md"
-            onClick={() => setFormWorker('new')}
-            disabled={activeBranches.length === 0}
-            title={activeBranches.length === 0 ? 'An active branch is needed before adding workers' : undefined}
-            leftIcon={<Plus className="w-4 h-4" />}
-          >
-            Add worker
-          </Button>
+          {canAddWorker && (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => setFormWorker('new')}
+              disabled={addBranches.length === 0}
+              title={addBranches.length === 0 ? 'An active branch is needed before adding workers' : undefined}
+              leftIcon={<Plus className="w-4 h-4" />}
+            >
+              Add worker
+            </Button>
+          )}
         </div>
       </div>
 
@@ -326,10 +347,10 @@ export default function Employees() {
             title={q || departmentFilter ? 'No workers match your filters' : 'No workers yet'}
             description={q || departmentFilter
               ? 'Check the spelling, or clear the search and department filter.'
-              : 'Workers are the people you roster and pay. Add your first one, then give them shifts on the Roster.'}
+              : canAddWorker ? 'Workers are the people you roster and pay. Add your first one, then give them shifts on the Roster.' : 'There are no workers in this branch yet.'}
             action={q || departmentFilter
               ? <Button variant="secondary" size="md" onClick={() => { setSearchQuery(''); setDepartmentFilter(''); }}>Clear filters</Button>
-              : activeBranches.length > 0 ? <Button variant="primary" size="md" onClick={() => setFormWorker('new')} leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}>Add worker</Button> : undefined}
+              : canAddWorker && addBranches.length > 0 ? <Button variant="primary" size="md" onClick={() => setFormWorker('new')} leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}>Add worker</Button> : undefined}
           />
         ) : (
           <>
@@ -339,7 +360,7 @@ export default function Employees() {
                   {['Name & contact', 'Branch', 'Department', 'Contract (fortnight)', 'Status'].map(h => (
                     <th key={h} scope="col" className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">{h}</th>
                   ))}
-                  <th scope="col" className="py-3 px-4 text-right text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Actions</th>
+                  {anyActions && <th scope="col" className="py-3 px-4 text-right text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -347,13 +368,13 @@ export default function Employees() {
                   <tr key={worker.id} className={`hover:bg-[var(--hover-row)] border-b border-[var(--border)] last:border-0 ${isActiveWorker(worker) ? '' : 'opacity-70'}`}>
                     <td className="py-3 px-4">
                       <div className="font-bold text-sm text-[var(--text)]">{worker.full_name}</div>
-                      <WorkerContact worker={worker} />
+                      <WorkerContact worker={worker} canSee={canSeeContact(worker)} />
                     </td>
                     <td className="py-3 px-4 text-sm text-[var(--text)]">{worker.location_name || '—'}</td>
                     <td className="py-3 px-4 text-sm text-[var(--muted)]">{worker.department || '—'}</td>
                     <td className="py-3 px-4 text-sm font-semibold text-[var(--text)]">{Number(worker.contracted_hours ?? 0)} h</td>
                     <td className="py-3 px-4"><WorkerBadges worker={worker} /></td>
-                    <td className="py-3 px-4">{workerActions(worker, false)}</td>
+                    {anyActions && <td className="py-3 px-4">{workerActions(worker, false)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -368,11 +389,11 @@ export default function Employees() {
                       <p className="text-sm text-[var(--muted)]">
                         {[worker.location_name, worker.department, `${Number(worker.contracted_hours ?? 0)} h a fortnight`].filter(Boolean).join(' · ')}
                       </p>
-                      <WorkerContact worker={worker} />
+                      <WorkerContact worker={worker} canSee={canSeeContact(worker)} />
                     </div>
                     <WorkerBadges worker={worker} />
                   </div>
-                  {workerActions(worker, true)}
+                  {hasActions(worker) && workerActions(worker, true)}
                 </li>
               ))}
             </ul>
@@ -383,7 +404,7 @@ export default function Employees() {
       {formWorker && (
         <WorkerFormModal
           worker={formWorker === 'new' ? null : formWorker}
-          branches={branches}
+          branches={formWorker === 'new' ? addBranches : branches.filter(b => can('employees.edit', b.id) || b.id === formWorker.location_id)}
           defaultBranchId={defaultBranchId}
           onClose={() => setFormWorker(null)}
           onSaved={(message, warning) => {

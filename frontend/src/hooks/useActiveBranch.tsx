@@ -1,5 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAccess, type Branch } from './useAccess';
+import { forgetOrganisationState } from '../services/sessionCache';
+import { holdsHere, type Permission } from './permissions';
 
 /**
  * The one branch the app is currently working inside, shared by every page (Dashboard, Workers,
@@ -60,10 +62,18 @@ export function useActiveBranch(): ActiveBranchValue {
   return value;
 }
 
-/** Clears every organisation's remembered branch (used on sign-out, so a later sign-in starts fresh). */
+/** Clears every organisation's remembered branch (used on sign-out and organisation switch, so the next session starts fresh). */
 export function forgetActiveBranches() {
-  for (let i = localStorage.length - 1; i >= 0; i--) {
-    const key = localStorage.key(i);
-    if (key?.startsWith('active_branch_')) localStorage.removeItem(key);
-  }
+  forgetOrganisationState();
+}
+
+/**
+ * `can(permission)` for a page that acts on the active branch: branch-level permissions (employees,
+ * rosters, timesheets, leave, payroll) are asked for the active branch, everything else across the
+ * organisation. Display only; the server authorises each request against the record's own branch.
+ */
+export function useCan(): (permission: Permission) => boolean {
+  const { access } = useAccess();
+  const { activeBranchId } = useActiveBranch();
+  return useCallback((permission: Permission) => holdsHere(access, permission, activeBranchId), [access, activeBranchId]);
 }

@@ -76,16 +76,18 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function Reports() {
-  const { access } = useAccess();
+  const { access, can } = useAccess();
   const { activeBranchId } = useActiveBranch();
   const toast = useToast();
-  const branches = useMemo(() => access?.branches ?? [], [access]);
+  // Only the branches where the payroll report can be seen are offered.
+  const branches = useMemo(() => (access?.branches ?? []).filter(b => can('payroll.view', b.id)), [access, can]);
 
   // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
   const [branchId, setBranchId] = useState<string>(() => activeBranchId || (access?.branches.length === 1 ? access.branches[0].id : ''));
   useEffect(() => {
     if (activeBranchId) setBranchId(activeBranchId);
   }, [activeBranchId]);
+  const canExport = can('payroll.export', branchId || null);
   const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const [report, setReport] = useState<PayrollReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -206,7 +208,7 @@ export default function Reports() {
             onChange={e => setBranchId(e.target.value)}
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
           >
-            <option value="">All my branches</option>
+            {branches.length > 1 && <option value="">All my branches</option>}
             {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
           </select>
 
@@ -252,7 +254,7 @@ export default function Reports() {
           >
             Refresh
           </Button>
-          <Button
+          {canExport && <Button
             variant="secondary"
             size="sm"
             onClick={exportPdf}
@@ -261,8 +263,8 @@ export default function Reports() {
             leftIcon={<Printer className="w-3.5 h-3.5" aria-hidden="true" />}
           >
             Print / PDF
-          </Button>
-          <Button
+          </Button>}
+          {canExport && <Button
             variant="primary"
             size="sm"
             onClick={exportCsv}
@@ -271,7 +273,7 @@ export default function Reports() {
             leftIcon={<Download className="w-3.5 h-3.5" aria-hidden="true" />}
           >
             Export CSV
-          </Button>
+          </Button>}
         </div>
       </div>
 

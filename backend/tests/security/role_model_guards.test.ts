@@ -99,3 +99,19 @@ describe('The permission catalogue and the built-in roles', () => {
         expect(orgLevel).toEqual(['organisation.view']);
     });
 });
+
+describe('The frontend’s copy of the catalogue matches the backend', () => {
+    const source = fs.readFileSync(path.join(ROOT, 'frontend/src/hooks/permissions.ts'), 'utf8');
+    const keysIn = (region: string) => [...region.matchAll(/'([a-z_]+\.[a-z_]+)'/g)].map(m => m[1]).sort();
+
+    it('knows exactly the same permission keys', () => {
+        const union = source.slice(source.indexOf('export type Permission ='), source.indexOf(';', source.indexOf('export type Permission =')));
+        expect(keysIn(union)).toEqual(PERMISSION_CATALOGUE.map(p => p.key).sort());
+    });
+
+    it('agrees on which permissions are held per branch', () => {
+        const start = source.indexOf('BRANCH_LEVEL_PERMISSIONS');
+        const region = source.slice(start, source.indexOf(']);', start));
+        expect(keysIn(region)).toEqual(PERMISSION_CATALOGUE.filter(p => p.level === 'branch').map(p => p.key).sort());
+    });
+});

@@ -556,10 +556,11 @@ router.post('/switch-organisation', requireAuth, async (req: AuthRequest, res: R
         }
 
         const clientInfo = parseClientInfo(req);
-        // The password re-entry belongs to this switch only: it dies with the old session.
-        await revokeSession(ctx.sessionId);
+        // The new session is created first, so a switch that cannot complete leaves the person signed in where they were.
         const data = await completeLogin({ id: ctx.userId, email: ctx.email }, organisation_id, clientInfo, 'organisation_switch', 'SUCCESS');
         if (!data) return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You do not have access to that organisation.' } });
+        // The password re-entry belongs to this switch only: it dies with the old session.
+        await revokeSession(ctx.sessionId);
 
         // Recorded in both organisations' audit trails, each showing only its own side of the switch.
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'ORGANISATION_SWITCHED_AWAY', entityType: 'sessions', entityId: ctx.sessionId, details: `Switched to another organisation`, ip: clientInfo.ip });

@@ -34,7 +34,7 @@ const rectOf = (el: HTMLElement): Rect => {
  * Shown once per person (stored on their account), and available again from Help.
  */
 export default function GuidedTour() {
-  const { access } = useAccess();
+  const { access, can, isEmployeeOnly } = useAccess();
   const navigate = useNavigate();
   const location = useLocation();
   const [running, setRunning] = useState(false);
@@ -47,10 +47,11 @@ export default function GuidedTour() {
 
   const steps: TourStep[] = useMemo(() => {
     if (!access) return [];
-    if (access.role !== 'EMPLOYEE') return MANAGER_TOUR;
+    // A step is only shown when the person can see what it points at (and do what it asks).
+    if (access.is_manager) return MANAGER_TOUR.filter(step => !step.needsAny || step.needsAny.some(p => can(p)));
     const withTimesheet = access.employee_capabilities?.can_submit_timesheets;
     return withTimesheet ? [EMPLOYEE_TOUR[0], EMPLOYEE_TOUR[1], EMPLOYEE_TIMESHEET_STEP, ...EMPLOYEE_TOUR.slice(2)] : EMPLOYEE_TOUR;
-  }, [access]);
+  }, [access, can]);
   const step = running ? steps[index] : undefined;
 
   const start = useCallback(() => {
@@ -233,7 +234,7 @@ export default function GuidedTour() {
             {(Object.keys(TIMESHEET_STATE) as TimesheetState[]).map(s => (
               <li key={s} className="flex items-start gap-2 text-xs">
                 <span className="shrink-0 w-20"><TimesheetStatusBadge status={s} /></span>
-                <span className="text-[var(--muted)]">{access?.role === 'EMPLOYEE' ? TIMESHEET_STATE[s].employeeMeaning : TIMESHEET_STATE[s].meaning}</span>
+                <span className="text-[var(--muted)]">{isEmployeeOnly ? TIMESHEET_STATE[s].employeeMeaning : TIMESHEET_STATE[s].meaning}</span>
               </li>
             ))}
           </ol>

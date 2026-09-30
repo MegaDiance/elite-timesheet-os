@@ -13,10 +13,11 @@ import {
   RefreshCw,
   ShieldCheck,
   Sliders,
+  UserCog,
   UserRound,
 } from 'lucide-react';
 import api from '../services/apiClient';
-import { useAccess, ROLE_LABEL } from '../hooks/useAccess';
+import { useAccess, roleSummary } from '../hooks/useAccess';
 import { rememberPortal } from '../services/portal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -50,11 +51,11 @@ interface OrganisationSettings {
   has_timesheet_lock_password: boolean;
 }
 
-interface BranchAdminOption {
+/** Someone who could become the owner: a team member who holds a role here (one entry of GET /team `members`). */
+interface TransferCandidate {
   id: string;
   email: string;
   full_name: string | null;
-  is_active: boolean;
 }
 
 type TabId = 'account' | 'organisation' | 'workforce' | 'security' | 'ownership';
@@ -113,19 +114,20 @@ export default function Settings() {
   const toast = useToast();
   const navigate = useNavigate();
   const { access, can, refresh } = useAccess();
-  const canManageOrganisation = can('organisation.manage');
-  const canManageWorkforce = can('timesheets.manage');
+  const canEditOrganisation = can('organisation.edit');
+  const canViewOrganisation = can('organisation.view') || canEditOrganisation;
+  const canManageWorkforce = can('leave.manage');
   const canManageSecurity = can('security.manage');
+  const canSeeRoles = can('roles.manage') || can('users.manage');
+  const isOwner = access?.is_owner === true;
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabs: TabItem[] = [
     { id: 'account', label: 'My account', icon: <UserRound className="w-3.5 h-3.5" /> },
-    ...(canManageOrganisation ? [{ id: 'organisation', label: 'Organisation', icon: <Building2 className="w-3.5 h-3.5" /> }] : []),
+    ...(canViewOrganisation ? [{ id: 'organisation', label: 'Organisation', icon: <Building2 className="w-3.5 h-3.5" /> }] : []),
     ...(canManageWorkforce ? [{ id: 'workforce', label: 'Workforce', icon: <Sliders className="w-3.5 h-3.5" /> }] : []),
-    ...(canManageSecurity ? [
-      { id: 'security', label: 'Security', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
-      { id: 'ownership', label: 'Ownership', icon: <ArrowRightLeft className="w-3.5 h-3.5" /> },
-    ] : []),
+    ...(canManageSecurity ? [{ id: 'security', label: 'Security', icon: <ShieldCheck className="w-3.5 h-3.5" /> }] : []),
+    ...(isOwner ? [{ id: 'ownership', label: 'Ownership', icon: <ArrowRightLeft className="w-3.5 h-3.5" /> }] : []),
   ];
   const requestedTab = searchParams.get('tab');
   const activeTab = (tabs.some(t => t.id === requestedTab) ? requestedTab : 'account') as TabId;
@@ -153,7 +155,7 @@ export default function Settings() {
   const [copied, setCopied] = useState(false);
 
   // Ownership transfer
-  const [branchAdmins, setBranchAdmins] = useState<BranchAdminOption[] | null>(null);
+  const [candidates, setCandidates] = useState<TransferCandidate[] | null>(null);
   const [transferTo, setTransferTo] = useState('');
   const [transferPassword, setTransferPassword] = useState('');
   const [transferError, setTransferError] = useState<string | null>(null);
@@ -172,18 +174,24 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (canManageOrganisation || canManageWorkforce || canManageSecurity) fetchOrganisation();
-  }, [canManageOrganisation, canManageWorkforce, canManageSecurity]);
+    if (canViewOrganisation || canManageWorkforce || canManageSecurity) fetchOrganisation();
+  }, [canViewOrganisation, canManageWorkforce, canManageSecurity]);
 
+  // Ownership can only go to a team member who holds a role here (the owner sees the team list).
   useEffect(() => {
-    if (activeTab !== 'ownership' || !canManageSecurity || branchAdmins !== null) return;
-    api.get('/branch-admins')
-      .then(res => setBranchAdmins((res.data.data?.branch_admins || []).filter((a: BranchAdminOption) => a.is_active)))
+    if (activeTab !== 'ownership' || !isOwner || candidates !== null) return;
+    api.get('/team')
+      .then(res => {
+        const members: Array<{ user_id: string; email: string; full_name: string | null; is_owner: boolean; is_self: boolean; status: string; assignments: unknown[] }> = res.data.data?.members || [];
+        setCandidates(members
+          .filter(m => !m.is_owner && !m.is_self && m.status === 'active' && m.assignments.length > 0)
+          .map(m => ({ id: m.user_id, email: m.email, full_name: m.full_name })));
+      })
       .catch(err => {
-        setBranchAdmins([]);
-        setTransferError(errorMessage(err, 'Branch Admins could not be loaded.'));
+        setCandidates([]);
+        setTransferError(errorMessage(err, 'Your team could not be loaded.'));
       });
-  }, [activeTab, canManageSecurity, branchAdmins]);
+  }, [activeTab, isOwner, candidates]);
 
   // Declared before the early return below: hooks must run in the same order on every render.
   const [savingWorkforceField, setSavingWorkforceField] = useState<string | null>(null);
@@ -310,12 +318,12 @@ export default function Settings() {
   };
 
   // --- Ownership ---------------------------------------------------------------
-  const transferTarget = branchAdmins?.find(a => a.id === transferTo) || null;
+  const transferTarget = candidates?.find(a => a.id === transferTo) || null;
 
   const handleRequestTransfer = (e: React.FormEvent) => {
     e.preventDefault();
     if (!transferTarget) {
-      setTransferError('Choose the Branch Admin who will become the owner.');
+      setTransferError('Choose the team member who will become the owner.');
       return;
     }
     if (!transferPassword) {
@@ -335,12 +343,14 @@ export default function Settings() {
         current_password: transferPassword,
       });
       toast.success(res.data?.message || `${transferTarget.email} is now the organisation owner.`);
+      setTransferPassword('');
       setShowTransferConfirm(false);
-      // This account is now a Branch Admin: leave the owner settings, then reload what it may do.
+      // This account is now an Admin of the branches: leave the owner settings, then reload what it may do.
       navigate('/dashboard', { replace: true });
       await refresh();
     } catch (err: any) {
       setTransferError(errorMessage(err, 'Ownership could not be transferred.'));
+      setTransferPassword('');
       setShowTransferConfirm(false);
       setTransferring(false);
     }
@@ -363,11 +373,11 @@ export default function Settings() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Settings</h1>
           <p className="text-xs text-[var(--muted)] mt-1">
-            {canManageOrganisation ? 'Your account, your organisation and its security.' : 'Your account and sign-in security.'}
+            {canViewOrganisation ? 'Your account, your organisation and its security.' : 'Your account and sign-in security.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="purple" size="md">{ROLE_LABEL[access.role]}</Badge>
+          <Badge variant="purple" size="md">{roleSummary(access)}</Badge>
           <span className="text-xs font-semibold text-[var(--text)] bg-[var(--panel-subtle)] px-2.5 py-1 rounded-md border border-[var(--border)]">
             {access.organisation.name}
           </span>
@@ -440,28 +450,51 @@ export default function Settings() {
             />
             <p className="text-xs text-[var(--muted)]">Sign out any device you don't recognise. Sessions end automatically after 15 minutes without activity.</p>
           </Card>
+
+          {canSeeRoles && (
+            <Card className="p-6 space-y-4">
+              <SectionHeader
+                icon={<UserCog className="w-4 h-4" />}
+                title="Roles & permissions"
+                description="Who can do what in this organisation, and in which branches."
+                action={(
+                  <Link to="/settings/roles">
+                    <Button variant="outline" size="sm" leftIcon={<UserCog className="w-3.5 h-3.5" />}>Open roles &amp; permissions</Button>
+                  </Link>
+                )}
+              />
+              <p className="text-xs text-[var(--muted)]">Invite people, choose their roles and the branches each role covers, or create a role with exactly the access it needs.</p>
+            </Card>
+          )}
         </div>
       )}
 
-      {/* ORGANISATION (Organisation Owner) */}
-      {activeTab === 'organisation' && canManageOrganisation && (
+      {/* ORGANISATION (read-only unless the person can edit it) */}
+      {activeTab === 'organisation' && canViewOrganisation && (
         orgUnavailable || (
           <div className="space-y-6">
+            {!canEditOrganisation && (
+              <p role="status" className="text-xs text-[var(--muted)] bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-3 py-2">
+                You can see these settings but not change them. Ask your organisation owner if something needs changing.
+              </p>
+            )}
             <Card className="p-6 space-y-4">
               <SectionHeader icon={<Building2 className="w-4 h-4" />} title="Organisation name" description="Shown on your sign-in page, reports and exports." />
               <form onSubmit={handleSaveDisplayName} className="flex flex-col sm:flex-row sm:items-end gap-3">
                 <div className="flex-1">
-                  <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} maxLength={120} required disabled={!org} />
+                  <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} maxLength={120} required disabled={!org || !canEditOrganisation} />
                 </div>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="md"
-                  loading={savingDisplayName}
-                  disabled={!org || displayName.trim() === (org.name || '')}
-                >
-                  Save
-                </Button>
+                {canEditOrganisation && (
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    loading={savingDisplayName}
+                    disabled={!org || displayName.trim() === (org.name || '')}
+                  >
+                    Save
+                  </Button>
+                )}
               </form>
             </Card>
 
@@ -470,11 +503,11 @@ export default function Settings() {
                 icon={<Sliders className="w-4 h-4" />}
                 title="Break rules"
                 description="The unpaid break taken off each day's hours, in every branch."
-                action={(
+                action={canEditOrganisation ? (
                   <Button variant="outline" size="sm" onClick={() => setShowBreakModal(true)} leftIcon={<Sliders className="w-3.5 h-3.5" />}>
                     Change break rules
                   </Button>
-                )}
+                ) : undefined}
               />
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                 <div className="p-3.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
@@ -498,8 +531,8 @@ export default function Settings() {
         )
       )}
 
-      {/* WORKFORCE (Owner or Branch Admin) */}
-      {activeTab === 'workforce' && (
+      {/* WORKFORCE (anyone who manages leave and timesheet policy) */}
+      {activeTab === 'workforce' && canManageWorkforce && (
         orgUnavailable || (
           <div className="space-y-6">
             <Card className="p-6 space-y-4">
@@ -545,7 +578,7 @@ export default function Settings() {
         )
       )}
 
-      {/* SECURITY (Organisation Owner) */}
+      {/* SECURITY (private sign-in link and lock passwords) */}
       {activeTab === 'security' && canManageSecurity && (
         orgUnavailable || (
           <div className="space-y-6">
@@ -645,39 +678,39 @@ export default function Settings() {
         )
       )}
 
-      {/* OWNERSHIP (Organisation Owner) */}
-      {activeTab === 'ownership' && canManageSecurity && (
+      {/* OWNERSHIP (the owner only) */}
+      {activeTab === 'ownership' && isOwner && (
         <Card className="p-6 space-y-4">
           <SectionHeader
             icon={<ArrowRightLeft className="w-4 h-4" />}
             title="Transfer ownership"
-            description="Hand the organisation over to one of your current Branch Admins."
+            description="Hand the organisation over to one of your current team members."
           />
           <ul className="text-xs text-[var(--muted)] leading-relaxed list-disc pl-5 space-y-1">
-            <li>The new owner gets full control, including settings, branches, Branch Admins and the audit log.</li>
-            <li>You become a Branch Admin of every active branch. The new owner can change or remove your access.</li>
+            <li>The new owner gets full control, including settings, branches, roles, team members and the audit log.</li>
+            <li>You become an Admin of every active branch. The new owner can change or remove your access.</li>
             <li>An organisation has exactly one owner, and only the new owner can transfer it back.</li>
           </ul>
 
-          {branchAdmins === null ? (
-            <p className="text-xs text-[var(--muted)]">Loading Branch Admins…</p>
-          ) : branchAdmins.length === 0 ? (
+          {candidates === null ? (
+            <p className="text-xs text-[var(--muted)]">Loading your team…</p>
+          ) : candidates.length === 0 ? (
             <EmptyState
               icon={<UserRound className="w-5 h-5" />}
-              title="No Branch Admins yet"
-              description="Ownership can only go to someone who is already a Branch Admin here. Invite them first."
-              action={<Link to="/branch-admins"><Button variant="outline" size="sm">Go to Branch Admins</Button></Link>}
+              title="No team members yet"
+              description="Ownership can only go to someone who already has a role here. Invite them first."
+              action={<Link to="/settings/roles"><Button variant="outline" size="sm">Go to roles &amp; permissions</Button></Link>}
             />
           ) : (
             <form onSubmit={handleRequestTransfer} className="space-y-4 max-w-md">
               {transferError && (
-                <div className="p-3 rounded-md text-xs bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)]">
+                <div role="alert" className="p-3 rounded-md text-xs bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)]">
                   {transferError}
                 </div>
               )}
               <Select label="New owner" value={transferTo} onChange={e => setTransferTo(e.target.value)} required>
-                <option value="" disabled>Choose a Branch Admin…</option>
-                {branchAdmins.map(a => (
+                <option value="" disabled>Choose a team member…</option>
+                {candidates.map(a => (
                   <option key={a.id} value={a.id}>{a.full_name ? `${a.full_name} (${a.email})` : a.email}</option>
                 ))}
               </Select>
@@ -700,7 +733,7 @@ export default function Settings() {
       {/* Modals */}
       <TwoFactorModal isOpen={show2FAModal} onClose={handleClose2FA} onChange={() => setTwoFactorChanged(true)} />
       <AccountSecurityModal isOpen={showActivityModal} onClose={() => setShowActivityModal(false)} />
-      {canManageOrganisation && (
+      {canEditOrganisation && (
         <BreakSettingsModal isOpen={showBreakModal} onClose={() => { setShowBreakModal(false); fetchOrganisation(); }} />
       )}
       {canManageSecurity && (
@@ -716,7 +749,7 @@ export default function Settings() {
             onClose={() => setShowRegenerateModal(false)}
             onConfirm={handleRegenerate}
             title="Regenerate the sign-in link?"
-            message="The current link stops working straight away. Anyone who uses it, including your Branch Admins, will need the new link."
+            message="The current link stops working straight away. Anyone who uses it, including your team, will need the new link."
             confirmLabel="Regenerate link"
             variant="warning"
             loading={regenerating}
@@ -726,7 +759,7 @@ export default function Settings() {
             onClose={() => setShowTransferConfirm(false)}
             onConfirm={handleTransfer}
             title={`Make ${transferTarget?.full_name || transferTarget?.email || 'this person'} the owner?`}
-            message={`${transferTarget?.email ?? 'They'} will own ${access.organisation.name}. You will become a Branch Admin of every active branch and lose access to owner settings.`}
+            message={`${transferTarget?.email ?? 'They'} will own ${access.organisation.name}. You will become an Admin of every active branch and lose access to owner settings.`}
             confirmLabel="Transfer ownership"
             variant="danger"
             loading={transferring}

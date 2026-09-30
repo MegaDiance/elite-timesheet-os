@@ -5,7 +5,7 @@ import {
   MousePointerClick, Plus, Printer, RotateCcw, Search, Wand2, X,
 } from 'lucide-react';
 import api from '../services/apiClient';
-import { useAccess } from '../hooks/useAccess';
+import { useAccess, type Permission } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
 import { useToast } from '../components/ui/Toast';
 import { Badge } from '../components/ui/Badge';
@@ -54,15 +54,26 @@ export default function Roster() {
   const toast = useToast();
   const narrow = useNarrowScreen();
   const branches = useMemo(() => access?.branches ?? [], [access]);
-  const canTimesheets = can('timesheets.manage');
-  const canLock = can('periods.lock');
-  const canReports = can('reports.view');
 
   // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
   const [branchId, setBranchId] = useState<string>(() => activeBranchId || (access?.branches.length === 1 ? access.branches[0].id : ''));
   useEffect(() => {
     if (activeBranchId) setBranchId(activeBranchId);
   }, [activeBranchId]);
+
+  // What this person may do. Every permission is held per branch: for a whole-page tool it is asked for the
+  // branch chosen above (or anywhere, for "All my branches"); for a worker it is asked in that worker's own branch.
+  const here = (permission: Permission) => can(permission, branchId || null);
+  const forWorker = (permission: Permission, w: Worker) => can(permission, w.location_id);
+  const rosterBranches = useMemo(() => branches.filter(b => can('rosters.view', b.id)), [branches, can]);
+  const canFillRoster = here('rosters.create');
+  const canLog = here('timesheets.create');
+  const canCopyDays = here('rosters.create') || here('rosters.edit');
+  const canApprove = here('timesheets.approve');
+  const canLock = here('timesheets.lock');
+  const canExport = here('payroll.export');
+  const canChangeAnything = canFillRoster || canCopyDays || canLog || here('timesheets.edit');
+  const canSeeTimesheets = can('timesheets.view');
   const [startIso, setStartIso] = useState<string>(currentFortnightIso);
   const days = useMemo(() => fortnightDays(startIso), [startIso]);
   const endIso = days[13];
@@ -105,7 +116,8 @@ export default function Roster() {
       api.get('/employees', { params: { location_id } }),
       api.get('/records', { params: { location_id, start_date: startIso, end_date: endIso } }),
       api.get('/locks', { params: { location_id, start_date: startIso } }),
-      api.get('/submissions', { params: { location_id, start_date: startIso } }),
+      // Approval status is part of timesheets: without permission to see them the server would refuse, so it isn't asked.
+      canSeeTimesheets ? api.get('/submissions', { params: { location_id, start_date: startIso } }) : Promise.resolve({ data: { data: [] } }),
     ]);
     if (seq !== loadSeq.current) return;
     const failed = [w, r].find((x): x is PromiseRejectedResult => x.status === 'rejected');
@@ -117,7 +129,7 @@ export default function Roster() {
     setLocks(l.status === 'fulfilled' ? l.value.data?.data ?? [] : []);
     setTimesheets(t.status === 'fulfilled' ? t.value.data?.data ?? [] : []);
     setLoading(false);
-  }, [branchId, startIso, endIso]);
+  }, [branchId, startIso, endIso, canSeeTimesheets]);
 
   useEffect(() => {
     load();
@@ -248,7 +260,7 @@ export default function Roster() {
   }, [selectMode, exitSelectMode]);
 
   const openDay = (e: ReactMouseEvent, workerId: string, dateIso: string) => {
-    if (selectMode || e.shiftKey) {
+    if (canCopyDays && (selectMode || e.shiftKey)) {
       if (!selectMode) setSelectMode(true);
       toggleCell(workerId, dateIso);
       return;
@@ -472,8 +484,8 @@ export default function Roster() {
     const small = `text-[11px] font-semibold rounded-md border px-2 ${large ? 'h-11' : 'py-0.5'} disabled:opacity-50 cursor-pointer`;
     return (
       <span className={`flex items-center gap-1.5 ${large ? 'shrink-0' : 'flex-wrap'}`}>
-        <TimesheetStatusBadge status={status} />
-        {canTimesheets && ts && status === 'Draft' && !ts.timesheet_locked && (
+        {forWorker('timesheets.view', w) && <TimesheetStatusBadge status={status} />}
+        {forWorker('timesheets.approve', w) && ts && status === 'Draft' && !ts.timesheet_locked && (
           <button
             type="button"
             onClick={() => changeTimesheet(ts, 'approve')}
@@ -484,7 +496,7 @@ export default function Roster() {
             Approve
           </button>
         )}
-        {canTimesheets && ts && status === 'Approved' && (
+        {forWorker('timesheets.reopen', w) && ts && status === 'Approved' && (
           <button
             type="button"
             onClick={() => changeTimesheet(ts, 'reopen')}
@@ -504,9 +516,12 @@ export default function Roster() {
     const lock = lockByBranch.get(w.location_id);
     const iconBtn = `inline-flex items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-hover)] disabled:opacity-40 disabled:pointer-events-none cursor-pointer ${large ? 'w-9 h-9' : 'w-6 h-6'}`;
     const iconSize = large ? 'w-4 h-4' : 'w-3 h-3';
+    const mayRoster = forWorker('rosters.create', w);
+    const mayLog = forWorker('timesheets.create', w);
+    if (!mayRoster && !mayLog) return null;
     return (
       <span className="flex items-center gap-1 shrink-0">
-        <button
+        {mayRoster && <button
           type="button"
           onClick={() => setSingleFill({ worker: w, mode: 'roster' })}
           disabled={Boolean(busy) || Boolean(lock?.roster_locked)}
@@ -515,8 +530,8 @@ export default function Roster() {
           aria-label={`Apply default roster for ${w.full_name}`}
         >
           <Wand2 className={iconSize} aria-hidden="true" />
-        </button>
-        {canTimesheets && (
+        </button>}
+        {mayLog && (
           <button
             type="button"
             onClick={() => setSingleFill({ worker: w, mode: 'log' })}
@@ -532,10 +547,13 @@ export default function Roster() {
     );
   };
 
+  /** The plus sign only where something can actually be added on an empty day. */
+  const canAddTo = (w: Worker) => forWorker('rosters.create', w) || forWorker('timesheets.create', w);
+
   const cellLabel = (w: Worker, iso: string, day: DayContent) => {
     const empty = dayIsEmpty(day);
     const what = empty ? 'nothing rostered or worked' : describeDay(day);
-    const action = selectMode ? (selected.has(cellKey(w.id, iso)) ? 'Selected.' : 'Not selected.') : empty ? 'Add times.' : 'Open the day.';
+    const action = selectMode ? (selected.has(cellKey(w.id, iso)) ? 'Selected.' : 'Not selected.') : empty && canAddTo(w) ? 'Add times.' : 'Open the day.';
     return `${w.full_name}, ${dayLabel(iso)}: ${what}. ${action}`;
   };
 
@@ -633,7 +651,7 @@ export default function Roster() {
                           >
                             {holidayName && <PublicHolidayBadge name={holidayName} />}
                             {empty
-                              ? <Plus className="w-4 h-4 mx-auto mt-2.5 text-[var(--muted)] opacity-30 group-hover:opacity-80 group-focus-visible:opacity-80" aria-hidden="true" />
+                              ? canAddTo(w) && <Plus className="w-4 h-4 mx-auto mt-2.5 text-[var(--muted)] opacity-30 group-hover:opacity-80 group-focus-visible:opacity-80" aria-hidden="true" />
                               : <DayLines day={day} variant="compact" />}
                             {saved && <span className="absolute -top-2 left-1 px-1 rounded bg-[var(--success)] text-white text-[9px] font-bold">Saved</span>}
                             {isSelected && selectedMark}
@@ -643,7 +661,7 @@ export default function Roster() {
                     })}
                     <td className="border-b border-[var(--border)] px-2 py-2 align-top">
                       <span className={`block pl-1.5 text-[11px] leading-4 tabular-nums ${PART_STYLE.roster}`}>Rostered {formatHours(t.roster)}</span>
-                      <span className={`block pl-1.5 mt-1 text-[11px] leading-4 font-semibold tabular-nums ${PART_STYLE.timesheet}`}>Worked {formatHours(t.worked)}</span>
+                      {forWorker('timesheets.view', w) && <span className={`block pl-1.5 mt-1 text-[11px] leading-4 font-semibold tabular-nums ${PART_STYLE.timesheet}`}>Worked {formatHours(t.worked)}</span>}
                     </td>
                   </tr>
                 );
@@ -703,7 +721,7 @@ export default function Roster() {
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="min-w-0">
                       <p className="font-semibold text-sm text-[var(--text)] truncate">{w.full_name}</p>
-                      <p className="text-[11px] text-[var(--muted)]">Fortnight: {formatHours(t.roster)} rostered · {formatHours(t.worked)} worked</p>
+                      <p className="text-[11px] text-[var(--muted)]">Fortnight: {formatHours(t.roster)} rostered{forWorker('timesheets.view', w) ? ` · ${formatHours(t.worked)} worked` : ''}</p>
                     </div>
                     <span className="flex items-center gap-1.5 shrink-0">
                       {rowFillButtons(w, true)}
@@ -719,7 +737,7 @@ export default function Roster() {
                     className={`relative w-full min-h-11 rounded-lg border p-3 text-left cursor-pointer bg-[var(--panel-subtle)] border-[var(--border)] focus-visible:outline-2 focus-visible:outline-[var(--primary)] ${isSelected ? 'ring-2 ring-[var(--primary)]' : ''} ${justSaved === cellKey(w.id, mobileDay) ? 'ring-2 ring-[var(--success)]' : ''}`}
                   >
                     {dayIsEmpty(day)
-                      ? <span className="flex items-center gap-2 text-sm text-[var(--muted)]"><Plus className="w-4 h-4" aria-hidden="true" /> Add a shift or leave</span>
+                      ? <span className="flex items-center gap-2 text-sm text-[var(--muted)]">{canAddTo(w) ? <><Plus className="w-4 h-4" aria-hidden="true" /> Add a shift or leave</> : 'Nothing on this day'}</span>
                       : <DayLines day={day} variant="regular" />}
                     {isSelected && selectedMark}
                   </button>
@@ -756,8 +774,14 @@ export default function Roster() {
     content = (
       <div className="p-10 text-center space-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
         <p className="text-sm font-semibold text-[var(--text)]">No workers in {filterName ?? 'your branches'} yet.</p>
-        <p className="text-sm text-[var(--muted)]">The roster has one row per worker. Add your first worker, then come back to give them shifts.</p>
-        <Link to="/workers" className={`${buttonClass.primary} inline-flex`}>Add a worker</Link>
+        {can('employees.create') ? (
+          <>
+            <p className="text-sm text-[var(--muted)]">The roster has one row per worker. Add your first worker, then come back to give them shifts.</p>
+            <Link to="/workers" className={`${buttonClass.primary} inline-flex`}>Add a worker</Link>
+          </>
+        ) : (
+          <p className="text-sm text-[var(--muted)]">The roster has one row per worker. It will show them once someone adds them.</p>
+        )}
       </div>
     );
   } else {
@@ -773,9 +797,9 @@ export default function Roster() {
   );
   const tools = (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      {toolGroup('Fill the fortnight', (
+      {(canFillRoster || canLog || canCopyDays) && toolGroup('Fill the fortnight', (
         <>
-          <button
+          {canFillRoster && <button
             type="button"
             onClick={() => setFillMode('roster')}
             disabled={Boolean(busy) || Boolean(selectedBranchLock?.roster_locked)}
@@ -783,8 +807,8 @@ export default function Roster() {
             title={selectedBranchLock?.roster_locked ? `The roster is locked for ${filterName}` : `Give ${scopeText} their default roster on days you choose`}
           >
             <Wand2 className="w-3.5 h-3.5" aria-hidden="true" /> Apply default rosters…
-          </button>
-          {canTimesheets && (
+          </button>}
+          {canLog && (
             <button
               type="button"
               onClick={() => setFillMode('log')}
@@ -795,7 +819,7 @@ export default function Roster() {
               <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" /> Copy roster to worked hours…
             </button>
           )}
-          <button
+          {canCopyDays && <button
             type="button"
             onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             aria-pressed={selectMode}
@@ -803,10 +827,10 @@ export default function Roster() {
             title="Select days to copy the roster from the day before (tip: shift-click a day)"
           >
             <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Copy days…
-          </button>
+          </button>}
         </>
       ))}
-      {canTimesheets && toolGroup('Approve', (
+      {canApprove && toolGroup('Approve', (
         <>
           <button
             type="button"
@@ -829,7 +853,7 @@ export default function Roster() {
           </HelpTip>
         </>
       ))}
-      {canReports && toolGroup('Export', (
+      {canExport && toolGroup('Export', (
         <>
           <button type="button" onClick={exportCsv} className={tool} title="Download the payroll CSV for this pay period and branch filter">
             <Download className="w-3.5 h-3.5" aria-hidden="true" /> CSV
@@ -871,8 +895,8 @@ export default function Roster() {
                 onChange={e => changeBranch(e.target.value)}
                 className="h-9 max-md:h-11 bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-2.5 text-sm font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
               >
-                <option value="">All my branches</option>
-                {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
+                {rosterBranches.length > 1 && <option value="">All my branches</option>}
+                {rosterBranches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
               </select>
             </div>
 
@@ -928,8 +952,14 @@ export default function Roster() {
 
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--panel-subtle)] px-3 py-2">
           <p className="text-sm text-[var(--text)]">
-            <strong className="font-semibold">Click a day</strong> to add or change a shift, leave or a break.
-            <span className="text-[var(--muted)] hidden lg:inline"> Shift-click to select several days.</span>
+            {canChangeAnything ? (
+              <>
+                <strong className="font-semibold">Click a day</strong> to add or change a shift, leave or a break.
+                {canCopyDays && <span className="text-[var(--muted)] hidden lg:inline"> Shift-click to select several days.</span>}
+              </>
+            ) : (
+              <><strong className="font-semibold">Click a day</strong> to see its shifts and hours. Your access is view only.</>
+            )}
           </p>
           <PlannedWorkedKey />
         </div>
@@ -978,6 +1008,8 @@ export default function Roster() {
           rosterLocked={Boolean(editingLock?.roster_locked)}
           timesheetLocked={Boolean(editingLock?.timesheet_locked)}
           approved={editingStatus === 'Approved' || editingStatus === 'Locked'}
+          rosterAccess={{ view: forWorker('rosters.view', editingWorker), create: forWorker('rosters.create', editingWorker), edit: forWorker('rosters.edit', editingWorker) }}
+          timesheetAccess={{ view: forWorker('timesheets.view', editingWorker), create: forWorker('timesheets.create', editingWorker), edit: forWorker('timesheets.edit', editingWorker) }}
           fortnightDays={days}
           branchWorkers={workers
             .filter(w => w.location_id === editingWorker.location_id && w.id !== editingWorker.id)
@@ -1015,7 +1047,7 @@ export default function Roster() {
           flag={lockFlag}
           startDate={startIso}
           periodText={`Pay period ${periodLabel(startIso)}`}
-          branches={branches.filter(b => b.is_active || b.id === branchId).map(b => ({ id: b.id, name: b.name }))}
+          branches={branches.filter(b => (b.is_active || b.id === branchId) && can('timesheets.lock', b.id)).map(b => ({ id: b.id, name: b.name }))}
           fixedBranchId={branchId || null}
           lockFor={id => lockByBranch.get(id)}
           onClose={() => setLockFlag(null)}

@@ -1,3 +1,4 @@
+import type { Permission } from '../../hooks/permissions';
 import type { TourSignal } from './tourSignals';
 
 /**
@@ -23,7 +24,15 @@ export interface TourStep {
   example?: Array<{ time: string; kind: string; tone: 'work' | 'leave' }>;
   /** Show the Draft → Approved → Locked guide. */
   statusGuide?: boolean;
+  /**
+   * Only included for someone who holds at least one of these (in any branch). A step that points at
+   * something a person can't see, or asks them to do something they can't, is left out.
+   */
+  needsAny?: Permission[];
 }
+
+/** Whoever can put shifts on a roster can also try the day editor. */
+const CAN_EDIT_ROSTER: Permission[] = ['rosters.create', 'rosters.edit'];
 
 export const MANAGER_TOUR: TourStep[] = [
   {
@@ -32,11 +41,12 @@ export const MANAGER_TOUR: TourStep[] = [
     target: 'workspace',
     body: [
       'This shows the organisation you’re signed in to, the branch you’re working in, and your role.',
-      'You only see branches you’ve been given access to. Use “Switch” to change branch.',
+      'You only see the branches your roles cover. Use “Switch” to change branch.',
     ],
   },
   {
     id: 'find-roster',
+    needsAny: ['rosters.view'],
     title: 'Find your roster',
     route: '/roster',
     target: 'roster-controls',
@@ -47,16 +57,18 @@ export const MANAGER_TOUR: TourStep[] = [
   },
   {
     id: 'open-day',
+    needsAny: CAN_EDIT_ROSTER,
     title: 'Create a shift',
     route: '/roster',
     target: 'roster-cell',
     waitFor: 'day-editor-opened',
     doThis: 'Click any day in a worker’s row.',
     body: ['Each row is a worker and each box is a day. Clicking a day opens it so you can add or change hours.'],
-    fallback: 'Add a worker first (Workers → Add worker). Their row appears here, one box per day.',
+    fallback: 'There are no workers in this branch yet. Once a worker is added, their row appears here, one box per day.',
   },
   {
     id: 'enter-times',
+    needsAny: CAN_EDIT_ROSTER,
     title: 'Enter the times',
     target: 'time-line',
     waitFor: 'shift-times-entered',
@@ -69,6 +81,7 @@ export const MANAGER_TOUR: TourStep[] = [
   },
   {
     id: 'break',
+    needsAny: CAN_EDIT_ROSTER,
     title: 'Add a break',
     target: 'break-controls',
     body: [
@@ -78,6 +91,7 @@ export const MANAGER_TOUR: TourStep[] = [
   },
   {
     id: 'leave',
+    needsAny: CAN_EDIT_ROSTER,
     title: 'Add leave',
     target: 'add-line',
     waitFor: 'leave-line-added',
@@ -89,6 +103,7 @@ export const MANAGER_TOUR: TourStep[] = [
   },
   {
     id: 'split',
+    needsAny: CAN_EDIT_ROSTER,
     title: 'Split days',
     target: 'save-day',
     body: [
@@ -103,6 +118,7 @@ export const MANAGER_TOUR: TourStep[] = [
   },
   {
     id: 'timesheets',
+    needsAny: ['timesheets.view'],
     title: 'Timesheets',
     route: '/timesheets',
     target: 'timesheet-status',
@@ -115,7 +131,7 @@ export const MANAGER_TOUR: TourStep[] = [
     route: '/dashboard',
     target: 'daily-nav',
     body: [
-      'Your daily work lives here: Today, Roster, Timesheets and Leave requests. A number shows when something is waiting for you.',
+      'Your daily work lives here. A number appears when something is waiting for you to approve.',
       'You can take this tour again any time from Help.',
     ],
   },

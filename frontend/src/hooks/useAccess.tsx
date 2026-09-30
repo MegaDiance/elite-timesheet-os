@@ -1,21 +1,19 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import api from '../services/apiClient';
 import { portalLoginPath, rememberPortal } from '../services/portal';
+import { forgetOrganisationState } from '../services/sessionCache';
+import { holdsPermission, type Permission, type PermissionScope, type RoleRef } from './permissions';
+
+export { BRANCH_LEVEL_PERMISSIONS, holdsAny, holdsHere, heldInAnotherBranch, holdsPermission, isBranchLevel, roleSummary } from './permissions';
+export type { Permission, PermissionScope, RoleRef } from './permissions';
 
 /**
  * What the signed-in account may do, as reported by GET /api/auth/me.
  *
- * SimpleHours has three roles: the Organisation Owner, Branch Admins (each assigned to specific
- * branches), and Employees (each linked to one worker record, holding no `permissions`). This is
- * used only to decide what to SHOW; the server authorises every request itself.
+ * Access is a set of permissions, each held either across the entire organisation or in chosen
+ * branches (`scopes`). A person can hold several roles; what they can do is the union. This is used
+ * only to decide what to SHOW; the server authorises every request itself, from the database.
  */
-export type Role = 'OWNER' | 'BRANCH_ADMIN' | 'EMPLOYEE';
-
-export type Permission =
-  | 'organisation.manage' | 'security.manage' | 'branches.manage' | 'branch_admins.manage'
-  | 'holidays.manage' | 'integrations.manage' | 'audit.view' | 'announcements.moderate'
-  | 'branch.view' | 'workers.manage' | 'rosters.manage' | 'timesheets.manage' | 'periods.lock' | 'reports.view';
-
 export interface Branch {
   id: string;
   name: string;
@@ -27,10 +25,18 @@ export interface Branch {
 export interface Access {
   user: { id: string; email: string; full_name: string | null; two_factor_enabled: boolean; tutorial_version?: number | null };
   organisation: { id: string; name: string };
-  role: Role;
+  roles: RoleRef[];
+  is_owner: boolean;
+  /** A worker record is linked to this login: the employee portal is available. */
+  is_employee: boolean;
+  /** Holds at least one management permission (anything beyond the employee's own portal). */
+  is_manager: boolean;
   permissions: Permission[];
+  scopes: Partial<Record<Permission, PermissionScope>>;
   branches: Branch[];
-  /** Present only when role is EMPLOYEE. */
+  /** Whether "Switch organisation" is worth offering. The list itself is only shown after the password is re-entered. */
+  has_other_organisations: boolean;
+  /** Present only for an employee login. */
   employee_capabilities?: { can_submit_timesheets: boolean };
 }
 
@@ -38,15 +44,12 @@ interface AccessValue {
   access: Access | null;
   loading: boolean;
   isOwner: boolean;
-  can: (permission: Permission) => boolean;
+  /** The employee portal only (no management permission at all). */
+  isEmployeeOnly: boolean;
+  /** Holds `permission` at all, or — with a branch — in that branch. */
+  can: (permission: Permission, branchId?: string | null) => boolean;
   refresh: () => Promise<void>;
 }
-
-export const ROLE_LABEL: Record<Role, string> = {
-  OWNER: 'Organisation Owner',
-  BRANCH_ADMIN: 'Branch Admin',
-  EMPLOYEE: 'Employee',
-};
 
 const AccessContext = createContext<AccessValue | null>(null);
 
@@ -100,10 +103,10 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  const can = useCallback((permission: Permission) => Boolean(access?.permissions.includes(permission)), [access]);
+  const can = useCallback((permission: Permission, branchId?: string | null) => holdsPermission(access, permission, branchId), [access]);
 
   return (
-    <AccessContext.Provider value={{ access, loading, isOwner: access?.role === 'OWNER', can, refresh }}>
+    <AccessContext.Provider value={{ access, loading, isOwner: access?.is_owner === true, isEmployeeOnly: access?.is_employee === true && access?.is_manager !== true, can, refresh }}>
       {children}
     </AccessContext.Provider>
   );
@@ -140,5 +143,6 @@ export async function signOut(reason: 'logout' | 'inactivity' = 'logout'): Promi
   }
   localStorage.removeItem('token');
   localStorage.removeItem('session_last_active');
+  forgetOrganisationState();
   window.location.replace(portalLoginPath(reason));
 }

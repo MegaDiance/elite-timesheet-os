@@ -13,7 +13,7 @@ interface ContextHelpModalProps {
 
 interface Faq { q: string; a: string }
 
-const MANAGER_FAQS = (isOwner: boolean): Faq[] => [
+const MANAGER_FAQS = (isOwner: boolean, canEditOrganisation: boolean): Faq[] => [
   {
     q: 'How do I add a shift?',
     a: 'Open Roster, find the worker, and click the day. Enter a start and finish, for example 9 and 5p, then Save roster. To record what they actually worked, fill in the Worked part of the same day, or use “Worked the rostered times”.',
@@ -24,7 +24,7 @@ const MANAGER_FAQS = (isOwner: boolean): Faq[] => [
   },
   {
     q: 'How do breaks work?',
-    a: `Each work line has a break. “Standard” uses your organisation’s rule (${isOwner ? 'set in Settings' : 'set by the Organisation Owner'}): for example 30 minutes once the day reaches 6 hours. The break only comes off work, never leave. To set the same break on many days, use “Apply break to all days” and untick the exceptions.`,
+    a: `Each work line has a break. “Standard” uses your organisation’s rule (${canEditOrganisation ? 'set in Settings' : 'set by the people who manage the organisation’s settings'}): for example 30 minutes once the day reaches 6 hours. The break only comes off work, never leave. To set the same break on many days, use “Apply break to all days” and untick the exceptions.`,
   },
   {
     q: 'What do Draft, Approved and Locked mean?',
@@ -38,11 +38,11 @@ const MANAGER_FAQS = (isOwner: boolean): Faq[] => [
     q: 'Why can’t I see a branch or a worker?',
     a: isOwner
       ? 'You can see every branch. A deactivated branch or worker is hidden from lists; reactivate it on Branches or Workers.'
-      : 'You only see the branches you’ve been assigned to. Ask the Organisation Owner if you need another branch.',
+      : 'You only see the branches your roles cover. Ask your organisation owner if you need another branch.',
   },
   {
     q: 'How do workers sign in?',
-    a: 'Workers can have their own account to see their schedule and ask for leave. Give them access from Workers → Portal access, then share your organisation’s sign-in link with them. There is no general sign-in page. Everyone signs in through that link.',
+    a: 'Workers can have their own account to see their schedule and ask for leave. Give them access from Workers → Portal access (if you don’t see it, your roles don’t include it), then share your organisation’s sign-in link with them. There is no general sign-in page. Everyone signs in through that link.',
   },
 ];
 
@@ -70,10 +70,10 @@ const EMPLOYEE_FAQS = (canSubmit: boolean): Faq[] => [
 
 /** Help for the signed-in role: the tour, and short answers written for that role. */
 export const ContextHelpModal: FC<ContextHelpModalProps> = ({ isOpen, onClose }) => {
-  const { access, isOwner } = useAccess();
+  const { access, isOwner, isEmployeeOnly, can } = useAccess();
   const [expanded, setExpanded] = useState<number | null>(0);
-  const isEmployee = access?.role === 'EMPLOYEE';
-  const faqs = isEmployee ? EMPLOYEE_FAQS(Boolean(access?.employee_capabilities?.can_submit_timesheets)) : MANAGER_FAQS(isOwner);
+  const isEmployee = isEmployeeOnly;
+  const faqs = isEmployee ? EMPLOYEE_FAQS(Boolean(access?.employee_capabilities?.can_submit_timesheets)) : MANAGER_FAQS(isOwner, can('organisation.edit'));
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Help" description={isEmployee ? 'Your schedule, hours and leave' : 'Short answers to common questions'} maxWidth="lg">

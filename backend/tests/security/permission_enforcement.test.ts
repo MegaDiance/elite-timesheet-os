@@ -401,3 +401,19 @@ describe('locked and approved timesheets keep their rules under every role', () 
         expect(res.body.error.code).toBe('INVALID_PASSWORD');
     });
 });
+
+describe('editing without seeing contact details', () => {
+    it('saving a worker never blanks or replaces the email and phone of someone who may not view them', async () => {
+        await sql("UPDATE employees SET email = 'mel@abc.test', phone = '0400 000 000' WHERE id = $1", [w.workers.mel]);
+        const editorOnly = await persona(['employees.edit']);
+        const res = await request(app).put(`/api/employees/${w.workers.mel}`).set(bearer(editorOnly)).send({ full_name: 'Mel Renamed', contracted_hours: 50, email: 'attacker@evil.test', phone: '0400 111 111' });
+        expect(res.status).toBe(200);
+        const row = (await sql('SELECT full_name, email, phone, contracted_hours::float AS hours FROM employees WHERE id = $1', [w.workers.mel])).rows[0];
+        expect(row).toEqual({ full_name: 'Mel Renamed', email: 'mel@abc.test', phone: '0400 000 000', hours: 50 });
+
+        // Someone who can view contact details changes them normally.
+        const editorAndViewer = await persona(['employees.edit', 'employees.view']);
+        await request(app).put(`/api/employees/${w.workers.mel}`).set(bearer(editorAndViewer)).send({ full_name: 'Mel Renamed', email: 'new@abc.test', phone: '0400 222 222' });
+        expect((await sql('SELECT email, phone FROM employees WHERE id = $1', [w.workers.mel])).rows[0]).toEqual({ email: 'new@abc.test', phone: '0400 222 222' });
+    });
+});

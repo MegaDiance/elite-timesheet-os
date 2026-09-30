@@ -22,15 +22,15 @@ const TAB_STATUS: Record<Exclude<Tab, 'all'>, TimesheetStatus> = { waiting: 'Dra
 const TAB_LABEL: Record<Tab, string> = { waiting: 'Waiting', approved: 'Approved', locked: 'Locked', all: 'All' };
 
 /**
- * Timesheet approval for a pay period. Hours are entered by the Organisation Owner or a Branch
- * Admin, so a timesheet is simply Draft (waiting), Approved, or Locked (approved and the branch's
+ * Timesheet approval for a pay period. Hours are entered by managers on the Roster, so a timesheet is simply Draft (waiting), Approved, or Locked (approved and the branch's
  * timesheets are locked).
  */
 export default function TimesheetReview() {
-  const { access } = useAccess();
+  const { access, can } = useAccess();
   const { activeBranchId } = useActiveBranch();
   const toast = useToast();
-  const branches = useMemo(() => access?.branches ?? [], [access]);
+  // Only the branches where timesheets can be seen are offered.
+  const branches = useMemo(() => (access?.branches ?? []).filter(b => can('timesheets.view', b.id)), [access, can]);
 
   // Defaults to, and follows, the branch switched in the sidebar; "All my branches" stays available below.
   const [branchId, setBranchId] = useState<string>(() => activeBranchId || (access?.branches.length === 1 ? access.branches[0].id : ''));
@@ -170,7 +170,9 @@ export default function TimesheetReview() {
     }
   };
 
-  const approvable = rows.filter(r => r.status === 'Draft' && !r.timesheet_locked);
+  // Approving is a separate permission from viewing, held per branch: only what this person can approve is offered.
+  const mayApprove = (r: TimesheetRow) => r.status === 'Draft' && !r.timesheet_locked && can('timesheets.approve', r.location_id);
+  const approvable = rows.filter(mayApprove);
   const counts: Record<Tab, number> = {
     waiting: rows.filter(r => r.status === 'Draft').length,
     approved: rows.filter(r => r.status === 'Approved').length,
@@ -182,7 +184,7 @@ export default function TimesheetReview() {
   const visible = rows.filter(r =>
     (tab === 'all' || r.status === TAB_STATUS[tab])
     && (!query || r.full_name.toLowerCase().includes(query) || (r.department ?? '').toLowerCase().includes(query) || (r.location_name ?? '').toLowerCase().includes(query)));
-  const visibleApprovable = visible.filter(r => r.status === 'Draft' && !r.timesheet_locked);
+  const visibleApprovable = visible.filter(mayApprove);
   const allVisibleChosen = visibleApprovable.length > 0 && visibleApprovable.every(r => chosen.has(r.employee_id));
   const chosenIds = approvable.filter(r => chosen.has(r.employee_id)).map(r => r.employee_id);
 
@@ -217,7 +219,7 @@ export default function TimesheetReview() {
           onChange={e => changeBranch(e.target.value)}
           className="bg-[var(--panel)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--primary)] cursor-pointer max-w-[14rem]"
         >
-          <option value="">All my branches</option>
+          {branches.length > 1 && <option value="">All my branches</option>}
           {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (inactive)'}</option>)}
         </select>
         <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--panel)] p-0.5">
@@ -245,7 +247,7 @@ export default function TimesheetReview() {
             <div className="space-y-1.5">
               <h2 className="text-sm font-semibold text-[var(--text)]">You don’t have access to these timesheets</h2>
               <p className="text-xs leading-relaxed text-[var(--muted)]">
-                Choose one of your branches, or ask the Organisation Owner to give you access to this branch.
+                Choose one of your branches, or ask your organisation owner to give you access to this branch.
               </p>
             </div>
             <button type="button" onClick={() => load()} className={buttonClass.secondary}>Try again</button>
@@ -272,7 +274,7 @@ export default function TimesheetReview() {
               {counts.waiting} waiting · {counts.approved} approved · {counts.locked} locked
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          {approvable.length > 0 && <div className="flex flex-wrap gap-2">
             {chosenIds.length > 0 && (
               <button type="button" onClick={() => setConfirmIds(chosenIds)} disabled={bulkBusy} className={buttonClass.secondary}>
                 <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve selected ({chosenIds.length})
@@ -286,7 +288,7 @@ export default function TimesheetReview() {
             >
               <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve all waiting ({approvable.length})
             </button>
-          </div>
+          </div>}
         </div>
       </Card>
 
@@ -373,8 +375,8 @@ export default function TimesheetReview() {
           )}
           {visible.map(row => {
             const isExpanded = expanded === row.employee_id;
-            const canApprove = row.status === 'Draft' && !row.timesheet_locked;
-            const canReopen = row.status === 'Approved';
+            const canApprove = mayApprove(row);
+            const canReopen = row.status === 'Approved' && can('timesheets.reopen', row.location_id);
             const detail = details[detailKey(row.employee_id)];
             const detailId = `timesheet-days-${row.employee_id}`;
             return (
@@ -464,7 +466,7 @@ export default function TimesheetReview() {
                       <>
                         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                           <PlannedWorkedKey />
-                          <Link to="/roster" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Change days on the roster</Link>
+                          {can('rosters.view', row.location_id) && <Link to="/roster" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Change days on the roster</Link>}
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-4">
                           {[0, 1].map(week => (

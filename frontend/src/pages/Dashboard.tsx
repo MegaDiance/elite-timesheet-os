@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
-import { useActiveBranch } from '../hooks/useActiveBranch';
+import { useActiveBranch, useCan } from '../hooks/useActiveBranch';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -67,7 +67,9 @@ interface DashboardData {
   };
   branch_status: BranchStatus[];
   scheduled_today: ScheduledWorker[];
-  organisation: { name: string; sign_in_link: string | null; branch_admins: number } | null;
+  roles: string[];
+  /** Only for someone who manages security or the team. The link is null when it has expired or the caller may not see it; the count is null unless they manage the team. */
+  organisation: { name: string; sign_in_link: string | null; team_members: number | null } | null;
 }
 
 const typeLabel = (type: string | null | undefined) => (type && isEntryType(type) ? TYPE_LABEL[type] : 'Normal Work');
@@ -111,7 +113,8 @@ interface AttentionItem { key: string; icon: ReactNode; text: ReactNode; action?
 /** "Today": what needs doing first, who is working, and the pay period — for the branch chosen in the menu. */
 export default function Dashboard() {
   const toast = useToast();
-  const { can } = useAccess();
+  const { can: canAnywhere } = useAccess();
+  const can = useCan();
   const { activeBranchId, activeBranch } = useActiveBranch();
   const [reloadKey, setReloadKey] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
@@ -179,7 +182,7 @@ export default function Dashboard() {
           icon={<CalendarDays className="w-5 h-5" aria-hidden="true" />}
           title="There are no active branches to show"
           description="Everything in SimpleHours happens inside a branch: its workers, roster and timesheets. Add a branch to get started."
-          action={can('branches.manage') ? <Link to="/branches"><Button variant="primary" size="md">Add a branch</Button></Link> : undefined}
+          action={canAnywhere('branches.manage') ? <Link to="/branches"><Button variant="primary" size="md">Add a branch</Button></Link> : undefined}
         />
       </div>
     );
@@ -211,13 +214,13 @@ export default function Dashboard() {
 
   // What needs doing, most urgent first. Only things this person can act on.
   const attention: AttentionItem[] = [];
-  if (data?.organisation && !data.organisation.sign_in_link) {
+  if (data?.organisation && !data.organisation.sign_in_link && can('security.manage')) {
     attention.push({ key: 'link', icon: <AlertCircle className="w-4 h-4 text-[var(--danger)]" aria-hidden="true" />, text: <><strong>Your sign-in link has expired.</strong> Nobody can sign in until you renew it.</>, action: { to: '/settings?tab=security', label: 'Renew link' } });
   }
-  if (can('timesheets.manage') && leavePending > 0) {
+  if (can('leave.approve') && leavePending > 0) {
     attention.push({ key: 'leave', icon: <CalendarDays className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />, text: <><strong>{leavePending} leave request{leavePending === 1 ? '' : 's'}</strong> waiting for your decision.</>, action: { to: '/leave-requests', label: 'Decide' } });
   }
-  if (can('timesheets.manage') && (metrics?.timesheets_pending ?? 0) > 0) {
+  if (can('timesheets.approve') && (metrics?.timesheets_pending ?? 0) > 0) {
     attention.push({
       key: 'timesheets', icon: <FileCheck2 className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />,
       text: <><strong>{metrics!.timesheets_pending} timesheet{metrics!.timesheets_pending === 1 ? '' : 's'}</strong> not approved yet this pay period ({metrics!.timesheets_approved} of {metrics!.active_workers} done).</>,
@@ -225,7 +228,7 @@ export default function Dashboard() {
     });
   }
   if ((metrics?.unplanned_shifts_today ?? 0) > 0) {
-    attention.push({ key: 'unplanned', icon: <AlertCircle className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />, text: <><strong>{metrics!.unplanned_shifts_today} shift{metrics!.unplanned_shifts_today === 1 ? '' : 's'} worked today</strong> that {metrics!.unplanned_shifts_today === 1 ? 'isn’t' : 'aren’t'} on the roster.</>, action: can('rosters.manage') ? { to: '/roster', label: 'Check roster' } : undefined });
+    attention.push({ key: 'unplanned', icon: <AlertCircle className="w-4 h-4 text-[var(--warn)]" aria-hidden="true" />, text: <><strong>{metrics!.unplanned_shifts_today} shift{metrics!.unplanned_shifts_today === 1 ? '' : 's'} worked today</strong> that {metrics!.unplanned_shifts_today === 1 ? 'isn’t' : 'aren’t'} on the roster.</>, action: can('rosters.view') ? { to: '/roster', label: 'Check roster' } : undefined });
   }
   if (data?.public_holiday) {
     attention.push({ key: 'holiday', icon: <CalendarCheck className="w-4 h-4 text-[var(--primary-text)]" aria-hidden="true" />, text: <>Today is a public holiday: <strong>{data.public_holiday}</strong>. Hours worked today are reported as public holiday hours.</> });
@@ -249,7 +252,7 @@ export default function Dashboard() {
           {attention.length === 0 ? (
             <p className="p-4 flex items-center gap-2 text-sm text-[var(--text)]">
               <CheckCircle2 className="w-4 h-4 text-[var(--success)]" aria-hidden="true" />
-              Nothing needs you right now. Timesheets and leave are up to date.
+              Nothing needs you right now.
             </p>
           ) : (
             <ul className="divide-y divide-[var(--border)]">
@@ -268,7 +271,8 @@ export default function Dashboard() {
         </Card>
       </section>
 
-      {/* 2. Today's staffing */}
+      {/* 2. Today's staffing (the server leaves this out without permission to see rosters) */}
+      {can('rosters.view') && (
       <section aria-labelledby="staffing-heading" className="space-y-2">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
           <div>
@@ -291,7 +295,7 @@ export default function Dashboard() {
             <div className="p-6 text-center space-y-2">
               <p className="text-sm font-semibold text-[var(--text)]">{q ? `No worker matches “${searchQuery.trim()}”.` : 'Nobody is rostered today.'}</p>
               {!q && <p className="text-sm text-[var(--muted)]">Shifts added on the roster for today show up here, with who has started.</p>}
-              {!q && can('rosters.manage') && <Link to="/roster" className="inline-block"><Button variant="secondary" size="sm">Open the roster</Button></Link>}
+              {!q && can('rosters.view') && <Link to="/roster" className="inline-block"><Button variant="secondary" size="sm">Open the roster</Button></Link>}
             </div>
           ) : (
             <ul className="divide-y divide-[var(--border)] max-h-[32rem] overflow-y-auto">
@@ -318,6 +322,7 @@ export default function Dashboard() {
           )}
         </Card>
       </section>
+      )}
 
       {/* 3. The pay period */}
       {(data?.branch_status.length ?? 0) > 0 && (
@@ -334,7 +339,7 @@ export default function Dashboard() {
                   <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[var(--muted)]">
                     <span className="flex items-center gap-1.5">Roster <LockState locked={b.roster_locked} /></span>
                     <span className="flex items-center gap-1.5">Timesheets <LockState locked={b.timesheet_locked} /></span>
-                    <span>{b.timesheets_approved} of {b.active_workers} approved</span>
+                    {can('timesheets.view') && <span>{b.timesheets_approved} of {b.active_workers} approved</span>}
                   </span>
                 </li>
               ))}
@@ -343,29 +348,35 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* 4. Organisation (Owner only; the API returns null for everyone else) */}
+      {/* 4. Organisation (only for people who manage security or the team; the API returns null for everyone else) */}
       {data?.organisation && (
         <section aria-labelledby="org-heading" className="space-y-2">
           <h2 id="org-heading" className="text-sm font-semibold text-[var(--muted)]">Your organisation</h2>
           <Card className="p-4 space-y-3">
-            <div>
-              <p className="text-sm font-semibold text-[var(--text)] flex items-center gap-0.5">
-                Sign-in link
-                <HelpTip label="Sign-in link">This is the only place anyone signs in to {data.organisation.name}. Share it with your Branch Admins and any workers you give access. Manage it in Settings → Security.</HelpTip>
+            {can('security.manage') && (
+              <div>
+                <p className="text-sm font-semibold text-[var(--text)] flex items-center gap-0.5">
+                  Sign-in link
+                  <HelpTip label="Sign-in link">This is the only place anyone signs in to {data.organisation.name}. Share it with your team and any workers you give access. Manage it in Settings → Security.</HelpTip>
+                </p>
+                {data.organisation.sign_in_link ? (
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-1">
+                    <div className="flex-1 min-w-0 px-3 py-2 rounded-md bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] truncate select-all">{data.organisation.sign_in_link}</div>
+                    <Button variant="secondary" size="sm" onClick={() => handleCopyLink(data.organisation!.sign_in_link!)} leftIcon={<Copy className="w-3.5 h-3.5" aria-hidden="true" />}>Copy link</Button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-[var(--danger)] mt-1">Expired. <Link to="/settings?tab=security" className="underline font-semibold">Renew it in Settings</Link>.</p>
+                )}
+              </div>
+            )}
+            {data.organisation.team_members !== null && (
+              <p className="text-sm text-[var(--muted)]">
+                {data.organisation.team_members} team member{data.organisation.team_members === 1 ? '' : 's'} with a role ·{' '}
+                {can('users.manage') || can('roles.manage')
+                  ? <Link to="/settings/roles" className="text-[var(--primary-text)] font-semibold hover:underline">Manage people and roles</Link>
+                  : 'Only people who manage the team can change this.'}
               </p>
-              {data.organisation.sign_in_link ? (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-1">
-                  <div className="flex-1 min-w-0 px-3 py-2 rounded-md bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] truncate select-all">{data.organisation.sign_in_link}</div>
-                  <Button variant="secondary" size="sm" onClick={() => handleCopyLink(data.organisation!.sign_in_link!)} leftIcon={<Copy className="w-3.5 h-3.5" aria-hidden="true" />}>Copy link</Button>
-                </div>
-              ) : (
-                <p className="text-sm text-[var(--danger)] mt-1">Expired. <Link to="/settings?tab=security" className="underline font-semibold">Renew it in Settings</Link>.</p>
-              )}
-            </div>
-            <p className="text-sm text-[var(--muted)]">
-              {data.organisation.branch_admins} Branch Admin{data.organisation.branch_admins === 1 ? '' : 's'} ·{' '}
-              <Link to="/branch-admins" className="text-[var(--primary-text)] font-semibold hover:underline">Manage</Link>
-            </p>
+            )}
           </Card>
         </section>
       )}
