@@ -17,7 +17,7 @@ const PAGE_TITLES: Record<string, string> = {
 const NAV = [
   { label: 'Features', to: '/features' },
   { label: 'Pricing', to: '/pricing' },
-  { label: 'Security', to: '/#security' },
+  { label: 'Security', to: '/features#security' },
 ];
 
 const focusRing =
@@ -136,7 +136,11 @@ export const PublicLayout: React.FC = () => {
                 {item.label}
               </NavLink>
             ))}
-            <CtaLink to="/pricing" size="sm" className="ml-2">
+            {/* There is no generic sign-in page: each company signs in through its own link, so this helps people find theirs. */}
+            <Link to="/recover-login-link" className={`ml-2 rounded-md px-3 py-2 text-sm font-medium text-[var(--text)]/75 hover:text-[var(--text)] hover:bg-[var(--glass-4)] ${focusRing}`}>
+              Sign in
+            </Link>
+            <CtaLink to="/pricing" size="sm">
               Get started
             </CtaLink>
           </nav>
@@ -164,7 +168,10 @@ export const PublicLayout: React.FC = () => {
                 </li>
               ))}
             </ul>
-            <div className="mt-3 border-t border-[var(--border)] pt-4">
+            <div className="mt-3 grid gap-2 border-t border-[var(--border)] pt-4">
+              <CtaLink to="/recover-login-link" variant="secondary" onClick={closeMenu} className="w-full justify-center">
+                Sign in
+              </CtaLink>
               <CtaLink to="/pricing" onClick={closeMenu} className="w-full justify-center">
                 Get started
               </CtaLink>
@@ -190,8 +197,9 @@ export const PublicLayout: React.FC = () => {
               {[
                 { label: 'Features', to: '/features' },
                 { label: 'Pricing', to: '/pricing' },
-                { label: 'Security', to: '/#security' },
+                { label: 'Security', to: '/features#security' },
                 { label: 'Get started', to: '/pricing' },
+                { label: 'Find your login link', to: '/recover-login-link' },
               ].map(item => (
                 <li key={item.label}>
                   <Link

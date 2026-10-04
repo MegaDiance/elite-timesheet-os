@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Clock, Clock3, Lock, Layers, Check, ArrowRight, Building2, KeyRound, FileSpreadsheet, ScrollText, Plus } from 'lucide-react';
+import { Calendar, Clock, Clock3, Lock, Layers, Check, ArrowRight, Building2, KeyRound, FileSpreadsheet, Link2, ScrollText, ServerCog, Plus } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { CtaLink } from './ui';
 import { RosterIllustration } from './illustrations';
@@ -196,20 +196,24 @@ export const Features: React.FC = () => {
         </div>
       </div>
 
-      {/* Roles & security */}
-      <div className="border-t border-[var(--border)] pt-16">
+      {/* Access & security */}
+      <div id="security" className="border-t border-[var(--border)] pt-16 scroll-mt-20">
         <h2 className="text-2xl font-bold text-center text-[var(--text)] mb-8">Access and security</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { icon: <Building2 className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Owner and Branch Admins', text: 'Branch Admins only see their branches, checked on the server' },
-            { icon: <KeyRound className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Two-step verification', text: 'Optional email codes at sign-in' },
-            { icon: <Clock3 className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Automatic sign-out', text: 'After 15 minutes of inactivity' },
-            { icon: <ScrollText className="w-5 h-5 text-[var(--primary-text)] mx-auto" />, title: 'Audit log', text: 'Changes, for the Organisation Owner' },
-          ].map(card => (
-            <div key={card.title} className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-center space-y-1">
-              {card.icon}
-              <h3 className="font-semibold text-xs text-[var(--text)]">{card.title}</h3>
-              <p className="text-[11px] text-[var(--muted)]">{card.text}</p>
+            { icon: Building2, title: 'Organisations kept apart', text: 'Each organisation’s data is kept separate from every other organisation’s.' },
+            { icon: Layers, title: 'Access by branch and role', text: 'People only see the branches and pages their role gives them, checked on the server.' },
+            { icon: Link2, title: 'Your own login link', text: 'Each organisation signs in through its own private link. Forgot it? Your email and password find it.' },
+            { icon: KeyRound, title: 'Two-step verification', text: 'Optionally confirm each sign-in with a code sent by email.' },
+            { icon: Clock3, title: 'Automatic sign-out', text: 'Sessions end after 15 minutes of inactivity.' },
+            { icon: Lock, title: 'Password to lock', text: 'Locking a pay period’s roster or timesheets asks for a password.' },
+            { icon: ScrollText, title: 'Audit log', text: 'Review the changes made in the organisation.' },
+            { icon: ServerCog, title: 'Checked on the server', text: 'Every request is checked on the server, not just hidden on screen.' },
+          ].map(({ icon: Icon, title, text }) => (
+            <div key={title} className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] space-y-1.5">
+              <Icon aria-hidden="true" className="w-5 h-5 text-[var(--primary-text)]" />
+              <h3 className="font-semibold text-sm text-[var(--text)]">{title}</h3>
+              <p className="text-xs leading-relaxed text-[var(--muted)]">{text}</p>
             </div>
           ))}
         </div>
