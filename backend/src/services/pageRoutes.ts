@@ -19,7 +19,7 @@ export const PAGE_PATHS: readonly string[] = [
     // Account set-up flows that arrive by emailed / shared link
     '/verify-login', '/forgot-password', '/reset-password', '/signup', '/setup-organisation',
     '/accept-invite', '/accept-employee-invite',
-    // Owner-only recovery of a lost private sign-in link (creates no session; needs the owner's password)
+    // Finding a lost company login link (creates no session; needs the account's password, or emails the account)
     '/recover-login-link',
     // Signed-in application (the API authorises every request; these only need to load the app)
     '/app', '/dashboard', '/roster', '/timesheets', '/leave-requests', '/workers', '/reports',

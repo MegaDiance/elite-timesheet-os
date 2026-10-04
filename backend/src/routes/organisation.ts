@@ -6,7 +6,6 @@ import { badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } fr
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
 import { RateLimitedRequest, checkRateLimit, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
 import { currentPortalLink, issuePortalLink, parseExpiry, resolvePortalToken } from '../services/portalLink';
-import { ownerHasOrganisationNamed } from '../services/loginLinkRecovery';
 
 const router = Router();
 
@@ -114,10 +113,6 @@ router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => 
         if (body.name !== undefined) {
             const name = typeof body.name === 'string' ? body.name.trim() : '';
             if (!name || name.length > 120) throw badRequest('VALIDATION_FAILED', 'Organisation name is required (120 characters at most).');
-            const ownerId = (await query('SELECT owner_user_id FROM organisations WHERE id = $1', [ctx.orgId])).rows[0]?.owner_user_id;
-            if (ownerId && await ownerHasOrganisationNamed(ownerId, name, ctx.orgId)) {
-                throw badRequest('ORGANISATION_NAME_IN_USE', 'The owner already has another organisation with this name. Choose a different name.');
-            }
             params.push(name);
             updates.push(`name = $${params.length}`);
         }
@@ -249,11 +244,6 @@ router.post('/transfer-ownership', requireAuth, requireOwner, async (req: AuthRe
             [user_id, ctx.orgId]
         );
         if (target.rows.length === 0) throw notFound('Team member');
-        // Login link recovery finds an organisation by its owner's email and its name, so a person must not end up owning two with the same name.
-        const orgName = (await query('SELECT name FROM organisations WHERE id = $1', [ctx.orgId])).rows[0]?.name;
-        if (orgName && await ownerHasOrganisationNamed(user_id, orgName)) {
-            throw badRequest('ORGANISATION_NAME_IN_USE', 'That person already owns an organisation with this name. Rename one of them before transferring ownership.');
-        }
 
         await withTransaction(async (tx) => {
             const moved = await tx('UPDATE organisations SET owner_user_id = $1 WHERE id = $2 AND owner_user_id = $3 RETURNING id', [user_id, ctx.orgId, ctx.userId]);

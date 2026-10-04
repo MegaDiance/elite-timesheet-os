@@ -3,30 +3,34 @@ import { query, withTransaction } from './db';
 import { comparePassword, hashPassword } from './auth';
 import { ClientInfo } from './securityService';
 import { accountRateLimitKey, clearRateLimit, isRateLimited, isValidEmail, publicBaseUrl, recordFailedAttempt, sha256Hex } from './authUtils';
-import { issuePortalLink } from './portalLink';
-import { writeAudit } from './policy';
+import { currentPortalLink, issuePortalLink } from './portalLink';
+import { listAccessibleOrganisations, writeAudit } from './policy';
 import { recordLoginAttempt } from './sessionService';
-import { buildLoginLinkRecoveredEmailTemplate, isEmailSendingEnabled, sendTransactionalEmail } from './emailService';
+import {
+    buildLoginLinkRecoveredEmailTemplate, buildLoginLinksEmailTemplate, isEmailSendingEnabled, sendTransactionalEmail,
+} from './emailService';
 
 /**
- * Owner-only recovery of an organisation's private sign-in link.
+ * "I've lost my company's login link" — for anyone with a SimpleHours account.
  *
- * There is deliberately no sign-in here and no session is created. The only way to get the link
- * back is to prove three things together — the Organisation Owner's email, the organisation's
- * name, and that owner's password — and what comes back is a NEW link (the previous one is
- * replaced, which revokes it), never the old one.
+ * The login link only chooses which organisation's sign-in page to show; it grants nothing by
+ * itself. The password is the secret. So the link can be given back to whoever proves the
+ * account's email and password — exactly what signing in through the link would need anyway —
+ * without making anything weaker. Two ways:
  *
- * Everything that could distinguish "no such organisation" from "wrong password" is avoided:
- *   - one indexed lookup by (owner email, organisation name), then a bcrypt comparison that always
- *     runs, against a dummy hash when nothing matched;
- *   - every check (password, owner active, organisation active, exactly one match) is evaluated
- *     before the outcome is chosen, and every failure is the same response;
- *   - the rate-limit keys are built only from what the caller submitted, never from what exists.
+ *   1. Email + password, answered on screen: the current link of every organisation the account
+ *      can sign in to. Works while email is off. Nothing is replaced, so bookmarks keep working.
+ *      The one exception: an Organisation Owner whose link has expired or can't be shown gets a
+ *      fresh one (the old one already doesn't work, so nobody loses a working bookmark).
+ *   2. Email only, answered by email (only while email is on): the same links, sent to that
+ *      address if it belongs to an account. The response never says whether it does.
+ *
+ * Neither creates a session. Failures look the same whatever was wrong, a password comparison
+ * always runs (against a dummy hash when there is no such account), and every rate-limit key is
+ * built only from what was submitted.
  */
 
 const dummyPasswordHash = hashPassword(crypto.randomUUID());
-
-export const NAME_MAX_LENGTH = 120; // the same limit as signup and settings
 const PASSWORD_MAX_LENGTH = 1024;
 
 // ---------------------------------------------------------------------------
@@ -35,8 +39,9 @@ const PASSWORD_MAX_LENGTH = 1024;
 
 interface Bucket { failures: number; strikes: number; lockedUntil: number; touched: number }
 
-const IP_FAILURES_BEFORE_LOCK = 10; // an office can share one address, so this is looser than the per-target limit
-const TARGET_FAILURES_BEFORE_LOCK = 5;
+const IP_FAILURES_BEFORE_LOCK = 10; // an office can share one address, so this is looser than the per-email limit
+const EMAIL_FAILURES_BEFORE_LOCK = 5;
+const EMAILS_SENT_BEFORE_LOCK = 3; // per address, so the email option can't be used to flood an inbox
 const BASE_LOCK_MS = 15 * 60 * 1000;
 const MAX_LOCK_MS = 24 * 60 * 60 * 1000;
 const FORGET_AFTER_MS = 24 * 60 * 60 * 1000; // a quiet day clears the failure count and the escalation
@@ -83,18 +88,6 @@ export function resetRecoveryLimits(): void {
     buckets.clear();
 }
 
-/** The submitted values, normalised the way they are compared — the same for real and made-up organisations. */
-export function normaliseOrganisationName(raw: string): string {
-    return raw.trim();
-}
-
-/**
- * The same comparison in SQL: edge whitespace removed (as `trim()` does), case folded, nothing else.
- * Inner whitespace is never collapsed. Used by recovery and by the duplicate-name checks so that
- * "the same name" means one thing everywhere.
- */
-export const SQL_NAME_KEY = (column: string) => `LOWER(regexp_replace(${column}, '^\\s+|\\s+$', '', 'g'))`;
-
 /**
  * The address the IP limit counts. An IPv4-mapped IPv6 address counts as its IPv4 address, and an
  * IPv6 address counts as its /64 — a single subscriber routinely controls a whole /64, so
@@ -111,62 +104,95 @@ export function ipLimitKey(rawIp: string): string {
     return `${groups.slice(0, 4).map(g => parseInt(g, 16).toString(16)).join(':')}::/64`;
 }
 
-/** Two spellings of the same name — case, Unicode compatibility forms, edge whitespace — count as one target. */
-const foldForKey = (value: string) => normaliseOrganisationName(value).normalize('NFKC').toLowerCase();
-
-const limitKeys = (ip: string, email: string, orgName: string) => ({
+const limitKeys = (ip: string, email: string) => ({
     ip: `recover:ip:${ipLimitKey(ip)}`,
-    // One organisation name for one email: the pair being guessed at.
-    target: `recover:target:${sha256Hex(`${email}\n${foldForKey(orgName)}`)}`,
-    // The email alone, so trying many organisation names against one email escalates too.
     email: `recover:email:${sha256Hex(email)}`,
-    // The sign-in page's per-account budget, shared so recovery cannot guess faster than it.
+    // The sign-in page's per-account budget, shared so passwords cannot be guessed faster here than there.
     account: accountRateLimitKey(email),
 });
 
 // ---------------------------------------------------------------------------
-// Recovery
+// The links an account can use
 // ---------------------------------------------------------------------------
 
-export type RecoveryOutcome =
-    | { kind: 'rate-limited' }
-    | { kind: 'unverified' }
-    | { kind: 'recovered'; loginPath: string; loginUrl: string; expiresAt: string | null };
-
-type FailureReason = 'NOT_FOUND' | 'AMBIGUOUS_NAME' | 'PASSWORD_INCORRECT' | 'OWNER_INACTIVE' | 'ORGANISATION_INACTIVE' | 'OWNERSHIP_CHANGED';
+export interface FoundLink {
+    organisationName: string;
+    /** null when there is no working link to give: the Organisation Owner has to issue a new one. */
+    loginPath: string | null;
+    expiresAt: string | null;
+    /** True when this lookup issued a new link because the old one had stopped working (owners only). */
+    replaced: boolean;
+}
 
 const describeClient = (c: ClientInfo) => `${c.deviceInfo}, ${c.approxLocation}`;
 
 /**
- * True when `ownerId` already owns an organisation called `name` (compared the way recovery
- * compares names). Recovery names its target by owner email + organisation name, so one owner
- * must not have two organisations that answer to the same name.
+ * The working login link of each organisation `userId` can sign in to. With `replaceDeadLinks`
+ * (on-screen lookup by the account's password only), an organisation this account OWNS whose link
+ * has expired or can't be shown is given a fresh one.
  */
-export async function ownerHasOrganisationNamed(ownerId: string, name: string, exceptOrgId?: string): Promise<boolean> {
-    const res = await query(
-        `SELECT 1 FROM organisations
-          WHERE owner_user_id = $1 AND ${SQL_NAME_KEY('name')} = LOWER($2) AND ($3::uuid IS NULL OR id <> $3::uuid)
-          LIMIT 1`,
-        [ownerId, normaliseOrganisationName(name), exceptOrgId ?? null]
-    );
-    return res.rows.length > 0;
+async function linksFor(userId: string, opts: { replaceDeadLinks: boolean; client: ClientInfo }): Promise<Array<FoundLink & { orgId: string }>> {
+    const organisations = await listAccessibleOrganisations(userId);
+    const found: Array<FoundLink & { orgId: string }> = [];
+    for (const org of organisations) {
+        // Read before the link itself, so a replacement made in between is never mistaken for the dead link.
+        const seenHash = (await query('SELECT portal_slug_hash FROM organisations WHERE id = $1', [org.id])).rows[0]?.portal_slug_hash ?? null;
+        let link = await currentPortalLink(org.id);
+        let replaced = false;
+        if ((!link || link.expired) && opts.replaceDeadLinks) {
+            const fresh = await replaceOwnersDeadLink(org.id, userId, seenHash);
+            if (fresh) {
+                replaced = true;
+                await writeAudit({
+                    orgId: org.id, actorId: userId, action: 'LOGIN_LINK_ROTATED', entityType: 'organisation', entityId: org.id,
+                    details: 'Private login link replaced while looking it up (the previous one had stopped working), no expiry', ip: opts.client.ip,
+                });
+            }
+            // Either the new link, or the one a concurrent lookup issued first.
+            link = await currentPortalLink(org.id);
+        }
+        const works = Boolean(link && !link.expired);
+        found.push({
+            orgId: org.id, organisationName: org.name, loginPath: works ? link!.path : null, expiresAt: works ? link!.expiresAt : null, replaced,
+        });
+    }
+    return found;
 }
 
-export async function recoverLoginLink(
-    input: { organisation_name?: unknown; email?: unknown; password?: unknown },
-    client: ClientInfo
-): Promise<RecoveryOutcome> {
-    const { organisation_name: rawName, email: rawEmail, password } = input;
+/**
+ * Issues a new link for an organisation `ownerId` owns, but only if the link is still the dead one
+ * this lookup saw (`seenHash`). The row is locked and ownership and the hash are checked again in
+ * the same transaction, so a concurrent ownership transfer can't interleave, and a second lookup
+ * running at the same time finds the hash changed and leaves the first one's new link alone.
+ */
+async function replaceOwnersDeadLink(orgId: string, ownerId: string, seenHash: string | null) {
+    return withTransaction(async (tx) => {
+        const res = await tx(
+            `SELECT 1 FROM organisations
+              WHERE id = $1 AND owner_user_id = $2 AND is_active = true AND portal_slug_hash IS NOT DISTINCT FROM $3
+              FOR UPDATE`,
+            [orgId, ownerId, seenHash]
+        );
+        return res.rows[0] ? issuePortalLink(orgId, null, tx) : null;
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 1. Email + password, answered on screen
+// ---------------------------------------------------------------------------
+
+export type LookupOutcome =
+    | { kind: 'rate-limited' }
+    | { kind: 'unverified' }
+    | { kind: 'found'; links: Array<FoundLink & { loginUrl: string | null }> };
+
+export async function findLoginLinks(input: { email?: unknown; password?: unknown }, client: ClientInfo): Promise<LookupOutcome> {
+    const { email: rawEmail, password } = input;
     const ip = client.ip || '127.0.0.1';
 
     // Malformed or missing input is not told apart from a wrong answer: it gets the same response,
-    // takes about as long, and counts against the address. (The form checks these fields itself;
-    // this only stops the API describing what a "well-formed" attempt looks like.)
-    if (
-        typeof rawName !== 'string' || !normaliseOrganisationName(rawName) || normaliseOrganisationName(rawName).length > NAME_MAX_LENGTH ||
-        !isValidEmail(rawEmail) ||
-        typeof password !== 'string' || !password || password.length > PASSWORD_MAX_LENGTH
-    ) {
+    // takes about as long, and counts against the address.
+    if (!isValidEmail(rawEmail) || typeof password !== 'string' || !password || password.length > PASSWORD_MAX_LENGTH) {
         const ipKey = `recover:ip:${ipLimitKey(ip)}`;
         if (isLocked(ipKey)) return { kind: 'rate-limited' };
         await comparePassword('x', await dummyPasswordHash);
@@ -175,126 +201,103 @@ export async function recoverLoginLink(
     }
 
     const email = rawEmail.trim().toLowerCase();
-    const orgName = normaliseOrganisationName(rawName);
-    const keys = limitKeys(ip, email, orgName);
+    const keys = limitKeys(ip, email);
+    if (isLocked(keys.ip) || isLocked(keys.email) || isRateLimited(keys.account)) return { kind: 'rate-limited' };
 
-    if (isLocked(keys.ip) || isLocked(keys.target) || isLocked(keys.email) || isRateLimited(keys.account)) {
-        return { kind: 'rate-limited' };
-    }
+    const found = await query('SELECT id, email, is_active, password_hash FROM users WHERE LOWER(email) = $1', [email]);
+    const user = found.rows[0];
+    // Always compare, so the time taken does not say whether the account exists.
+    const passwordOk = await comparePassword(password, user?.password_hash || await dummyPasswordHash);
+    if (!user || !user.is_active || !user.password_hash || !passwordOk) return fail(user?.id, email, keys, client);
 
-    // The owner of an organisation with this name and this email. Anyone who is not organisations.owner_user_id
-    // (a Branch Admin, an Accountant, an Employee, any other role holder) cannot match this join.
-    const found = await query(
-        `SELECT o.id AS org_id, o.name AS org_name, o.is_active AS org_active,
-                u.id AS user_id, u.email, u.is_active AS user_active, u.password_hash
-           FROM users u
-           JOIN organisations o ON o.owner_user_id = u.id
-          WHERE LOWER(u.email) = $1 AND ${SQL_NAME_KEY('o.name')} = LOWER($2)`,
-        [email, orgName]
-    );
-    const candidate = found.rows[0];
-
-    // Always compare, so the time taken does not say whether the organisation or the email exists.
-    const passwordOk = await comparePassword(password, candidate?.password_hash || await dummyPasswordHash);
-
-    let reason: FailureReason | null = null;
-    if (!candidate) reason = 'NOT_FOUND';
-    else if (found.rows.length > 1) reason = 'AMBIGUOUS_NAME';
-    else if (!candidate.password_hash || !passwordOk) reason = 'PASSWORD_INCORRECT';
-    else if (!candidate.user_active) reason = 'OWNER_INACTIVE';
-    else if (!candidate.org_active) reason = 'ORGANISATION_INACTIVE';
-
-    let link: Awaited<ReturnType<typeof rotateLink>> = null;
-    if (!reason) {
-        link = await rotateLink(candidate.org_id, candidate.user_id);
-        if (!link) reason = 'OWNERSHIP_CHANGED';
-    }
-
-    if (reason || !link) return fail(reason ?? 'OWNERSHIP_CHANGED', candidate, email, keys, client);
-
-    // Verified. The failure counters for this target start again; the IP counter is left alone.
-    buckets.delete(keys.target);
     buckets.delete(keys.email);
     clearRateLimit(keys.account);
 
-    await writeAudit({
-        orgId: candidate.org_id, actorId: candidate.user_id, action: 'LOGIN_LINK_RECOVERY_SUCCESS', entityType: 'organisation', entityId: candidate.org_id,
-        details: `Owner recovered the private login link from ${describeClient(client)}`, ip: client.ip,
-    });
-    await writeAudit({
-        orgId: candidate.org_id, actorId: candidate.user_id, action: 'LOGIN_LINK_ROTATED', entityType: 'organisation', entityId: candidate.org_id,
-        details: `Private login link replaced during recovery; the previous link no longer works${link.expiresAt ? `, new link expires ${link.expiresAt}` : ', no expiry'}`, ip: client.ip,
-    });
-    await notifyOwner(candidate, client);
+    const links = await linksFor(user.id, { replaceDeadLinks: true, client });
+    for (const link of links) {
+        await writeAudit({
+            orgId: link.orgId, actorId: user.id, action: 'LOGIN_LINK_LOOKUP', entityType: 'organisation', entityId: link.orgId,
+            details: `Looked up the login link with email and password from ${describeClient(client)}`, ip: client.ip,
+        });
+    }
+    if (links.some(l => l.replaced)) await notifyOwnerOfReplacement(user.email, links.filter(l => l.replaced), client);
 
-    return { kind: 'recovered', loginPath: link.path, loginUrl: `${publicBaseUrl()}${link.path}`, expiresAt: link.expiresAt };
+    // The organisation's id stays on the server.
+    return { kind: 'found', links: links.map(({ orgId: _orgId, ...l }) => ({ ...l, loginUrl: l.loginPath ? `${publicBaseUrl()}${l.loginPath}` : null })) };
 }
 
-/**
- * Replaces the organisation's link. The organisation row is locked and ownership is checked again
- * in the same transaction, so a concurrent ownership transfer or second recovery cannot interleave.
- * An expiry the Owner chose is kept while it is still in the future; an already-expired link (a
- * common reason to recover) is replaced by one with no expiry.
- */
-async function rotateLink(orgId: string, ownerId: string) {
-    return withTransaction(async (tx) => {
-        const locked = await tx(
-            'SELECT portal_link_expires_at FROM organisations WHERE id = $1 AND owner_user_id = $2 AND is_active = true FOR UPDATE',
-            [orgId, ownerId]
-        );
-        const row = locked.rows[0];
-        if (!row) return null;
-        const expiry = row.portal_link_expires_at ? new Date(row.portal_link_expires_at) : null;
-        return issuePortalLink(orgId, expiry && expiry.getTime() > Date.now() ? expiry : null, tx);
-    });
-}
-
-async function fail(
-    reason: FailureReason,
-    candidate: { org_id: string; user_id: string } | undefined,
-    email: string,
-    keys: ReturnType<typeof limitKeys>,
-    client: ClientInfo
-): Promise<RecoveryOutcome> {
+async function fail(userId: string | undefined, email: string, keys: ReturnType<typeof limitKeys>, client: ClientInfo): Promise<LookupOutcome> {
     const ipLocked = recordFailure(keys.ip, IP_FAILURES_BEFORE_LOCK);
-    const targetLocked = recordFailure(keys.target, TARGET_FAILURES_BEFORE_LOCK);
-    const emailLocked = recordFailure(keys.email, TARGET_FAILURES_BEFORE_LOCK);
+    const emailLocked = recordFailure(keys.email, EMAIL_FAILURES_BEFORE_LOCK);
     recordFailedAttempt(keys.account);
 
-    // Every failed attempt goes to the sign-in security log (the organisation may not exist, so it
-    // has no organisation). It never stores the password or anything derived from what was typed
-    // besides the email address, exactly like a failed sign-in.
-    await recordLoginAttempt({
-        userId: candidate?.user_id, orgId: candidate?.org_id, email, status: 'FAILED', clientInfo: client, authMethod: 'login_link_recovery',
-    });
-    if (ipLocked || targetLocked || emailLocked) {
-        await recordLoginAttempt({ userId: candidate?.user_id, orgId: candidate?.org_id, email, status: 'RATE_LIMITED', clientInfo: client, authMethod: 'login_link_recovery' });
-    }
-
-    // When the attempt names a real organisation and its owner, that organisation's audit trail shows it too.
-    if (candidate) {
-        await writeAudit({
-            orgId: candidate.org_id, actorId: null, targetUserId: candidate.user_id, action: 'LOGIN_LINK_RECOVERY_FAILURE', entityType: 'organisation', entityId: candidate.org_id,
-            details: `Login link recovery was not verified (${reason}) from ${describeClient(client)}`, ip: client.ip,
-        });
+    // Every failed attempt goes to the sign-in security log, like a failed sign-in. It never stores
+    // the password or anything derived from it.
+    await recordLoginAttempt({ userId, email, status: 'FAILED', clientInfo: client, authMethod: 'login_link_recovery' });
+    if (ipLocked || emailLocked) {
+        await recordLoginAttempt({ userId, email, status: 'RATE_LIMITED', clientInfo: client, authMethod: 'login_link_recovery' });
     }
     return { kind: 'unverified' };
 }
 
 /**
- * Tells the owner, by email, that their login link was recovered and replaced. The message never
- * contains the link. While email is off (local development, MVP) nothing is sent, and a delivery
- * failure never affects the recovery: the audit log is the record either way.
+ * Tells the owner, by email, that a dead login link was replaced. The message never contains the
+ * link. While email is off nothing is sent, and a delivery failure never affects the lookup: the
+ * audit log is the record either way.
  */
-async function notifyOwner(owner: { email: string; org_id: string; org_name: string }, client: ClientInfo): Promise<void> {
+async function notifyOwnerOfReplacement(to: string, replaced: FoundLink[], client: ClientInfo): Promise<void> {
     if (!isEmailSendingEnabled()) return;
-    try {
-        const template = buildLoginLinkRecoveredEmailTemplate({
-            organisationName: owner.org_name, when: new Date().toUTCString(), deviceInfo: client.deviceInfo, approxLocation: client.approxLocation,
-        });
-        const result = await sendTransactionalEmail({ to: owner.email, subject: template.subject, html: template.html, text: template.text });
-        if (!result.success) console.warn('[LOGIN LINK RECOVERY] notification not delivered:', result.error);
-    } catch (err) {
-        console.warn('[LOGIN LINK RECOVERY] notification failed:', err instanceof Error ? err.message : 'unknown error');
+    for (const link of replaced) {
+        try {
+            const template = buildLoginLinkRecoveredEmailTemplate({
+                organisationName: link.organisationName, when: new Date().toUTCString(), deviceInfo: client.deviceInfo, approxLocation: client.approxLocation,
+            });
+            const result = await sendTransactionalEmail({ to, subject: template.subject, html: template.html, text: template.text });
+            if (!result.success) console.warn('[LOGIN LINK RECOVERY] notification not delivered:', result.error);
+        } catch (err) {
+            console.warn('[LOGIN LINK RECOVERY] notification failed:', err instanceof Error ? err.message : 'unknown error');
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Email only, answered by email
+// ---------------------------------------------------------------------------
+
+export type EmailOutcome = { kind: 'email-off' } | { kind: 'rate-limited' } | { kind: 'accepted' };
+
+/**
+ * Emails the account's working login links to the account's own address. The answer is the same
+ * whether or not the address has an account. Nothing is replaced here: an organisation without a
+ * working link is listed with a note to ask its Owner (an Owner can use the password option).
+ */
+export async function emailLoginLinks(input: { email?: unknown }, client: ClientInfo): Promise<EmailOutcome> {
+    if (!isEmailSendingEnabled()) return { kind: 'email-off' };
+    const ipKey = `recover:ip:${ipLimitKey(client.ip || '127.0.0.1')}`;
+    if (isLocked(ipKey)) return { kind: 'rate-limited' };
+    if (!isValidEmail(input.email)) {
+        recordFailure(ipKey, IP_FAILURES_BEFORE_LOCK);
+        return { kind: 'accepted' };
+    }
+
+    const email = input.email.trim().toLowerCase();
+    const sendKey = `recover:send:${sha256Hex(email)}`;
+    if (isLocked(sendKey)) return { kind: 'rate-limited' };
+    // Every request counts, real address or not, so the limiter can't be used to find real ones.
+    recordFailure(sendKey, EMAILS_SENT_BEFORE_LOCK);
+    recordFailure(ipKey, IP_FAILURES_BEFORE_LOCK);
+
+    const found = await query('SELECT id, email FROM users WHERE LOWER(email) = $1 AND is_active = true', [email]);
+    const user = found.rows[0];
+    if (!user) return { kind: 'accepted' };
+    const links = await linksFor(user.id, { replaceDeadLinks: false, client });
+    if (links.length === 0) return { kind: 'accepted' };
+
+    const template = buildLoginLinksEmailTemplate({
+        recipientEmail: user.email,
+        links: links.map(l => ({ organisationName: l.organisationName, url: l.loginPath ? `${publicBaseUrl()}${l.loginPath}` : null })),
+    });
+    const result = await sendTransactionalEmail({ to: user.email, subject: template.subject, html: template.html, text: template.text });
+    if (!result.success) console.warn('[LOGIN LINK EMAIL] not delivered:', result.error);
+    return { kind: 'accepted' };
 }

@@ -25,6 +25,8 @@ const PUBLIC_ROUTES = new Set([
     'employeeAccounts POST /invitations/accept',
     'organisation GET /lookup/:slug',
     'recovery POST /login-link',
+    'recovery POST /login-link/email',
+    'recovery GET /options',
 ]);
 
 const hasPolicy = (fn: any) => typeof fn === 'function' && typeof fn.policy === 'string';

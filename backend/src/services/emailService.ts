@@ -386,14 +386,15 @@ export function buildPasswordResetEmailTemplate(params: { resetLink: string, rec
 }
 
 /**
- * Security notice for the Organisation Owner after their private login link was recovered and
- * replaced. It deliberately contains no link: the notice is for spotting an unauthorised recovery.
+ * Security notice for the Organisation Owner after a login link that had stopped working was
+ * replaced while they looked it up. It deliberately contains no link: the notice is for spotting
+ * an unauthorised lookup.
  */
 export function buildLoginLinkRecoveredEmailTemplate(params: { organisationName: string, when: string, deviceInfo: string, approxLocation: string }): { subject: string, html: string, text: string } {
-    const subject = 'Your SimpleHours login link was recovered';
+    const subject = 'Your SimpleHours login link was replaced';
     const org = escapeHtml(params.organisationName);
     const details = `${params.deviceInfo}, ${params.approxLocation}`;
-    const text = `Your login link was recovered\n\nThe private login link for ${params.organisationName} was recovered using the Organisation Owner's email address and password, and it was replaced with a new link. The previous link no longer works.\n\nWhen: ${params.when}\nFrom: ${details}\n\nIf this was you, nothing more is needed. If it was not, change your password now and replace the login link from Settings.`;
+    const text = `Your login link was replaced\n\nThe private login link for ${params.organisationName} had stopped working, so a new one was issued when it was looked up with the Organisation Owner's email address and password.\n\nWhen: ${params.when}\nFrom: ${details}\n\nIf this was you, nothing more is needed. If it was not, change your password now and replace the login link from Settings.`;
 
     const html = `
     <!DOCTYPE html>
@@ -413,9 +414,9 @@ export function buildLoginLinkRecoveredEmailTemplate(params: { organisationName:
     <body>
       <div class="card">
         <div class="brand">SIMPLEHOURS</div>
-        <div class="title">Your login link was recovered</div>
+        <div class="title">Your login link was replaced</div>
         <p class="desc">
-          The private login link for <strong>${org}</strong> was recovered using the Organisation Owner's email address and password. It was replaced with a new link, and the previous link no longer works.
+          The private login link for <strong>${org}</strong> had stopped working, so a new one was issued when it was looked up with the Organisation Owner's email address and password.
         </p>
         <div class="facts">
           When: ${escapeHtml(params.when)}<br>
@@ -425,6 +426,59 @@ export function buildLoginLinkRecoveredEmailTemplate(params: { organisationName:
           If this was you, nothing more is needed. If it was not, change your password now and replace the login link from Settings.
         </p>
         <div class="footer">This email does not contain the login link.</div>
+      </div>
+    </body>
+    </html>
+    `;
+
+    return { subject, html, text };
+}
+
+/**
+ * The login links an account can use, sent to that account's own address when someone asks for
+ * them by email. An organisation without a working link is listed with a note to ask its Owner.
+ */
+export function buildLoginLinksEmailTemplate(params: { recipientEmail: string, links: Array<{ organisationName: string, url: string | null }> }): { subject: string, html: string, text: string } {
+    const subject = params.links.length === 1 ? 'Your SimpleHours login link' : 'Your SimpleHours login links';
+    const missing = 'This organisation has no working login link right now. Ask your Organisation Owner for the new one.';
+    const text = `Your SimpleHours login ${params.links.length === 1 ? 'link' : 'links'}\n\nSomeone asked for the login links of the SimpleHours account ${params.recipientEmail}. Bookmark the one you use.\n\n`
+        + params.links.map(l => `${l.organisationName}\n${l.url ?? missing}`).join('\n\n')
+        + `\n\nYou'll still need your password to sign in. If you didn't ask for this, you can ignore this email.`;
+
+    const rows = params.links.map(l => `
+        <div class="org">
+          <div class="org-name">${escapeHtml(l.organisationName)}</div>
+          ${l.url
+            ? `<a href="${escapeHtml(l.url)}" class="btn">Open the login page →</a>
+          <div class="url">${escapeHtml(l.url)}</div>`
+            : `<p class="desc">${missing}</p>`}
+        </div>`).join('');
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 40px 20px; }
+        .card { max-width: 540px; margin: 0 auto; background-color: #1e293b; border-radius: 20px; border: 1px solid #334155; padding: 36px; }
+        .brand { font-size: 20px; font-weight: 800; color: #6366f1; letter-spacing: -0.5px; margin-bottom: 24px; }
+        .title { font-size: 24px; font-weight: 800; color: #ffffff; margin-bottom: 12px; line-height: 1.3; }
+        .desc { font-size: 14px; line-height: 1.6; color: #94a3b8; margin: 0 0 16px; }
+        .org { background-color: #0f172a; border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+        .org-name { font-size: 15px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .btn { display: inline-block; background-color: #6366f1; color: #ffffff !important; text-decoration: none; padding: 12px 22px; border-radius: 10px; font-weight: 700; font-size: 14px; }
+        .url { margin-top: 10px; font-size: 12px; color: #6366f1; word-break: break-all; }
+        .footer { margin-top: 28px; padding-top: 20px; border-top: 1px solid #334155; font-size: 12px; color: #64748b; line-height: 1.5; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="brand">SIMPLEHOURS</div>
+        <div class="title">Your login ${params.links.length === 1 ? 'link' : 'links'}</div>
+        <p class="desc">Someone asked for the login links of <strong>${escapeHtml(params.recipientEmail)}</strong>. Bookmark the one you use.</p>
+        ${rows}
+        <div class="footer">You'll still need your password to sign in. If you didn't ask for this, you can ignore this email.</div>
       </div>
     </body>
     </html>

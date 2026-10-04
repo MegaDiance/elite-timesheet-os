@@ -7,7 +7,7 @@ import { Button } from '../../components/ui/Button';
  * Shown for any address that is not a SimpleHours page — including /login, which is deliberately
  * not a sign-in page (the server answers it with a real 404 too). Nothing here offers to sign in.
  * The one exception is a quiet "Lost your login link?" line, shown only where `offerLinkRecovery` is
- * set (/login), which leads to the owner-only recovery page — never to a form that signs anyone in.
+ * set (/login), which leads to the page that finds a company's link — never to a form that signs anyone in.
  */
 export default function NotFound({ offerLinkRecovery = false }: { offerLinkRecovery?: boolean }) {
   const signedIn = Boolean(localStorage.getItem('token'));
