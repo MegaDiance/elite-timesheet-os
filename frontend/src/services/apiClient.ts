@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { portalLoginPath } from './portal';
+import { askForPassword } from './reauth';
 
 const api = axios.create({
     // In production the API is served from the same origin as the app, so a
@@ -23,7 +24,18 @@ api.interceptors.response.use((response) => {
         localStorage.setItem('session_last_active', Date.now().toString());
     }
     return response;
-}, (error) => {
+}, async (error) => {
+    // The server wants the password again before a sensitive change: ask for it once, then send the
+    // same request again. Sign-in pages handle this themselves (the organisation switch has its own step).
+    const config = error.config;
+    if (error.response?.status === 403 && error.response?.data?.error?.code === 'REAUTH_REQUIRED'
+        && config && !config._reauthRetried && !String(config.url || '').startsWith('/auth/')) {
+        const confirmed = await askForPassword(error.response.data.error.message || 'Enter your password to continue.');
+        if (confirmed) {
+            config._reauthRetried = true;
+            return api(config);
+        }
+    }
     // A feature this page relies on was switched off since access was last read (e.g. employee
     // timesheets): re-read access so navigation and route guards drop it straight away.
     if (error.response?.status === 403 && FEATURE_OFF_CODES.has(error.response?.data?.error?.code)) {

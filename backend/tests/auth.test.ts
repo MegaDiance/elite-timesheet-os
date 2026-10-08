@@ -39,7 +39,7 @@ describe('login', () => {
 
     it('an Admin gets the Admin permissions over their assigned branches only', async () => {
         const res = await login(w.users.sarah.email, PASSWORD, { organisation_slug: w.abc.portalSlug });
-        expect(res.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+        expect(res.body.data.roles.map((r: any) => r.name)).toEqual(['Manager']);
         expect(res.body.data.is_owner).toBe(false);
         expect(res.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Melbourne', 'Richmond']);
         expect(res.body.data.permissions).not.toContain('users.manage');
@@ -125,7 +125,7 @@ describe('two-step verification', () => {
         expect(wrong.status).toBe(400);
         const ok = await request(app).post('/api/auth/verify-2fa').send({ temp_token: first.body.temp_token, code });
         expect(ok.status).toBe(200);
-        expect(ok.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+        expect(ok.body.data.roles.map((r: any) => r.name)).toEqual(['Manager']);
     });
 
     it('a code is refused once the account has lost access in between', async () => {

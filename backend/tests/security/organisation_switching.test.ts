@@ -102,8 +102,8 @@ describe('after the password: choosing and switching', () => {
         const res = await list(w.tokens.greg);
         expect(res.status).toBe(200);
         expect(res.body.data).toEqual([
-            { id: w.abc.id, name: 'ABC Health', roles: ['Admin'], is_current: true },
-            { id: w.xyz.id, name: 'XYZ Care', roles: ['Admin'], is_current: false },
+            { id: w.abc.id, name: 'ABC Health', roles: ['Manager'], is_current: true },
+            { id: w.xyz.id, name: 'XYZ Care', roles: ['Manager'], is_current: false },
         ]);
         expect(JSON.stringify(res.body)).not.toMatch(/password|token|slug|portal/i);
     });
@@ -120,7 +120,7 @@ describe('after the password: choosing and switching', () => {
         expect(res.body.data.organisation).toEqual({ id: w.xyz.id, name: 'XYZ Care' });
 
         // Organisation context: the new permissions, roles and branches are XYZ's alone.
-        expect(res.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+        expect(res.body.data.roles.map((r: any) => r.name)).toEqual(['Manager']);
         expect(res.body.data.branches.map((b: any) => b.name)).toEqual(['Sydney']);
         expect(Object.values(res.body.data.scopes).every((s: any) => s.all === false && s.branch_ids.length === 1 && s.branch_ids[0] === w.xyz.sydney)).toBe(true);
         expect(JSON.stringify(res.body.data)).not.toMatch(/"name":"(Geelong|Melbourne|Richmond)"|ABC Health/);
@@ -150,7 +150,7 @@ describe('after the password: choosing and switching', () => {
         expect((await list(token)).status).toBe(403);
         await reauth(token);
         const back = await switchTo(token, w.abc.id);
-        expect(back.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+        expect(back.body.data.roles.map((r: any) => r.name)).toEqual(['Manager']);
         expect(back.body.data.scopes['payroll.view'].branch_ids).toEqual([w.abc.geelong]);
     });
 

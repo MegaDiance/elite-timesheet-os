@@ -7,7 +7,7 @@ import app from '../src/index';
 import { clearAllRateLimits } from '../src/services/authUtils';
 import { ADMIN_DEFAULT_PERMISSIONS, ASSIGNABLE_PERMISSIONS, EMPLOYEE_PERMISSIONS } from '../src/services/permissions';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from './helpers/testDb';
-import { PERIOD, World, assignRole, bearer, buildWorld, createRole, createUser, signIn, systemRoleId } from './helpers/fixtures';
+import { PASSWORD, PERIOD, World, assignRole, bearer, buildWorld, createRole, createUser, signIn, systemRoleId } from './helpers/fixtures';
 
 let w: World;
 beforeAll(connectTestDb);
@@ -19,6 +19,7 @@ beforeEach(async () => {
 });
 
 const owner = () => bearer(w.tokens.owner);
+const reauth = (token: string) => request(app).post('/api/auth/reauthenticate').set(bearer(token)).send({ password: PASSWORD });
 const audit = async (action: string) => (await sql('SELECT * FROM audit_logs WHERE action = $1 ORDER BY created_at', [action])).rows;
 
 describe('reading roles', () => {
@@ -27,9 +28,9 @@ describe('reading roles', () => {
         expect(res.status).toBe(200);
         expect(res.body.data.can_manage).toBe(true);
         const roles = res.body.data.roles;
-        expect(roles.map((r: any) => r.name)).toEqual(['Owner', 'Admin', 'Employee']);
-        expect(roles.map((r: any) => r.member_count)).toEqual([1, 2, 2]);
-        expect(roles.every((r: any) => r.is_system)).toBe(true);
+        expect(roles.map((r: any) => r.name)).toEqual(['Owner', 'Manager', 'Employee', 'Branch Manager', 'Payroll']);
+        expect(roles.map((r: any) => r.member_count)).toEqual([1, 2, 2, 0, 0]);
+        expect(roles.map((r: any) => r.is_system)).toEqual([true, true, true, false, false]);
     });
 
     it('shows each built-in role’s real permissions', async () => {
@@ -66,7 +67,7 @@ describe('reading roles', () => {
         const res = await request(app).get('/api/roles/permissions').set(owner());
         expect(res.status).toBe(200);
         const categories = res.body.data.map((c: any) => c.category);
-        expect(categories).toEqual(['Employees', 'Rosters', 'Timesheets', 'Leave', 'Payroll', 'Organisation', 'Security', 'Employee portal']);
+        expect(categories).toEqual(['Staff', 'Schedules', 'Timesheets', 'Leave', 'Reports', 'Organisation', 'Security', 'Employee portal']);
         const portal = res.body.data.find((c: any) => c.category === 'Employee portal');
         expect(portal.permissions.every((p: any) => p.assignable === false && p.level === 'self')).toBe(true);
     });
@@ -100,7 +101,7 @@ describe('creating roles', () => {
         expect((await create({ name: '   ', permissions: [] })).status).toBe(400);
         expect((await create({ name: 'x'.repeat(61), permissions: [] })).status).toBe(400);
         expect((await create({ name: 'Payroll Manager', permissions: [] })).status).toBe(201);
-        for (const name of ['payroll manager', 'PAYROLL  MANAGER', 'Admin', 'owner', 'Employee']) {
+        for (const name of ['payroll manager', 'PAYROLL  MANAGER', 'Manager', 'owner', 'Employee', 'branch manager']) {
             const res = await create({ name, permissions: [] });
             expect([name, res.status, res.body.error?.code]).toEqual([name, 409, 'DUPLICATE_ROLE']);
         }
@@ -115,7 +116,7 @@ describe('creating roles', () => {
         expect((await create({ name: 'D', permissions: 'employees.view' })).status).toBe(400);
         expect((await create({ name: 'E', permissions: [{ key: 'employees.view' }] })).status).toBe(400);
         expect((await create({ name: 'F', description: 'x'.repeat(301), permissions: [] })).status).toBe(400);
-        expect((await sql("SELECT COUNT(*)::int AS n FROM roles WHERE system_key IS NULL")).rows[0].n).toBe(0);
+        expect((await sql("SELECT COUNT(*)::int AS n FROM roles WHERE system_key IS NULL AND name NOT IN ('Branch Manager', 'Payroll')")).rows[0].n).toBe(0);
     });
 
     it('duplicate permissions in the list are stored once', async () => {
@@ -165,7 +166,7 @@ describe('editing roles', () => {
         expect((await audit('ROLE_PERMISSIONS_CHANGED'))).toHaveLength(0);
         expect((await sql('SELECT name, description FROM roles WHERE id = $1', [roleId])).rows[0]).toEqual({ name: 'Reviewer', description: 'Reviews timesheets' });
         // A name another role has is refused, and nothing changes.
-        expect((await edit(roleId, { name: 'ADMIN' })).status).toBe(409);
+        expect((await edit(roleId, { name: 'MANAGER' })).status).toBe(409);
     });
 
     it('the Owner and Employee roles can never be edited, by anyone', async () => {
@@ -212,7 +213,7 @@ describe('deleting roles', () => {
         const roleId = await createRole(w.abc.id, 'Temporary', ['employees.view']);
         await assignRole(w.abc.id, w.users.greg.id, roleId, [w.abc.geelong]);
         await assignRole(w.abc.id, w.users.sarah.id, roleId, 'all');
-        const res = await request(app).delete(`/api/roles/${roleId}`).set(owner());
+        const res = await request(app).delete(`/api/roles/${roleId}`).set(owner()).send({ members: 'remove' });
         expect(res.status).toBe(200);
         expect((await sql('SELECT COUNT(*)::int AS n FROM roles WHERE id = $1', [roleId])).rows[0].n).toBe(0);
         expect((await sql('SELECT COUNT(*)::int AS n FROM user_roles WHERE role_id = $1', [roleId])).rows[0].n).toBe(0);
@@ -229,10 +230,11 @@ describe('deleting roles', () => {
         await assignRole(w.abc.id, nobody.id, roleId, 'all');
         const token = await signIn(nobody.id, w.abc.id);
         expect((await request(app).get('/api/employees').set(bearer(token))).status).toBe(200);
-        await request(app).delete(`/api/roles/${roleId}`).set(owner());
+        await request(app).delete(`/api/roles/${roleId}`).set(owner()).send({ members: 'remove' });
         const res = await request(app).get('/api/employees').set(bearer(token));
         expect(res.status).toBe(401);
-        expect(res.body.code).toBe('ACCESS_REVOKED');
+        // Their sessions here are ended at once, exactly as when someone is removed from the team.
+        expect(res.body.code).toBe('SESSION_REVOKED');
     });
 
     it('built-in roles cannot be deleted: not through the API, not directly in the database', async () => {
@@ -253,6 +255,7 @@ describe('invitations carry a role and where it applies', () => {
 
     it('an organisation-wide custom role: the invitation says so, and accepting it gives exactly that', async () => {
         const hr = await createRole(w.abc.id, 'HR Manager', ['users.manage', 'audit.view', 'employees.view']);
+        expect((await reauth(w.tokens.owner)).status).toBe(200); // handing out users.manage needs the password again
         const created = await invite({ email: 'hr@abc.test', full_name: 'Hana HR', role_id: hr, scope: { all: true } });
         expect(created.status).toBe(201);
         const token = tokenOf(created.body.data.invite_link);
@@ -300,7 +303,7 @@ describe('invitations carry a role and where it applies', () => {
         const me = await request(app).get('/api/auth/me').set(bearer(await signIn(w.users.melEmployee.id, w.abc.id)));
         expect(me.body.data.is_employee).toBe(true);
         expect(me.body.data.is_manager).toBe(true);
-        expect(me.body.data.roles.map((r: any) => r.name).sort()).toEqual(['Admin', 'Employee']);
+        expect(me.body.data.roles.map((r: any) => r.name).sort()).toEqual(['Employee', 'Manager']);
         expect(me.body.data.scopes['timesheets.approve']).toEqual({ all: false, branch_ids: [w.abc.melbourne] });
     });
 });

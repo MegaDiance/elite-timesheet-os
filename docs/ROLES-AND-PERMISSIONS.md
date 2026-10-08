@@ -36,12 +36,23 @@ User → assignments (role + scope) → permissions → branches
 | Role | How the person holds it | Permissions |
 |---|---|---|
 | **Owner** | `organisations.owner_user_id`. One per organisation. Never stored in `user_roles`. | Every non-self permission, entire organisation. Fixed. Can't be deleted, edited, assigned or removed. Changes hands only through `POST /api/organisation/transfer-ownership` (password re-entry, audited). |
-| **Admin** | An assignment. | Stored in `role_permissions`. New organisations get exactly what a Branch Admin always could do (employees, rosters, timesheets incl. approve/reopen/lock, leave view/approve/manage, payroll view/export, `organisation.view`). Only the owner can edit them; name and description are fixed. Existing Branch Admins were migrated to Admin assignments scoped to the branches they administered. |
+| **Manager** (system key `ADMIN`; called "Admin" before migration …801) | An assignment. | Stored in `role_permissions`. New organisations get exactly what a Branch Admin always could do (staff, schedules, timesheets incl. approve/reopen/lock, leave view/approve/manage, reports view/export, `organisation.view`). Only the owner can edit them; name and description are fixed. Existing Branch Admins were migrated to these assignments scoped to the branches they administered. |
 | **Employee** | An active worker record linked to the login (`employees.user_id`). Never stored in `user_roles`. | `portal.access`, `timesheets.submit`, `leave.create`. Fixed. |
 | **Custom** | An assignment. | Whatever the owner (or anyone with `roles.manage`, within their own access) chooses. |
 
-A person can hold several roles (e.g. Admin for Melbourne + Payroll Manager for all branches, or
-Employee + Roster Manager).
+### Preset roles (migration …801, `ROLE_PRESETS` in `services/permissions.ts`)
+
+Every organisation also starts with two **ordinary** roles, so most never build one from scratch.
+They can be renamed, edited, duplicated or deleted like any custom role; they are only created if
+the organisation has no role with that name yet.
+
+| Role | Permissions |
+|---|---|
+| **Branch Manager** | staff view/add/edit/sign-in, schedules view/create/edit, timesheets view/create/edit/approve/reopen, leave view/approve, reports view. Usually given for chosen branches. |
+| **Payroll** | staff view, timesheets view/create/edit, reports view/export. |
+
+A person can hold several roles (e.g. Manager for Melbourne + Payroll for all branches, or
+Employee + Branch Manager). Their access is the union, worked out on the server for every request.
 
 ## 2. Permission catalogue
 
@@ -92,7 +103,12 @@ One rule: **nobody can give, change or take away access they don't hold themselv
   scope — organisation-wide for an entire-organisation assignment; in every chosen branch otherwise.
 - Changing a scope must be covered for both the old and the new scope; removing a role must be covered.
 - Creating or editing a role: the caller must hold every permission it has or is given, organisation-wide.
-- Only the owner edits the Admin role. The Owner and Employee roles are never edited, assigned or deleted.
+- Only the owner edits the Manager role. The Owner and Employee roles are never edited, assigned, copied or deleted.
+- Handing out **organisation-wide control** (`users.manage`, `roles.manage`, `security.manage`,
+  `organisation.edit`, `branches.manage`) over the entire organisation needs the caller's password
+  again within the last 5 minutes (`403 REAUTH_REQUIRED`, then `POST /auth/reauthenticate`). It applies to
+  assigning, inviting, bulk-assigning, moving people into such a role when deleting another, and adding
+  such a permission to a role people already hold. The owner is not exempt.
 - Nobody changes their own assignments, and nobody assigns or removes the owner.
 - Issuing a password-reset link for someone (a way into their account) needs the same coverage of everything they hold.
 - Blocked attempts are written to the audit log (`ACCESS_ESCALATION_BLOCKED`).
@@ -122,9 +138,10 @@ authorise against the resource's own branch.
 | `GET /roles/permissions` | catalogue grouped by category: `[{category, permissions:[{key,label,description,level,assignable}]}]` |
 | `GET /roles` | `{can_manage, roles:[{id,name,description,system_key,is_system,permissions,member_count,can_edit_permissions,can_edit_details,can_delete}]}` |
 | `GET /roles/:id` | role + `members:[{user_id,email,full_name,is_active,assignment_id,scope:{all,branches:[{id,name}]}}]` |
-| `POST /roles {name,description?,permissions[]}` | create a custom role |
+| `POST /roles {name,description?,permissions[]}` | create a custom role (the editor offers "start from" an existing role, which only pre-fills the permissions) |
+| `POST /roles/:id/duplicate {name?}` | copy permissions and description into a new ordinary role ("Name copy", "Name copy 2"…); nobody is assigned |
 | `PUT /roles/:id {name?,description?,permissions?}` | edit |
-| `DELETE /roles/:id` | delete a custom role (people holding it lose it) |
+| `DELETE /roles/:id {members?, move_to_role_id?}` | delete a custom role. While people hold it, `members` is required (`409 ROLE_IN_USE` with the count): `move` gives each person `move_to_role_id` where they had this role (merged into that role if they already hold it), `remove` takes it away (anyone left with no access is signed out) |
 
 **Team** (`team.ts`; needs `users.manage`)
 
@@ -134,6 +151,7 @@ authorise against the resource's own branch.
 | `POST /team/invitations {email,full_name?,role_id,scope}` | invite; `scope` is `{all:true}` or `{branch_ids:[…]}`. While email is off the response includes `invite_link` once. |
 | `POST /team/invitations/:id/resend`, `DELETE /team/invitations/:id` | |
 | `POST /team/:userId/roles {role_id,scope}` | give a role |
+| `POST /team/bulk-assign {user_ids[],role_id,scope}` | give one role with one scope to up to 200 people; every person is checked as for a single assignment and nothing changes if any fails; people who already hold the role are returned as `skipped` |
 | `PUT /team/:userId/roles/:assignmentId {scope}` | change where it applies |
 | `DELETE /team/:userId/roles/:assignmentId` | remove a role |
 | `DELETE /team/:userId` | remove all roles |
@@ -158,6 +176,10 @@ authorise against the resource's own branch.
 `user_role_branches` (composite foreign keys keep every row inside one organisation), a trigger that
 creates the three built-in roles for every new organisation, a trigger that stops built-in roles being
 deleted, `branch_admin_invitations.role_id/scope_all`, `sessions.reauthenticated_at`.
+
+`…801_role_presets`: renames Admin to Manager (only while it still has its original name), adds the
+Branch Manager and Payroll presets to every organisation (and to new ones through `create_system_roles`),
+and renames the catalogue categories/labels to the app's words (Staff, Schedules, Reports). Keys are unchanged.
 Existing Branch Admins were backfilled as Admin assignments scoped to their branches (no extra access).
 `branch_admins` is **no longer read** but still exists; dropping it is the contract step and needs a
 backup and explicit approval (`docs/BACKEND-SCHEMA.md` §9).

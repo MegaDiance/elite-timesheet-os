@@ -26,6 +26,7 @@ export interface RoleSummary {
   can_edit_permissions: boolean;
   can_edit_details: boolean;
   can_delete: boolean;
+  can_duplicate?: boolean;
 }
 
 export interface RolesData {
@@ -129,7 +130,7 @@ export const isAssignable = (role: Pick<RoleSummary, 'system_key'>): boolean =>
 /** One line about a role. Built-in roles always use the standard wording; custom ones show their own. */
 export function roleDescription(role: Pick<RoleSummary, 'system_key' | 'description'>): string {
   if (role.system_key === 'OWNER') return 'Full organisation access';
-  if (role.system_key === 'ADMIN') return 'Administrative access';
+  if (role.system_key === 'ADMIN') return role.description?.trim() || 'Runs the day-to-day';
   if (role.system_key === 'EMPLOYEE') return 'Employee portal access';
   return role.description && role.description.trim() ? role.description : 'No description yet';
 }

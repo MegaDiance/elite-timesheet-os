@@ -180,7 +180,7 @@ describe('C3: login verification is bound to one challenge', () => {
         const ok = await request(app).post('/api/auth/verify-login').send({ challenge_id: challengeId, code });
         expect(ok.status).toBe(200);
         expect(ok.body.data.organisation.id).toBe(w.abc.id);
-        expect(ok.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+        expect(ok.body.data.roles.map((r: any) => r.name)).toEqual(['Manager']);
         expect((await request(app).post('/api/auth/verify-login').send({ challenge_id: challengeId, code })).status).toBe(400);
     });
 

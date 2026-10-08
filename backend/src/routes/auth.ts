@@ -511,12 +511,12 @@ router.post('/reauthenticate', requireAuth, async (req: AuthRequest, res: Respon
         const clientInfo = parseClientInfo(req);
         if (!ok) {
             recordFailedAttempt(accountKey);
-            await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'REAUTHENTICATION_FAILED', entityType: 'sessions', entityId: ctx.sessionId, details: 'Password re-entry failed (organisation switch)', ip: clientInfo.ip });
+            await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'REAUTHENTICATION_FAILED', entityType: 'sessions', entityId: ctx.sessionId, details: 'Password re-entry failed', ip: clientInfo.ip });
             return res.status(403).json({ success: false, error: { code: 'INVALID_PASSWORD', message: 'That password is not correct.' } });
         }
         clearRateLimit(accountKey);
         await markReauthenticated(ctx.sessionId);
-        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'REAUTHENTICATION_SUCCEEDED', entityType: 'sessions', entityId: ctx.sessionId, details: 'Password re-entered (organisation switch)', ip: clientInfo.ip });
+        await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'REAUTHENTICATION_SUCCEEDED', entityType: 'sessions', entityId: ctx.sessionId, details: 'Password re-entered', ip: clientInfo.ip });
         res.json({ success: true, data: { valid_for_seconds: REAUTH_WINDOW_MS / 1000 } });
     } catch (err) {
         sendError(res, err, 'REAUTHENTICATE ERROR');

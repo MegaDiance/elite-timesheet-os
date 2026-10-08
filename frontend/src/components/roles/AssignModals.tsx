@@ -279,3 +279,69 @@ export function InviteModal({ roles, catalogue, branches, presetRoleId, onClose,
     </Modal>
   );
 }
+
+interface BulkProps {
+  people: TeamMember[];
+  roles: RoleSummary[];
+  catalogue: PermissionGroup[];
+  branches: Branches;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}
+
+/** One role, with one "where it applies", for several people at once. All or nothing on the server. */
+export function BulkAssignModal({ people, roles, catalogue, branches, onClose, onSaved }: BulkProps) {
+  const [roleId, setRoleId] = useState('');
+  const [scope, setScope] = useState<ScopeChoice>(() => initialScope(false));
+  const [error, setError] = useState<string | null>(null);
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const role = roles.find(r => r.id === roleId);
+  const { entireOnly, mixed } = useRoleScope(role, catalogue);
+  const options = roles.filter(r => isAssignable(r));
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!roleId) { setError('Choose a role.'); return; }
+    const problem = scopeProblem(scope, entireOnly);
+    if (problem) { setScopeError(problem); return; }
+    setBusy(true);
+    try {
+      const res = await api.post('/team/bulk-assign', { user_ids: people.map(p => p.user_id), role_id: roleId, scope: scopeBody(scope) });
+      onSaved(res.data?.message || 'Role given.');
+    } catch (err) {
+      setError(accessError(err, 'The role could not be given. Nobody was changed.'));
+      setBusy(false);
+    }
+  };
+
+  const names = people.map(personName);
+  return (
+    <Modal
+      isOpen
+      onClose={busy ? () => undefined : onClose}
+      title={`Give a role to ${people.length} ${people.length === 1 ? 'person' : 'people'}`}
+      description={names.length <= 4 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`}
+      maxWidth="md"
+    >
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <FormError message={error} />
+        <Select id="bulk-role" label="Role" value={roleId} onChange={e => {
+          const next = roles.find(r => r.id === e.target.value);
+          setScope(scopeAfterRoleChange(role, next, catalogue, scope));
+          setRoleId(e.target.value);
+          setScopeError(null);
+        }} required>
+          <option value="">Choose a role</option>
+          {options.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </Select>
+        {roleId && (
+          <ScopePicker value={scope} onChange={s => { setScope(s); setScopeError(null); }} branches={branches} entireOnly={entireOnly} mixedNote={mixed} error={scopeError} />
+        )}
+        <p className="text-xs text-[var(--muted)]">Anyone who already has this role keeps it as it is.</p>
+        <Footer onCancel={onClose} busy={busy} submitLabel="Give role" />
+      </form>
+    </Modal>
+  );
+}

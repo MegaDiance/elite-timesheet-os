@@ -4,7 +4,6 @@ import { query, withTransaction } from '../services/db';
 import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { AccessContext, HttpError, assertResettableLogin, badRequest, isUuid, notFound, writeAudit } from '../services/policy';
-import { revokeUserSessionsInOrganisation } from '../services/sessionService';
 import { sendTransactionalEmail, buildTeamInviteEmailTemplate, isEmailSendingEnabled } from '../services/emailService';
 import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
@@ -13,8 +12,8 @@ import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
 import { usablePortalPath } from '../services/portalLink';
 import { isOrganisationLevel } from '../services/permissions';
 import {
-    RoleRecord, ScopeInput, assertCanChangeUser, assertCovers, assertCoversUser, assignmentsOf,
-    isMemberOfOrganisation, loadRole, readScope,
+    RoleRecord, ScopeInput, assertCanChangeUser, assertCovers, assertCoversUser, assertReauthenticatedToGrant, assignmentsOf,
+    endSessionsIfNoAccess, isMemberOfOrganisation, loadRole, readScope,
 } from '../services/roleAdmin';
 
 /**
@@ -347,6 +346,7 @@ router.post('/invitations', async (req: AuthRequest, res: Response) => {
         const scope = await readScope(ctx.orgId, req.body?.scope);
         assertScopeFitsRole(role, scope);
         await assertCovers(ctx, role.permissions, scope, `invite ${cleanEmail} as ${role.name}`, null);
+        await assertReauthenticatedToGrant(ctx, role.permissions, scope);
 
         const already = await query(
             `SELECT 1 FROM users u
@@ -503,18 +503,6 @@ router.post('/:userId/reset-password-link', async (req: AuthRequest, res: Respon
 // Assignments
 // ---------------------------------------------------------------------------
 
-/** After a change: someone left with no access here at all has their sessions here ended straight away. */
-async function endSessionsIfNoAccess(orgId: string, userId: string) {
-    const res = await query(
-        `SELECT (o.owner_user_id = $2
-                 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.org_id = o.id AND ur.user_id = $2)
-                 OR EXISTS (SELECT 1 FROM employees e WHERE e.org_id = o.id AND e.user_id = $2 AND e.is_active = true)) AS has_access
-           FROM organisations o WHERE o.id = $1`,
-        [orgId, userId]
-    );
-    if (res.rows[0] && res.rows[0].has_access !== true) await revokeUserSessionsInOrganisation(userId, orgId);
-}
-
 /** POST /api/team/:userId/roles  { role_id, scope } — give an existing team member (or worker with a sign-in) another role. */
 router.post('/:userId/roles', async (req: AuthRequest, res: Response) => {
     try {
@@ -529,6 +517,7 @@ router.post('/:userId/roles', async (req: AuthRequest, res: Response) => {
         const scope = await readScope(ctx.orgId, req.body?.scope);
         assertScopeFitsRole(role, scope);
         await assertCovers(ctx, role.permissions, scope, `give ${role.name} to another person`);
+        await assertReauthenticatedToGrant(ctx, role.permissions, scope);
 
         const duplicate = await query('SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2', [targetUserId, role.id]);
         if (duplicate.rows.length > 0) {
@@ -551,6 +540,71 @@ router.post('/:userId/roles', async (req: AuthRequest, res: Response) => {
         res.status(201).json({ success: true, data: { id }, message: `${role.name} role added.` });
     } catch (err) {
         sendError(res, err, 'ROLE ASSIGN ERROR');
+    }
+});
+
+const BULK_MAX = 200;
+
+/**
+ * POST /api/team/bulk-assign  { user_ids: [], role_id, scope }
+ *
+ * Gives one role, with one scope, to several people at once. Every person is checked exactly as
+ * a single assignment would be (not yourself, not the owner, a member of this organisation, and
+ * only access the caller holds); if any of them fails, nothing changes. People who already hold
+ * the role are left as they are and listed as skipped.
+ */
+router.post('/bulk-assign', async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const raw = req.body?.user_ids;
+        if (!Array.isArray(raw) || raw.length === 0) throw badRequest('VALIDATION_FAILED', 'Choose at least one person.');
+        if (raw.length > BULK_MAX) throw badRequest('VALIDATION_FAILED', `Choose ${BULK_MAX} people or fewer at a time.`);
+        const userIds = Array.from(new Set(raw));
+        if (!userIds.every(isUuid)) throw notFound('Person');
+
+        const role = await loadRole(ctx.orgId, req.body?.role_id);
+        assertAssignable(role);
+        const scope = await readScope(ctx.orgId, req.body?.scope);
+        assertScopeFitsRole(role, scope);
+        await assertCovers(ctx, role.permissions, scope, `give ${role.name} to ${userIds.length} people`);
+        await assertReauthenticatedToGrant(ctx, role.permissions, scope);
+        for (const userId of userIds as string[]) {
+            await assertCanChangeUser(ctx, userId);
+            if (!(await isMemberOfOrganisation(ctx.orgId, userId))) throw notFound('Person');
+        }
+
+        const already = new Set((await query(
+            'SELECT user_id FROM user_roles WHERE org_id = $1 AND role_id = $2 AND user_id = ANY($3::uuid[])',
+            [ctx.orgId, role.id, userIds]
+        )).rows.map((r: any) => r.user_id as string));
+        const toAssign = (userIds as string[]).filter(id => !already.has(id));
+
+        const created: Array<{ id: string; userId: string }> = [];
+        await withTransaction(async (tx) => {
+            for (const userId of toAssign) {
+                const id = crypto.randomUUID();
+                await tx('INSERT INTO user_roles (id, org_id, user_id, role_id, scope_all, assigned_by) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [id, ctx.orgId, userId, role.id, scope.all, ctx.userId]);
+                for (const branchId of scope.all ? [] : scope.branchIds) {
+                    await tx('INSERT INTO user_role_branches (user_role_id, org_id, location_id) VALUES ($1, $2, $3)', [id, ctx.orgId, branchId]);
+                }
+                created.push({ id, userId });
+            }
+        });
+        const named = await scopeWithNames(ctx.orgId, scope);
+        for (const c of created) {
+            await writeAudit({
+                orgId: ctx.orgId, actorId: ctx.userId, action: 'ROLE_ASSIGNED', entityType: 'user_role', entityId: c.id, targetUserId: c.userId,
+                newValue: `${role.name}: ${scopeText(named)}`, details: `Gave the ${role.name} role (${scopeText(named)}) to several people at once`,
+            });
+        }
+        res.status(201).json({
+            success: true,
+            data: { assigned: created.map(c => c.userId), skipped: [...already] },
+            message: `${role.name} given to ${created.length} ${created.length === 1 ? 'person' : 'people'}${already.size ? ` (${already.size} already had it)` : ''}.`,
+        });
+    } catch (err) {
+        sendError(res, err, 'ROLE BULK ASSIGN ERROR');
     }
 });
 
@@ -577,6 +631,7 @@ router.put('/:userId/roles/:assignmentId', async (req: AuthRequest, res: Respons
         // The caller must be able to administer both where the role applied and where it will apply.
         await assertCovers(ctx, role.permissions, current.scope, `change where ${role.name} applies`);
         await assertCovers(ctx, role.permissions, scope, `change where ${role.name} applies`);
+        if (!current.scope.all) await assertReauthenticatedToGrant(ctx, role.permissions, scope);
 
         await withTransaction(async (tx) => {
             await tx('UPDATE user_roles SET scope_all = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3', [scope.all, current.id, ctx.orgId]);

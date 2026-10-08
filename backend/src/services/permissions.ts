@@ -28,21 +28,21 @@ export interface PermissionDef {
     level: PermissionLevel;
 }
 
-export const PERMISSION_CATEGORIES = ['Employees', 'Rosters', 'Timesheets', 'Leave', 'Payroll', 'Organisation', 'Security', 'Employee portal'] as const;
+export const PERMISSION_CATEGORIES = ['Staff', 'Schedules', 'Timesheets', 'Leave', 'Reports', 'Organisation', 'Security', 'Employee portal'] as const;
 
 const def = (key: string, category: string, level: PermissionLevel, label: string, description: string): PermissionDef =>
     ({ key, category, level, label, description });
 
 export const PERMISSION_CATALOGUE: readonly PermissionDef[] = [
-    def('employees.view', 'Employees', 'branch', 'View employees', 'See workers, their details and default rosters.'),
-    def('employees.create', 'Employees', 'branch', 'Add employees', 'Add new workers to a branch.'),
-    def('employees.edit', 'Employees', 'branch', 'Edit employees', 'Change worker details and move them between branches.'),
-    def('employees.archive', 'Employees', 'branch', 'Deactivate and delete employees', 'Deactivate, reactivate or delete workers.'),
-    def('employees.manage_access', 'Employees', 'branch', 'Manage employee sign-in', 'Invite workers to the employee portal, reset their password link or remove their sign-in.'),
+    def('employees.view', 'Staff', 'branch', 'View staff', 'See employees, their details and default rosters.'),
+    def('employees.create', 'Staff', 'branch', 'Add staff', 'Add new employees to a branch, one by one or by importing a spreadsheet.'),
+    def('employees.edit', 'Staff', 'branch', 'Edit staff', 'Change employee details and move them between branches.'),
+    def('employees.archive', 'Staff', 'branch', 'Deactivate and delete staff', 'Deactivate, reactivate or delete employees.'),
+    def('employees.manage_access', 'Staff', 'branch', 'Manage employee sign-in', 'Invite employees to the employee portal, reset their password link or remove their sign-in.'),
 
-    def('rosters.view', 'Rosters', 'branch', 'View rosters', 'See who is rostered on each day.'),
-    def('rosters.create', 'Rosters', 'branch', 'Create rosters', 'Add shifts to empty days, copy days and apply default rosters.'),
-    def('rosters.edit', 'Rosters', 'branch', 'Edit rosters', 'Change or clear rostered shifts, breaks and default rosters.'),
+    def('rosters.view', 'Schedules', 'branch', 'View schedules', 'See who is rostered on each day.'),
+    def('rosters.create', 'Schedules', 'branch', 'Create schedules', 'Add shifts to empty days, copy days and apply default rosters.'),
+    def('rosters.edit', 'Schedules', 'branch', 'Edit schedules', 'Change or clear rostered shifts, breaks and default rosters.'),
 
     def('timesheets.view', 'Timesheets', 'branch', 'View timesheets', 'See worked hours and timesheet status.'),
     def('timesheets.create', 'Timesheets', 'branch', 'Create timesheets', 'Record worked hours for days that have none, including Auto-log.'),
@@ -51,12 +51,12 @@ export const PERMISSION_CATALOGUE: readonly PermissionDef[] = [
     def('timesheets.reopen', 'Timesheets', 'branch', 'Reopen timesheets', 'Reopen an approved timesheet so it can be corrected.'),
     def('timesheets.lock', 'Timesheets', 'branch', 'Lock pay periods', 'Lock and unlock the roster or timesheets of a branch for a pay period.'),
 
-    def('leave.view', 'Leave', 'branch', 'View leave requests', 'See leave requests from workers.'),
+    def('leave.view', 'Leave', 'branch', 'View leave requests', 'See leave requests from employees.'),
     def('leave.approve', 'Leave', 'branch', 'Approve leave', 'Approve or decline leave requests.'),
     def('leave.manage', 'Leave', 'branch', 'Manage leave and timesheet rules', 'Choose whether employees can submit timesheets, whether leave needs approval and whether approved leave merges into the roster.'),
 
-    def('payroll.view', 'Payroll', 'branch', 'View payroll data', 'See the payroll hours report.'),
-    def('payroll.export', 'Payroll', 'branch', 'Export payroll', 'Download the payroll report as CSV or PDF.'),
+    def('payroll.view', 'Reports', 'branch', 'View reports', 'See the payroll hours report.'),
+    def('payroll.export', 'Reports', 'branch', 'Export reports', 'Download the payroll report as CSV or PDF.'),
 
     def('organisation.view', 'Organisation', 'organisation', 'View organisation settings', 'See organisation-wide settings such as break rules.'),
     def('organisation.edit', 'Organisation', 'organisation', 'Edit organisation settings', 'Change the organisation name, break rules and public holidays.'),
@@ -131,12 +131,12 @@ export interface SystemRoleDef {
 
 export const SYSTEM_ROLES: readonly SystemRoleDef[] = [
     { key: 'OWNER', name: 'Owner', description: 'Full access to the whole organisation. Can’t be removed or changed.' },
-    { key: 'ADMIN', name: 'Admin', description: 'Runs the day-to-day: workers, rosters, timesheets, leave and payroll.' },
+    { key: 'ADMIN', name: 'Manager', description: 'Runs the day-to-day: staff, schedules, timesheets, leave and payroll.' },
     { key: 'EMPLOYEE', name: 'Employee', description: 'Uses the employee portal for their own roster, timesheet and leave.' },
 ];
 
 /**
- * What a new organisation's Admin role holds. It is exactly what a Branch Admin could always do,
+ * What a new organisation's Manager role (system key ADMIN) holds. It is exactly what a Branch Admin could always do,
  * plus reading organisation settings; the Owner can add or remove permissions from it afterwards.
  * Migration …800 and the organisations trigger use the same list (a test compares them).
  */
@@ -148,6 +148,36 @@ export const ADMIN_DEFAULT_PERMISSIONS: readonly Permission[] = [
     'payroll.view', 'payroll.export',
     'organisation.view',
 ];
+
+/**
+ * Ordinary roles every new organisation starts with, so most businesses never build one from
+ * scratch. Unlike the built-in roles they can be renamed, edited, duplicated or deleted.
+ * Migration …801 creates them with the same lists (a test compares them).
+ */
+export const ROLE_PRESETS: ReadonlyArray<{ name: string; description: string; permissions: readonly Permission[] }> = [
+    {
+        name: 'Branch Manager',
+        description: 'Runs the branches they’re given: staff, schedules, timesheets and leave.',
+        permissions: [
+            'employees.view', 'employees.create', 'employees.edit', 'employees.manage_access',
+            'rosters.view', 'rosters.create', 'rosters.edit',
+            'timesheets.view', 'timesheets.create', 'timesheets.edit', 'timesheets.approve', 'timesheets.reopen',
+            'leave.view', 'leave.approve',
+            'payroll.view',
+        ],
+    },
+    {
+        name: 'Payroll',
+        description: 'Records and checks hours, and exports the payroll report.',
+        permissions: ['employees.view', 'timesheets.view', 'timesheets.create', 'timesheets.edit', 'payroll.view', 'payroll.export'],
+    },
+];
+
+/**
+ * Permissions that hand out organisation-wide control. Giving them to someone (through a role or a
+ * change to a role people already hold) needs the caller's password again.
+ */
+export const HIGH_PRIVILEGE_PERMISSIONS: readonly Permission[] = ['users.manage', 'roles.manage', 'security.manage', 'organisation.edit', 'branches.manage'];
 
 /** The Employee role is fixed: it is what the portal needs and nothing more. */
 export const EMPLOYEE_PERMISSIONS: readonly Permission[] = ['portal.access', 'timesheets.submit', 'leave.create'];

@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { ChevronRight, Plus, Shield, Users } from 'lucide-react';
+import { Copy, Pencil, Plus, Shield, Users } from 'lucide-react';
+import api from '../../services/apiClient';
+import { Menu } from '../ui/Menu';
+import { useToast } from '../ui/Toast';
+import { accessError } from './accessError';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Skeleton } from '../ui/Skeleton';
@@ -20,6 +24,18 @@ interface Props {
 
 export default function RolesTab({ roles, catalogue, team, canManageUsers, onRetry, onChanged, onInvite }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const toast = useToast();
+
+  const duplicate = async (id: string) => {
+    try {
+      const res = await api.post(`/roles/${id}/duplicate`);
+      toast.success(res.data?.message || 'Role copied.');
+      onChanged();
+      setOpenId(res.data.data.id);
+    } catch (err) {
+      toast.error(accessError(err, 'The role could not be copied.'));
+    }
+  };
 
   const error = roles.error || catalogue.error;
   const loading = roles.loading || catalogue.loading;
@@ -66,29 +82,35 @@ export default function RolesTab({ roles, catalogue, team, canManageUsers, onRet
 
       <ul className="rounded-lg border border-[var(--border)] bg-[var(--panel)] divide-y divide-[var(--border)] overflow-hidden">
         {list.map(role => (
-          <li key={role.id}>
+          <li key={role.id} className="flex items-center gap-1 pr-2">
             <button
               type="button"
               onClick={() => setOpenId(role.id)}
-              className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--hover-row)] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--primary)]"
+              className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--hover-row)] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--primary)]"
             >
               <span className="w-9 h-9 rounded-lg bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center shrink-0" aria-hidden="true">
                 <Shield className="w-4 h-4" />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-sm font-semibold text-[var(--text)]">{role.name}</span>
+                  <span className="text-sm font-semibold text-[var(--text)] break-words">{role.name}</span>
                   {role.is_system && <Badge variant="info" size="sm">Built-in</Badge>}
                 </span>
-                <span className="block text-xs text-[var(--muted)] mt-0.5">{roleDescription(role)}</span>
+                <span className="block text-xs text-[var(--muted)] mt-0.5 truncate">{roleDescription(role)}</span>
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--muted)] shrink-0">
                 <Users className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>{pluralPeople(role.member_count)}</span>
               </span>
-              <ChevronRight className="w-4 h-4 text-[var(--muted)] shrink-0" aria-hidden="true" />
               <span className="sr-only">Open {role.name}</span>
             </button>
+            <Menu
+              label={`More actions for ${role.name}`}
+              items={[
+                { label: role.can_edit_permissions || role.can_edit_details ? 'Edit' : 'View', icon: <Pencil />, onSelect: () => setOpenId(role.id) },
+                { label: 'Duplicate', icon: <Copy />, onSelect: () => duplicate(role.id), disabled: !role.can_duplicate },
+              ]}
+            />
           </li>
         ))}
       </ul>

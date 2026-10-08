@@ -1,6 +1,7 @@
 import { useEffect, useRef, type JSX } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import { ReauthPrompt } from './components/modals/ReauthPrompt';
 import { PublicLayout } from './layouts/PublicLayout';
 import { Home } from './pages/public/Home';
 import { Features } from './pages/public/Features';
@@ -90,6 +91,8 @@ function AppShell() {
     <ActiveBranchProvider>
       <AccessSync />
       <Layout />
+      {/* After the page, so it sits above any dialog that triggered it. */}
+      <ReauthPrompt />
     </ActiveBranchProvider>
   );
 }

@@ -168,7 +168,7 @@ describe('Branch and organisation isolation', () => {
                 process.env.JWT_SECRET as string
             );
             const me = await request(app).get('/api/auth/me').set(bearer(forged));
-            expect(me.body.data.roles.map((r: any) => r.name)).toEqual(['Admin']);
+            expect(me.body.data.roles.map((r: any) => r.name)).toEqual(['Manager']);
             expect(me.body.data.is_owner).toBe(false);
             expect(me.body.data.organisation.id).toBe(w.abc.id);
             const settings = await request(app).put('/api/organisation/settings').set(bearer(forged)).send({ break_mins_weekday: 0 });

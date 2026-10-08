@@ -17,7 +17,9 @@ const SCANNED = ['backend/src', 'frontend/src'];
 
 const FORBIDDEN: Array<[string, RegExp]> = [
     ['removed role keys', /\b(ORG_ADMIN|ORG_MANAGER|ORG_OWNER|BRANCH_MANAGER|PLATFORM_ADMIN|PAYROLL|FINANCE|STAFF|BRANCH_ADMIN)\b/],
-    ['legacy role names', /\b(Platform Admin|Company Admin|Org(anisation)? Admin|Org(anisation)? Manager|Branch Manager)\b/i],
+    // "Branch Manager" is allowed again as the NAME of an ordinary preset role (migration …801): its
+    // access comes only from its permissions. The old fixed role key BRANCH_MANAGER stays banned above.
+    ['legacy role names', /\b(Platform Admin|Company Admin|Org(anisation)? Admin|Org(anisation)? Manager)\b/i],
     ['legacy role storage', /\b(organisation_members|location_memberships|location_invitations|invitation_tokens|org_invitation_tokens)\b|users\.role\b|\bu\.role\b/],
     ['reads of the retired branch_admins table', /\bbranch_admins\b/],
     ['legacy guards', /\b(requireRole|requireOrgOwner|requireAnyBranchPermission|requireLocationContext|requireTenantContext|securityContext|isPlatformAdmin)\b/],

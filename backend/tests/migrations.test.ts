@@ -85,17 +85,17 @@ describe('two-role migrations on legacy data', () => {
         ]);
     });
 
-    it('each Branch Admin became an Admin role assignment scoped to exactly their branches — nothing more, and the Owner and employees are not duplicated into it', async () => {
+    it('each Branch Admin became a Manager (built-in ADMIN) role assignment scoped to exactly their branches — nothing more, and the Owner and employees are not duplicated into it', async () => {
         const assignments = await q(`SELECT u.email, r.name AS role, ur.scope_all, l.name AS branch
                                        FROM user_roles ur JOIN users u ON u.id = ur.user_id JOIN roles r ON r.id = ur.role_id
                                        LEFT JOIN user_role_branches urb ON urb.user_role_id = ur.id
                                        LEFT JOIN locations l ON l.id = urb.location_id
                                       ORDER BY 1, 4`);
         expect(assignments).toEqual([
-            { email: 'coadmin@apex.test', role: 'Admin', scope_all: false, branch: 'Melbourne' },
-            { email: 'coadmin@apex.test', role: 'Admin', scope_all: false, branch: 'Richmond' },
-            { email: 'mgr@apex.test', role: 'Admin', scope_all: false, branch: 'Melbourne' },
-            { email: 'mgr@bl.test', role: 'Admin', scope_all: false, branch: 'Main Branch' },
+            { email: 'coadmin@apex.test', role: 'Manager', scope_all: false, branch: 'Melbourne' },
+            { email: 'coadmin@apex.test', role: 'Manager', scope_all: false, branch: 'Richmond' },
+            { email: 'mgr@apex.test', role: 'Manager', scope_all: false, branch: 'Melbourne' },
+            { email: 'mgr@bl.test', role: 'Manager', scope_all: false, branch: 'Main Branch' },
         ]);
         // Exactly the branch_admins rows, viewed through the new tables.
         expect(await q(`SELECT ba.org_id, ba.location_id, ba.user_id FROM branch_admins ba
@@ -105,7 +105,7 @@ describe('two-role migrations on legacy data', () => {
     it('every organisation, including switched-off ones, has its three built-in roles and the standard Admin permissions', async () => {
         const perOrg = await q("SELECT org_id, COUNT(*)::int AS n, COUNT(system_key)::int AS built_in FROM roles GROUP BY org_id");
         expect(perOrg).toHaveLength(3);
-        for (const row of perOrg) expect([row.n, row.built_in]).toEqual([3, 3]);
+        for (const row of perOrg) expect([row.n, row.built_in]).toEqual([5, 3]); // plus the Branch Manager and Payroll presets (…801)
         expect((await q("SELECT COUNT(*)::int AS n FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.system_key = 'ADMIN' AND rp.permission_key = 'timesheets.approve'"))[0].n).toBe(3);
         expect((await q("SELECT COUNT(*)::int AS n FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.system_key = 'ADMIN' AND rp.permission_key IN ('users.manage', 'roles.manage', 'audit.view', 'security.manage')"))[0].n).toBe(0);
     });

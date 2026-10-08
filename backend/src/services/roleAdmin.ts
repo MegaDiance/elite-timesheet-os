@@ -3,9 +3,10 @@ import {
     AccessContext, HttpError, badRequest, canAccessBranch, forbidden, isUuid, notFound, writeAudit,
 } from './policy';
 import {
-    ASSIGNABLE_PERMISSIONS, EMPLOYEE_PERMISSIONS, OWNER_PERMISSIONS, Permission, SystemRoleKey,
+    ASSIGNABLE_PERMISSIONS, EMPLOYEE_PERMISSIONS, HIGH_PRIVILEGE_PERMISSIONS, OWNER_PERMISSIONS, Permission, SystemRoleKey,
     isBranchLevel, isPermissionKey, permissionDef,
 } from './permissions';
+import { hasFreshReauthentication, revokeUserSessionsInOrganisation } from './sessionService';
 
 /**
  * Rules for who may hand out what.
@@ -166,3 +167,31 @@ export async function assertCoversUser(ctx: AccessContext, targetUserId: string,
         await assertCovers(ctx, assignment.permissions, assignment.scope, action);
     }
 }
+
+/**
+ * Handing out organisation-wide control (managing people, roles, security, branches or the
+ * organisation itself) needs the caller's password again, within the last few minutes
+ * (POST /api/auth/reauthenticate). It applies to everyone, the owner included, so a session left
+ * open on a shared computer can't be used to give someone else the keys. `permissions` is what is
+ * being handed out; over chosen branches organisation-level permissions do nothing, so nothing is
+ * checked there.
+ */
+export async function assertReauthenticatedToGrant(ctx: AccessContext, permissions: readonly string[], scope: ScopeInput | 'organisation'): Promise<void> {
+    if (scope !== 'organisation' && !scope.all) return;
+    if (!permissions.some(p => (HIGH_PRIVILEGE_PERMISSIONS as readonly string[]).includes(p))) return;
+    if (await hasFreshReauthentication(ctx.sessionId)) return;
+    throw new HttpError(403, 'REAUTH_REQUIRED', 'This gives organisation-wide control. Enter your password to continue.');
+}
+
+/** After a change: someone left with no access here at all has their sessions here ended straight away. */
+export async function endSessionsIfNoAccess(orgId: string, userId: string): Promise<void> {
+    const res = await query(
+        `SELECT (o.owner_user_id = $2
+                 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.org_id = o.id AND ur.user_id = $2)
+                 OR EXISTS (SELECT 1 FROM employees e WHERE e.org_id = o.id AND e.user_id = $2 AND e.is_active = true)) AS has_access
+           FROM organisations o WHERE o.id = $1`,
+        [orgId, userId]
+    );
+    if (res.rows[0] && res.rows[0].has_access !== true) await revokeUserSessionsInOrganisation(userId, orgId);
+}
+

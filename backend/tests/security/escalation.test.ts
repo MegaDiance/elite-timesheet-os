@@ -187,6 +187,7 @@ describe('roles that only make sense organisation-wide', () => {
         const hr = await createRole(w.abc.id, 'HR Manager', ['users.manage', 'audit.view']);
         const res = await request(app).post(`/api/team/${w.users.greg.id}/roles`).set(bearer(w.tokens.owner)).send({ role_id: hr, scope: { branch_ids: [w.abc.geelong] } });
         expect([res.status, res.body.error.code]).toEqual([400, 'SCOPE_NOT_SUPPORTED']);
+        await request(app).post('/api/auth/reauthenticate').set(bearer(w.tokens.owner)).send({ password: PASSWORD });
         const organisationWide = await request(app).post(`/api/team/${w.users.greg.id}/roles`).set(bearer(w.tokens.owner)).send({ role_id: hr, scope: { all: true } });
         expect(organisationWide.status).toBe(201);
         expect((await request(app).get('/api/audit').set(bearer(w.tokens.greg))).status).toBe(200);

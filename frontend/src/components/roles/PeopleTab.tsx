@@ -10,7 +10,7 @@ import { HelpTip } from '../ui/HelpTip';
 import { TableSkeleton } from '../ui/Skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { useToast } from '../ui/Toast';
-import { AssignRoleModal, ChangeScopeModal } from './AssignModals';
+import { AssignRoleModal, BulkAssignModal, ChangeScopeModal } from './AssignModals';
 import type { LinkToShare } from './CopyLinkModal';
 import LoadFailed from './LoadFailed';
 import type { Loadable } from './useRolesData';
@@ -110,6 +110,9 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
   const [busy, setBusy] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
+  // People chosen for "Give a role" (never the owner or yourself: nobody changes those here).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const data = team.data;
   const rolesReady = Boolean(roles && catalogue);
@@ -136,6 +139,24 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
       return hay.filter(Boolean).join(' ').toLowerCase().includes(q);
     });
   }, [data, search]);
+
+  const selectable = (m: TeamMember) => !m.is_owner && !m.is_self;
+  const toggleSelected = (id: string) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const visibleSelectable = rows.flatMap(r => (r.kind === 'person' && selectable(r.member) ? [r.member.user_id] : []));
+  const allVisibleSelected = visibleSelectable.length > 0 && visibleSelectable.every(id => selected.has(id));
+  const selectBox = (m: TeamMember) => selectable(m) ? (
+    <input
+      type="checkbox"
+      className="h-4 w-4 cursor-pointer"
+      checked={selected.has(m.user_id)}
+      onChange={() => toggleSelected(m.user_id)}
+      aria-label={`Choose ${personName(m)}`}
+    />
+  ) : null;
 
   if (team.error) return <LoadFailed title="The people list could not be loaded" message={team.error} onRetry={onRetry} />;
   if (team.loading || !data) return <div aria-busy="true" aria-label="Loading people"><TableSkeleton rows={4} /></div>;
@@ -362,6 +383,14 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
         </Button>
       </div>
 
+      {selected.size > 0 && (
+        <div role="region" aria-label="Chosen people" className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-md bg-[var(--primary-light)] border border-[var(--primary)]/30 text-sm">
+          <span className="font-medium text-[var(--text)]">{selected.size} chosen</span>
+          <Button variant="primary" size="sm" onClick={() => setBulkOpen(true)} disabled={!rolesReady}>Give a role</Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+        </div>
+      )}
+
       {rows.length === 0 ? (
         data.members.length + data.invitations.length === 0 ? (
           <EmptyState icon={<Users className="w-5 h-5" />} title="No one has access yet" description="Invite someone and choose what they can do. They get a private link to set up their sign-in." actionLabel="Invite person" onAction={onInvite} />
@@ -375,6 +404,17 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead scope="col" className="w-10">
+                    {visibleSelectable.length > 0 && (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer"
+                        checked={allVisibleSelected}
+                        onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(visibleSelectable))}
+                        aria-label="Choose everyone shown"
+                      />
+                    )}
+                  </TableHead>
                   <TableHead scope="col">Person</TableHead>
                   <TableHead scope="col">Roles</TableHead>
                   <TableHead scope="col">Branch access</TableHead>
@@ -385,6 +425,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
               <TableBody>
                 {rows.map(row => row.kind === 'person' ? (
                   <TableRow key={row.member.user_id}>
+                    <TableCell>{selectBox(row.member)}</TableCell>
                     <TableCell>{identity(personName(row.member), row.member.email, Boolean(row.member.full_name), row.member.is_self && <Badge variant="info" size="sm">You</Badge>)}</TableCell>
                     <TableCell className="max-w-sm">{chips(row.member)}</TableCell>
                     <TableCell className="text-xs text-[var(--text)]"><span title={branchAccess(row.member, givesBranchAccess).full}>{branchAccess(row.member, givesBranchAccess).text}</span></TableCell>
@@ -393,6 +434,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
                   </TableRow>
                 ) : (
                   <TableRow key={row.invitation.id}>
+                    <TableCell />
                     <TableCell>{identity(personName(row.invitation), row.invitation.email, Boolean(row.invitation.full_name))}</TableCell>
                     <TableCell className="max-w-sm">{inviteChip(row.invitation)}</TableCell>
                     <TableCell className="text-xs text-[var(--text)]">{inviteBranches(row.invitation)}</TableCell>
@@ -412,7 +454,10 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
             {rows.map(row => row.kind === 'person' ? (
               <li key={row.member.user_id} className="p-4 rounded-lg border border-[var(--border)] bg-[var(--panel)] space-y-3">
                 <div className="flex items-start justify-between gap-2">
-                  {identity(personName(row.member), row.member.email, Boolean(row.member.full_name), row.member.is_self && <Badge variant="info" size="sm">You</Badge>)}
+                  <div className="flex items-start gap-3 min-w-0">
+                    {selectBox(row.member) && <span className="pt-0.5">{selectBox(row.member)}</span>}
+                    {identity(personName(row.member), row.member.email, Boolean(row.member.full_name), row.member.is_self && <Badge variant="info" size="sm">You</Badge>)}
+                  </div>
                   {statusBadge(row.member)}
                 </div>
                 {chips(row.member)}
@@ -446,6 +491,17 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
           branches={branches}
           onClose={() => setAdding(null)}
           onSaved={afterAssign}
+        />
+      )}
+
+      {bulkOpen && roles && catalogue && (
+        <BulkAssignModal
+          people={data.members.filter(m => selected.has(m.user_id))}
+          roles={roles.roles}
+          catalogue={catalogue}
+          branches={branches}
+          onClose={() => setBulkOpen(false)}
+          onSaved={message => { setBulkOpen(false); setSelected(new Set()); afterAssign(message); }}
         />
       )}
 
