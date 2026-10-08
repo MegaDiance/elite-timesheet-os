@@ -15,8 +15,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import NotFound from './pages/public/NotFound';
 import { portalLoginPath } from './services/portal';
+import { landingPath } from './utils/landing';
 
-import Dashboard from './pages/Dashboard';
 import Roster from './pages/Roster';
 import TimesheetReview from './pages/TimesheetReview';
 import Employees from './pages/Employees';
@@ -94,13 +94,18 @@ function AppShell() {
   );
 }
 
-/** Managers land on the dashboard; someone who is only an employee lands on their schedule. */
+/** There is no dashboard: everyone lands on the page they work in (see utils/landing). */
 function DefaultLanding() {
   const { access, loading } = useAccess();
   if (loading) return <Loading />;
-  if (access?.is_manager) return <Navigate to="/dashboard" replace />;
-  if (access?.is_employee) return <Navigate to="/my/schedule" replace />;
-  return <NoAccess />;
+  const path = landingPath(access);
+  return path ? <Navigate to={path} replace /> : <NoAccess />;
+}
+
+/** Old addresses (bookmarks, emails) keep working. */
+function Moved({ to }: { to: string }) {
+  const { search, hash } = useLocation();
+  return <Navigate to={`${to}${search}${hash}`} replace />;
 }
 
 export default function App() {
@@ -130,17 +135,22 @@ export default function App() {
         {/* Signed-in application */}
         <Route element={<AppShell />}>
           <Route path="/app" element={<DefaultLanding />} />
-          <Route path="/dashboard" element={<Guard><Dashboard /></Guard>} />
-          <Route path="/roster" element={<Guard permission="rosters.view"><Roster /></Guard>} />
           <Route path="/timesheets" element={<Guard permission="timesheets.view"><TimesheetReview /></Guard>} />
-          <Route path="/leave-requests" element={<Guard permission="leave.view"><LeaveRequests /></Guard>} />
-          <Route path="/workers" element={<Guard anyOf={['employees.view', 'rosters.view']}><Employees /></Guard>} />
+          <Route path="/schedule" element={<Guard permission="rosters.view"><Roster /></Guard>} />
+          <Route path="/leave" element={<Guard permission="leave.view"><LeaveRequests /></Guard>} />
+          <Route path="/staff" element={<Guard anyOf={['employees.view', 'rosters.view']}><Employees /></Guard>} />
           <Route path="/reports" element={<Guard permission="payroll.view"><Reports /></Guard>} />
-          <Route path="/branches" element={<Guard><Locations /></Guard>} />
-          <Route path="/audit" element={<Guard permission="audit.view"><Audit /></Guard>} />
           <Route path="/announcements" element={<Guard><Announcements /></Guard>} />
           <Route path="/settings" element={<Guard><Settings /></Guard>} />
+          <Route path="/settings/branches" element={<Guard><Locations /></Guard>} />
           <Route path="/settings/roles" element={<Guard anyOf={['roles.manage', 'users.manage']}><RolesPermissions /></Guard>} />
+          <Route path="/settings/audit" element={<Guard permission="audit.view"><Audit /></Guard>} />
+          <Route path="/dashboard" element={<Moved to="/app" />} />
+          <Route path="/roster" element={<Moved to="/schedule" />} />
+          <Route path="/leave-requests" element={<Moved to="/leave" />} />
+          <Route path="/workers" element={<Moved to="/staff" />} />
+          <Route path="/branches" element={<Moved to="/settings/branches" />} />
+          <Route path="/audit" element={<Moved to="/settings/audit" />} />
 
           {/* Employee portal */}
           <Route path="/my/schedule" element={<EmployeeGuard><EmployeeSchedule /></EmployeeGuard>} />

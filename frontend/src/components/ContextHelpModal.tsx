@@ -16,11 +16,11 @@ interface Faq { q: string; a: string }
 const MANAGER_FAQS = (isOwner: boolean, canEditOrganisation: boolean): Faq[] => [
   {
     q: 'How do I add a shift?',
-    a: 'Open Roster, find the worker, and click the day. Enter a start and finish, for example 9 and 5p, then Save roster. To record what they actually worked, fill in the Worked part of the same day, or use “Worked the rostered times”.',
+    a: 'Open Schedule, find the employee, and click the day. Enter a start and finish, for example 9 and 5p, then Save roster. To record what they actually worked, fill in the Worked part of the same day, or use “Worked the rostered times”.',
   },
   {
     q: 'How do I enter a split day or part-day leave?',
-    a: 'Use “Add time” in the day to add another line, and choose its type. For example 9–1 Work, 1–3 Sick leave, 3–5 Work. Lines can’t overlap. If your organisation merges leave with the roster (Settings → Workforce), adding leave inside a shift splits the shift around it automatically, and the day tells you it did.',
+    a: 'Use “Add time” in the day to add another line, and choose its type. For example 9–1 Work, 1–3 Sick leave, 3–5 Work. Lines can’t overlap. If your organisation merges leave with the roster (Settings → Timesheets & leave), adding leave inside a shift splits the shift around it automatically, and the day tells you it did.',
   },
   {
     q: 'How do breaks work?',

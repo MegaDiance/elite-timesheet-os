@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileSpreadsheet, Filter, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import api from '../services/apiClient';
 import { useAccess } from '../hooks/useAccess';
+import { SettingsNav } from '../components/SettingsNav';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { friendlyError } from '../services/errors';
@@ -179,19 +180,11 @@ export default function Audit() {
 
   return (
     <div className="flex flex-col md:h-[calc(100dvh-5rem)] md:overflow-hidden space-y-4">
-      {/* Header */}
+      <SettingsNav />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Audit log</h1>
-            <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[var(--success-light)] text-[var(--success)] border border-[var(--success)]/20">
-              <ShieldCheck className="w-3.5 h-3.5" /> Cannot be edited
-            </span>
-          </div>
-          <p className="text-sm text-[var(--muted)]">
-            Every change made in your organisation: who did it, when, and what changed.
-          </p>
-        </div>
+        <p className="text-sm text-[var(--muted)]">
+          Every change made in your organisation: who did it, when, and what changed. Entries can’t be edited.
+        </p>
 
         <div className="flex items-center gap-2 flex-wrap">
           <Button

@@ -125,7 +125,7 @@ export function requireAnyPermission(...permissions: Permission[]): PolicyHandle
     );
 }
 
-/** Coarse gate for shared management screens (holidays, noticeboard, dashboard): the caller must hold at least one management permission. */
+/** Coarse gate for shared management screens (holidays, noticeboard, navigation counts): the caller must hold at least one management permission. */
 export const requireManagement: PolicyHandler = Object.assign(
     (req: AuthRequest, res: Response, next: NextFunction) => {
         if (!req.auth) return deny(res, 401, 'UNAUTHENTICATED', 'Unauthorized');

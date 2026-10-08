@@ -187,7 +187,7 @@ describe('workers appear throughout the product', () => {
         await request(app).post('/api/records').set(bearer(w.tokens.sarah)).send({ employee_id: w.workers.mel, record_date: '2026-03-30', ...simpleDay(true) });
         const report = await request(app).get(`/api/reports/payroll?start_date=${PERIOD}`).set(bearer(w.tokens.sarah));
         expect(report.body.data.employees.some((r: any) => r.employee_id === w.workers.mel)).toBe(true);
-        const dash = await request(app).get(`/api/dashboard/today?location_id=${w.abc.melbourne}&date=2026-03-30`).set(bearer(w.tokens.sarah));
-        expect(dash.body.data.scheduled_today.some((s: any) => s.employee_id === w.workers.mel)).toBe(true);
+        const records = await request(app).get(`/api/records?start_date=${PERIOD}`).set(bearer(w.tokens.sarah));
+        expect(records.body.data.some((r: any) => r.employee_id === w.workers.mel)).toBe(true);
     });
 });

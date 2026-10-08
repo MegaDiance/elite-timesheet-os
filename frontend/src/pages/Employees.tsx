@@ -256,7 +256,7 @@ export default function Employees() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Workers</h1>
+          <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Staff</h1>
           <p className="text-sm text-[var(--muted)] max-w-2xl">
             Workers are the people you roster and pay. {anyActions
               ? 'Keep their details and default roster here, and give them portal access to see their own schedule.'
@@ -347,7 +347,7 @@ export default function Employees() {
             title={q || departmentFilter ? 'No workers match your filters' : 'No workers yet'}
             description={q || departmentFilter
               ? 'Check the spelling, or clear the search and department filter.'
-              : canAddWorker ? 'Workers are the people you roster and pay. Add your first one, then give them shifts on the Roster.' : 'There are no workers in this branch yet.'}
+              : canAddWorker ? 'Workers are the people you roster and pay. Add your first one, then give them shifts on the Schedule.' : 'There are no workers in this branch yet.'}
             action={q || departmentFilter
               ? <Button variant="secondary" size="md" onClick={() => { setSearchQuery(''); setDepartmentFilter(''); }}>Clear filters</Button>
               : canAddWorker && addBranches.length > 0 ? <Button variant="primary" size="md" onClick={() => setFormWorker('new')} leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}>Add worker</Button> : undefined}

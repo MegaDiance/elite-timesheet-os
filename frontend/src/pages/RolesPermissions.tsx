@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { useAccess } from '../hooks/useAccess';
+import { SettingsNav } from '../components/SettingsNav';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Tabs } from '../components/ui/Tabs';
 import { useToast } from '../components/ui/Toast';
@@ -59,12 +60,10 @@ export default function RolesPermissions() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
-      <div className="pb-4 border-b border-[var(--border)]">
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Roles &amp; permissions</h1>
-        <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
-          Decide who can do what in your organisation, and where. Nobody can give someone access that they don’t have themselves.
-        </p>
-      </div>
+      <SettingsNav />
+      <p className="text-sm text-[var(--muted)] max-w-2xl">
+        Decide who can do what, and in which branches. Nobody can give someone access they don’t have themselves.
+      </p>
 
       {tabs.length > 1 && (
         <nav aria-label="Roles and permissions sections">

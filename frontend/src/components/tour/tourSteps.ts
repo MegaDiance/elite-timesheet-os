@@ -47,8 +47,8 @@ export const MANAGER_TOUR: TourStep[] = [
   {
     id: 'find-roster',
     needsAny: ['rosters.view'],
-    title: 'Find your roster',
-    route: '/roster',
+    title: 'Find the schedule',
+    route: '/schedule',
     target: 'roster-controls',
     body: [
       'Pick the branch, then the fortnight with the arrows or the date button. “Today” jumps back to the current pay period.',
@@ -59,7 +59,7 @@ export const MANAGER_TOUR: TourStep[] = [
     id: 'open-day',
     needsAny: CAN_EDIT_ROSTER,
     title: 'Create a shift',
-    route: '/roster',
+    route: '/schedule',
     target: 'roster-cell',
     waitFor: 'day-editor-opened',
     doThis: 'Click any day in a worker’s row.',
@@ -123,12 +123,11 @@ export const MANAGER_TOUR: TourStep[] = [
     route: '/timesheets',
     target: 'timesheet-status',
     statusGuide: true,
-    body: ['Worked hours are recorded on the roster. Here you check each person’s fortnight and approve it.'],
+    body: ['Worked hours are recorded on the schedule. Here you check each person’s fortnight and approve it.'],
   },
   {
     id: 'finish',
     title: 'You’re ready',
-    route: '/dashboard',
     target: 'daily-nav',
     body: [
       'Your daily work lives here. A number appears when something is waiting for you to approve.',

@@ -59,7 +59,7 @@ export default function LeaveRequests() {
       const skipped: Array<{ date: string; reason: string }> = res.data?.data?.skipped ?? [];
       if (decision === 'reject') toast.success(`${row.employee_name}’s leave was declined.`);
       else if (skipped.length === 0) toast.success(`${row.employee_name}’s leave is approved and added to the roster.`);
-      else toast.success(`Approved. Not added on ${skipped.map(s => `${dayLabel(s.date)} (${skipReason(s.reason)})`).join(', ')}. Change those days on the Roster if needed.`);
+      else toast.success(`Approved. Not added on ${skipped.map(s => `${dayLabel(s.date)} (${skipReason(s.reason)})`).join(', ')}. Change those days on the Schedule if needed.`);
       setDeclining(null);
       setDeclineReason('');
       load();
@@ -81,7 +81,7 @@ export default function LeaveRequests() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-[var(--text)] flex items-center gap-1">
-            Leave requests
+            Leave
             <HelpTip label="Leave types">{LEAVE_TYPE_HELP}</HelpTip>
           </h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
@@ -120,7 +120,7 @@ export default function LeaveRequests() {
             <p className="text-sm text-[var(--muted)]">
               {status === 'Pending'
                 ? 'New requests from your workers appear here. Past decisions are under “All”.'
-                : <>Workers with portal access can ask for leave from their phone. {can('employees.manage_access') ? <>Give access on <Link to="/workers" className="text-[var(--primary-text)] font-semibold hover:underline">Workers</Link>. </> : null}Leave can also be entered on the Roster.</>}
+                : <>Workers with portal access can ask for leave from their phone. {can('employees.manage_access') ? <>Give access on <Link to="/staff" className="text-[var(--primary-text)] font-semibold hover:underline">Staff</Link>. </> : null}Leave can also be entered on the Schedule.</>}
             </p>
           </div>
         ) : (

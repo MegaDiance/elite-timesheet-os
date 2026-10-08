@@ -134,13 +134,11 @@ const rows: Row[] = [
     { name: 'GET /leave-requests?location_id=melbourne', method: 'get', path: (w) => `/api/leave-requests?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
     { name: 'POST /employee-accounts/:mel/reset-password-link', method: 'post', path: (w) => `/api/employee-accounts/${w.workers.mel}/reset-password-link`, expect: MEL_BRANCH_SCOPED },
 
-    // Reports and dashboard
+    // Reports and navigation counts
     { name: 'GET /reports/payroll?location_id=melbourne', method: 'get', path: (w) => `/api/reports/payroll?start_date=${PERIOD}&location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
     { name: 'GET /reports/export/csv', method: 'get', path: () => `/api/reports/export/csv?start_date=${PERIOD}`, expect: EVERYONE },
-    { name: 'GET /dashboard/today', method: 'get', path: () => '/api/dashboard/today', expect: EVERYONE },
-    { name: 'GET /dashboard/today?location_id=melbourne', method: 'get', path: (w) => `/api/dashboard/today?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
-    { name: 'GET /dashboard/attention', method: 'get', path: () => '/api/dashboard/attention', expect: EVERYONE },
-    { name: 'GET /dashboard/attention?location_id=melbourne', method: 'get', path: (w) => `/api/dashboard/attention?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
+    { name: 'GET /attention', method: 'get', path: () => '/api/attention', expect: EVERYONE },
+    { name: 'GET /attention?location_id=melbourne', method: 'get', path: (w) => `/api/attention?location_id=${w.abc.melbourne}`, expect: MEL_FILTER },
 
     // Noticeboard
     { name: 'GET /announcements', method: 'get', path: () => '/api/announcements', expect: EVERYONE },

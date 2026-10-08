@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { landingPath } from '../../utils/landing';
 import { CheckCircle2, X } from 'lucide-react';
 import api from '../../services/apiClient';
 import { useAccess } from '../../hooks/useAccess';
@@ -84,7 +85,7 @@ export default function GuidedTour() {
     let seenLocally = 0;
     try { seenLocally = Number(localStorage.getItem(LOCAL_KEY) || 0); } catch { /* ignore */ }
     const seen = Math.max(seenLocally, access.user.tutorial_version ?? 0);
-    const onHome = location.pathname === '/dashboard' || location.pathname === '/my/schedule';
+    const onHome = location.pathname === landingPath(access);
     if (seen >= TOUR_VERSION || !onHome) return;
     const timer = setTimeout(start, 900);
     return () => clearTimeout(timer);

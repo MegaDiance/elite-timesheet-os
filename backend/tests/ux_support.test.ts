@@ -22,9 +22,9 @@ const pendingLeave = (workerId: string, branchId: string) =>
     sql(`INSERT INTO leave_requests (org_id, employee_id, location_id, leave_type, start_date, end_date, hours, status)
          VALUES ($1, $2, $3, 'Annual', '2026-10-05', '2026-10-05', 7.6, 'Pending')`, [w.abc.id, workerId, branchId]);
 const attention = (token: string, branchId?: string) =>
-    request(app).get(`/api/dashboard/attention${branchId ? `?location_id=${branchId}` : ''}`).set(bearer(token));
+    request(app).get(`/api/attention${branchId ? `?location_id=${branchId}` : ''}`).set(bearer(token));
 
-describe('GET /dashboard/attention', () => {
+describe('GET /attention', () => {
     it('counts only the branches the caller manages', async () => {
         await pendingLeave(w.workers.mel, w.abc.melbourne);
         await pendingLeave(w.workers.gee, w.abc.geelong);
@@ -49,7 +49,7 @@ describe('GET /dashboard/attention', () => {
 
     it('employees and signed-out visitors get nothing', async () => {
         expect((await attention(w.tokens.melEmployee)).status).toBe(403);
-        expect((await request(app).get('/api/dashboard/attention')).status).toBe(401);
+        expect((await request(app).get('/api/attention')).status).toBe(401);
     });
 
     it('an approved timesheet is no longer counted as waiting', async () => {

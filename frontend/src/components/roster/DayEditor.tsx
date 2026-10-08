@@ -260,7 +260,7 @@ export default function DayEditor({
   const mergeNotice = (text: string | null) => text && (
     <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--text)] bg-[var(--primary-light)] rounded-lg px-3 py-2" role="status">
       <Info className="w-3.5 h-3.5 shrink-0 mt-px text-[var(--primary-text)]" aria-hidden="true" />
-      <span><strong className="font-semibold">Leave splits the shift.</strong> {text} Your organisation merges leave with the roster (Settings → Workforce).</span>
+      <span><strong className="font-semibold">Leave splits the shift.</strong> {text} Your organisation merges leave with the roster (Settings → Timesheets & leave).</span>
     </p>
   );
 

@@ -195,8 +195,6 @@ describe('link storage and management', () => {
 
     it('invitation and reset completions stop pointing at an expired link', async () => {
         await expireLink(w.abc.id);
-        const owner = await request(app).get('/api/dashboard').set(bearer(w.tokens.owner));
-        if (owner.status === 200 && owner.body.data?.organisation) expect(owner.body.data.organisation.sign_in_link).toBeNull();
         expect((await request(app).get('/api/organisation/me').set(bearer(w.tokens.owner))).body.data.portal_link_expired).toBe(true);
     });
 });

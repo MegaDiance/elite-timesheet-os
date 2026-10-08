@@ -777,7 +777,7 @@ export default function Roster() {
         {can('employees.create') ? (
           <>
             <p className="text-sm text-[var(--muted)]">The roster has one row per worker. Add your first worker, then come back to give them shifts.</p>
-            <Link to="/workers" className={`${buttonClass.primary} inline-flex`}>Add a worker</Link>
+            <Link to="/staff" className={`${buttonClass.primary} inline-flex`}>Add an employee</Link>
           </>
         ) : (
           <p className="text-sm text-[var(--muted)]">The roster has one row per worker. It will show them once someone adds them.</p>
@@ -883,7 +883,7 @@ export default function Roster() {
       <header className="shrink-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-[var(--text)] leading-tight">Roster</h1>
+            <h1 className="text-lg font-bold text-[var(--text)] leading-tight">Schedule</h1>
             <p className="text-xs text-[var(--muted)] mt-0.5">Plan shifts and record the hours people worked.</p>
           </div>
           <div className="flex flex-wrap items-end gap-3" data-tour="roster-controls">

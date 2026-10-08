@@ -5,14 +5,11 @@ import {
   Calendar,
   CalendarDays,
   Users,
-  FileText,
-  Building2,
   LogOut,
   Moon,
   Sun,
   Sliders,
   MessageSquare,
-  LayoutDashboard,
   BarChart3,
   Menu,
   X,
@@ -21,10 +18,10 @@ import {
   Pin,
   PinOff,
   MapPin,
-  ShieldCheck,
   History,
 } from 'lucide-react';
 import api from '../services/apiClient';
+import { landingPath } from '../utils/landing';
 import { OrgSwitchModal } from './modals/OrgSwitchModal';
 import { BranchSwitchModal } from './modals/BranchSwitchModal';
 import { SessionTimeoutModal } from './modals/SessionTimeoutModal';
@@ -65,7 +62,7 @@ function useAttention(enabled: boolean, branchId: string | null, pathname: strin
     if (!enabled) return;
     let cancelled = false;
     const query = branchId ? `?location_id=${encodeURIComponent(branchId)}` : '';
-    api.get(`/dashboard/attention${query}`)
+    api.get(`/attention${query}`)
       .then(res => { if (!cancelled) setCounts({ timesheets: res.data.data.timesheets_waiting, leave: res.data.data.leave_pending }); })
       .catch(() => undefined); // badges are a convenience; the pages themselves show the real lists
     return () => { cancelled = true; };
@@ -103,7 +100,7 @@ export default function Layout() {
   });
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isRoster = location.pathname === '/roster';
+  const isRoster = location.pathname === '/schedule';
   const isSidebarOpen = (isPinned && !isRoster) || isHovered;
 
   const handleMouseEnter = () => {
@@ -156,47 +153,28 @@ export default function Layout() {
   const isManager = access?.is_manager === true;
   const showPortal = access?.is_employee === true && holdsHere(access, 'portal.access', null);
   const canSubmitTimesheets = access?.employee_capabilities?.can_submit_timesheets ?? false;
-  const homePath = isManager ? '/dashboard' : '/my/schedule';
+  const homePath = landingPath(access) ?? '/app';
   const attention = useAttention(isManager, activeBranchId, location.pathname);
   const canHere = (permission: Permission) => holdsHere(access, permission, activeBranchId);
 
-  const managerSections: NavSection[] = [
-    {
-      title: 'Daily work',
-      tour: 'daily-nav',
-      items: [
-        { label: 'Today', path: '/dashboard', manager: true, icon: icon(LayoutDashboard) },
-        { label: 'Roster', path: '/roster', anyOf: ['rosters.view'], icon: icon(Calendar) },
-        { label: 'Timesheets', path: '/timesheets', anyOf: ['timesheets.view'], icon: icon(CheckSquare), attention: 'timesheets' },
-        { label: 'Leave requests', path: '/leave-requests', anyOf: ['leave.view'], icon: icon(CalendarDays), attention: 'leave' },
-      ],
-    },
-    {
-      title: 'People',
-      items: [
-        { label: 'Workers', path: '/workers', anyOf: ['employees.view', 'rosters.view'], icon: icon(Users) },
-      ],
-    },
-    {
-      title: 'Records',
-      items: [
-        { label: 'Reports', path: '/reports', anyOf: ['payroll.view'], icon: icon(BarChart3) },
-        { label: 'Audit log', path: '/audit', anyOf: ['audit.view'], icon: icon(FileText) },
-      ],
-    },
-    {
-      title: 'Organisation',
-      items: [
-        { label: 'Branches', path: '/branches', manager: true, icon: icon(Building2) },
-        { label: 'Roles & permissions', path: '/settings/roles', anyOf: ['roles.manage', 'users.manage'], icon: icon(ShieldCheck) },
-        { label: 'Team chat', path: '/announcements', manager: true, icon: icon(MessageSquare) },
-        { label: 'Settings', path: '/settings', manager: true, icon: icon(Sliders) },
-      ],
-    },
-  ];
+  // One short list for daily work. Organisation set-up (branches, roles, audit log) lives in Settings.
+  const managerSection: NavSection = {
+    title: '',
+    tour: 'daily-nav',
+    items: [
+      { label: 'Timesheets', path: '/timesheets', anyOf: ['timesheets.view'], icon: icon(CheckSquare), attention: 'timesheets' },
+      { label: 'Schedule', path: '/schedule', anyOf: ['rosters.view'], icon: icon(Calendar) },
+      { label: 'Leave', path: '/leave', anyOf: ['leave.view'], icon: icon(CalendarDays), attention: 'leave' },
+      { label: 'Staff', path: '/staff', anyOf: ['employees.view', 'rosters.view'], icon: icon(Users) },
+      { label: 'Reports', path: '/reports', anyOf: ['payroll.view'], icon: icon(BarChart3) },
+      { label: 'Team chat', path: '/announcements', manager: true, icon: icon(MessageSquare) },
+      { label: 'Settings', path: '/settings', manager: true, icon: icon(Sliders) },
+    ],
+  };
 
   const portalSection: NavSection = {
-    title: 'My work',
+    // Only labelled when it sits under the management list.
+    title: isManager ? 'My work' : '',
     // The walkthrough's "daily work" anchor is the first group; only an employee-only login has no other.
     tour: isManager ? undefined : 'daily-nav',
     items: [
@@ -210,7 +188,7 @@ export default function Layout() {
   };
 
   const visible = (item: NavItem) => (item.manager ? isManager : true) && (!item.anyOf || item.anyOf.some(canHere));
-  const navSections = [...(isManager ? managerSections : []), ...(showPortal ? [portalSection] : [])]
+  const navSections = [...(isManager ? [managerSection] : []), ...(showPortal ? [portalSection] : [])]
     .map(section => ({ ...section, items: section.items.filter(visible) }))
     .filter(section => section.items.length > 0);
 
@@ -228,7 +206,7 @@ export default function Layout() {
   const canSwitchOrganisation = access?.has_other_organisations === true;
 
   // Phones: the daily tasks in a bottom bar, plus "More" for everything else.
-  const bottomItems: NavItem[] = (navSections[0]?.items ?? []).filter(i => i.path !== '/my/history');
+  const bottomItems: NavItem[] = (navSections[0]?.items ?? []).filter(i => i.path !== '/my/history').slice(0, 4);
 
   /** Organisation, branch and role — "where am I". Shared by the sidebar and the phone menu. */
   const workspace = (
@@ -276,8 +254,8 @@ export default function Layout() {
 
   const navLinks = (open: boolean, onNavigate?: () => void) => navSections.map((section, sIdx) => (
     <div key={section.title} className="space-y-0.5" data-tour={section.tour}>
-      {open ? (
-        <h2 className="px-3 pb-1 pt-1 text-[10px] font-bold uppercase tracking-wider text-[var(--sidebar-text)]">{section.title}</h2>
+      {open && section.title ? (
+        <h2 className="px-3 pb-1 pt-1 text-[11px] font-semibold text-[var(--sidebar-text)]">{section.title}</h2>
       ) : (
         sIdx > 0 && <div className="my-2 border-t border-white/10 mx-2" aria-hidden="true" />
       )}

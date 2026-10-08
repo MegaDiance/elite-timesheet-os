@@ -41,7 +41,7 @@ describe('Branch and organisation isolation', () => {
             expect(greg.body.data.map((b: any) => b.name)).toEqual(['Geelong']);
         });
 
-        it('timesheet list, payroll report, CSV and dashboard never include another branch', async () => {
+        it('timesheet list, payroll report and CSV never include another branch', async () => {
             await request(app).post('/api/records').set(bearer(w.tokens.owner)).send({ employee_id: w.workers.gee, record_date: '2026-03-30', ...simpleDay(true) });
 
             const subs = await request(app).get(`/api/submissions?start_date=${PERIOD}`).set(bearer(w.tokens.sarah));
@@ -52,11 +52,6 @@ describe('Branch and organisation isolation', () => {
 
             const csv = await request(app).get(`/api/reports/export/csv?start_date=${PERIOD}`).set(bearer(w.tokens.sarah));
             expect(csv.text).not.toContain('Gee Worker');
-
-            const dash = await request(app).get('/api/dashboard/today?date=2026-03-30').set(bearer(w.tokens.sarah));
-            expect(JSON.stringify(dash.body)).not.toContain('Gee Worker');
-            expect(dash.body.data.branches.map((b: any) => b.name).sort()).toEqual(['Melbourne', 'Richmond']);
-            expect(dash.body.data.organisation).toBeNull();
         });
 
         it('records list ignores other branches even without an employee filter', async () => {

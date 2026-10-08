@@ -22,7 +22,7 @@ const TAB_STATUS: Record<Exclude<Tab, 'all'>, TimesheetStatus> = { waiting: 'Dra
 const TAB_LABEL: Record<Tab, string> = { waiting: 'Waiting', approved: 'Approved', locked: 'Locked', all: 'All' };
 
 /**
- * Timesheet approval for a pay period. Hours are entered by managers on the Roster, so a timesheet is simply Draft (waiting), Approved, or Locked (approved and the branch's
+ * Timesheet approval for a pay period. Hours are entered by managers on the Schedule, so a timesheet is simply Draft (waiting), Approved, or Locked (approved and the branch's
  * timesheets are locked).
  */
 export default function TimesheetReview() {
@@ -304,7 +304,7 @@ export default function TimesheetReview() {
         <div className="pt-3 space-y-3">
           <TimesheetStatusGuide />
           <p className="text-xs text-[var(--muted)]">
-            Hours are entered on the <Link to="/roster" className="text-[var(--primary-text)] font-semibold hover:underline">Roster</Link>. This page is for checking each person’s fortnight and approving it.
+            Hours are entered on the <Link to="/schedule" className="text-[var(--primary-text)] font-semibold hover:underline">Schedule</Link>. This page is for checking each person’s fortnight and approving it.
           </p>
         </div>
       </details>
@@ -361,7 +361,7 @@ export default function TimesheetReview() {
             : tab === 'waiting'
               ? 'Every timesheet in this pay period is approved. Use the arrows above to check another pay period.'
               : rows.length === 0
-                ? 'There are no active workers in this branch yet. Add workers, give them shifts on the Roster, and their timesheets appear here.'
+                ? 'There are no active workers in this branch yet. Add workers, give them shifts on the Schedule, and their timesheets appear here.'
                 : 'No timesheets have this status. “All” shows every timesheet in the pay period.'}
           action={tab !== 'all' ? <button type="button" onClick={() => setTab('all')} className={buttonClass.secondary}>Show all</button> : undefined}
         />
@@ -466,7 +466,7 @@ export default function TimesheetReview() {
                       <>
                         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                           <PlannedWorkedKey />
-                          {can('rosters.view', row.location_id) && <Link to="/roster" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Change days on the roster</Link>}
+                          {can('rosters.view', row.location_id) && <Link to="/schedule" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Change days on the schedule</Link>}
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-4">
                           {[0, 1].map(week => (

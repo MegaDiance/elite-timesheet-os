@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { holdsPermission, isBranchLevel, type Permission } from '../hooks/permissions';
+import { landingPath } from '../utils/landing';
 import { useAccess } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
 import { BranchSwitchModal } from './modals/BranchSwitchModal';
@@ -64,9 +65,8 @@ export default function NoAccess({ needs, employeePortal }: NoAccessProps) {
     && branchNeeds.some(p => holdsPermission(access, p) && !holdsPermission(access, p, activeBranchId));
   const branchesWhereAllowed = branches.filter(b => branchNeeds.some(p => holdsPermission(access, p, b.id)));
 
-  const goHome = access?.is_manager ? { to: '/dashboard', label: 'Go to the dashboard' }
-    : access?.is_employee ? { to: '/my/schedule', label: 'Go to my schedule' }
-    : null;
+  const start = landingPath(access);
+  const goHome = start ? { to: start, label: start === '/my/schedule' ? 'Go to my schedule' : 'Go to my start page' } : null;
 
   const what = needs && needs.length > 0 ? `This page needs permission to ${needs.map(permissionPhrase).join(' or ')}.` : null;
 

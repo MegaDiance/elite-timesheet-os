@@ -17,14 +17,15 @@ import {
   UserRound,
 } from 'lucide-react';
 import api from '../services/apiClient';
-import { useAccess, roleSummary } from '../hooks/useAccess';
+import { SettingsNav } from '../components/SettingsNav';
+import { useAccess } from '../hooks/useAccess';
 import { rememberPortal } from '../services/portal';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
-import { Tabs, type TabItem } from '../components/ui/Tabs';
+import { type TabItem } from '../components/ui/Tabs';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
@@ -120,7 +121,7 @@ export default function Settings() {
   const canManageSecurity = can('security.manage');
   const canSeeRoles = can('roles.manage') || can('users.manage');
   const isOwner = access?.is_owner === true;
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
 
   const tabs: TabItem[] = [
     { id: 'account', label: 'My account', icon: <UserRound className="w-3.5 h-3.5" /> },
@@ -131,7 +132,6 @@ export default function Settings() {
   ];
   const requestedTab = searchParams.get('tab');
   const activeTab = (tabs.some(t => t.id === requestedTab) ? requestedTab : 'account') as TabId;
-  const selectTab = (id: string) => setSearchParams(id === 'account' ? {} : { tab: id }, { replace: true });
 
   // My account
   const [fullName, setFullName] = useState(access?.user.full_name || '');
@@ -346,7 +346,7 @@ export default function Settings() {
       setTransferPassword('');
       setShowTransferConfirm(false);
       // This account is now an Admin of the branches: leave the owner settings, then reload what it may do.
-      navigate('/dashboard', { replace: true });
+      navigate('/app', { replace: true });
       await refresh();
     } catch (err: any) {
       setTransferError(errorMessage(err, 'Ownership could not be transferred.'));
@@ -368,25 +368,7 @@ export default function Settings() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Settings</h1>
-          <p className="text-xs text-[var(--muted)] mt-1">
-            {canViewOrganisation ? 'Your account, your organisation and its security.' : 'Your account and sign-in security.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="purple" size="md">{roleSummary(access)}</Badge>
-          <span className="text-xs font-semibold text-[var(--text)] bg-[var(--panel-subtle)] px-2.5 py-1 rounded-md border border-[var(--border)]">
-            {access.organisation.name}
-          </span>
-        </div>
-      </div>
-
-      {tabs.length > 1 && (
-        <Tabs tabs={tabs} activeTab={activeTab} onChange={selectTab} variant="underline" className="overflow-x-auto" />
-      )}
+      <SettingsNav />
 
       {/* MY ACCOUNT (everyone) */}
       {activeTab === 'account' && (
@@ -543,7 +525,7 @@ export default function Settings() {
               />
               <ToggleRow
                 label="Allow employees to submit timesheets"
-                description="On: employees see “My timesheet” and enter the hours they worked; a manager still approves them. Off: the timesheet pages disappear for employees completely and only managers record hours on the Roster."
+                description="On: employees see “My timesheet” and enter the hours they worked; a manager still approves them. Off: the timesheet pages disappear for employees completely and only managers record hours on the Schedule."
                 checked={org?.employees_can_submit_timesheets ?? true}
                 saving={savingWorkforceField === 'employees_can_submit_timesheets'}
                 disabled={!org}

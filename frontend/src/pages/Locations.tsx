@@ -12,6 +12,7 @@ import {
   Users,
 } from 'lucide-react';
 import api from '../services/apiClient';
+import { SettingsNav } from '../components/SettingsNav';
 import { useAccess } from '../hooks/useAccess';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -195,12 +196,12 @@ export default function Locations() {
     : [{ value: formTimezone, label: formTimezone }, ...TIMEZONES];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+    <div className="max-w-5xl mx-auto space-y-6 pb-12">
+      <SettingsNav />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Branches</h1>
-          <p className="text-xs text-[var(--muted)] mt-1 max-w-2xl">
+          <h2 className="text-base font-semibold text-[var(--text)]">Branches</h2>
+          <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
             {canManage
               ? 'Each worker belongs to one branch. Give people access to a branch by assigning them a role for it.'
               : 'These are the branches your roles cover. Adding or changing branches needs more access than your roles include.'}
@@ -209,13 +210,6 @@ export default function Locations() {
 
         {canManage && (
           <div className="flex items-center gap-2">
-            {canSeeTeam && (
-              <Link to="/settings/roles">
-                <Button variant="outline" size="md" leftIcon={<ShieldCheck className="w-4 h-4" />}>
-                  Roles &amp; permissions
-                </Button>
-              </Link>
-            )}
             <Button variant="primary" size="md" onClick={openCreate} leftIcon={<Plus className="w-4 h-4" />}>
               Add branch
             </Button>
