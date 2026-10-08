@@ -17,13 +17,18 @@ import { loadBreakSettings, normaliseDaySegments, readBreakMins } from '../servi
 const router = Router();
 router.use(requireAuth);
 
-const WORKER_COLUMNS = 'e.id, e.org_id, e.location_id, e.full_name, e.department, e.email, e.phone, e.contracted_hours, e.is_active';
+const WORKER_COLUMNS = 'e.id, e.org_id, e.location_id, e.full_name, e.department, e.email, e.phone, e.contracted_hours, e.is_active, e.employee_code';
+const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._\-/]{0,39}$/;
 const PHONE_PATTERN = /^[0-9+()\-.\s]{3,40}$/;
 const MAX_FORTNIGHT_HOURS = 336;
 const MAX_TEMPLATE_ROWS = 100;
 
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === '23505';
 const duplicateName = (name: string) => new HttpError(409, 'DUPLICATE_WORKER', `A worker named "${name}" already exists in this organisation. Deactivated workers keep their name.`);
+const duplicateCode = (code: string) => new HttpError(409, 'DUPLICATE_EMPLOYEE_CODE', `Employee ID ${code} already belongs to someone in this organisation.`);
+/** Which unique rule a duplicate broke: the employee ID or the name. */
+const duplicateOf = (err: unknown, fields: { full_name: string; employee_code?: string | null }) =>
+    (err as { constraint?: string }).constraint === 'employees_org_code_key' ? duplicateCode(fields.employee_code ?? '') : duplicateName(fields.full_name);
 
 function optionalText(value: unknown, label: string, max: number): string | null {
     if (value === undefined || value === null || value === '') return null;
@@ -51,8 +56,18 @@ function readWorkerFields(body: any) {
         }
     }
 
+    // undefined = not sent (keep what is stored), null = cleared.
+    let employeeCode: string | null | undefined;
+    if (body?.employee_code !== undefined) {
+        employeeCode = optionalText(body.employee_code, 'Employee ID', 40);
+        if (employeeCode && !CODE_PATTERN.test(employeeCode)) {
+            throw badRequest('VALIDATION_FAILED', 'Employee ID can be up to 40 letters, numbers, spaces, dots, dashes or slashes.');
+        }
+    }
+
     return {
         full_name: fullName,
+        employee_code: employeeCode,
         department: optionalText(body?.department, 'Department', 120),
         email: email ? email.toLowerCase() : null,
         phone,
@@ -131,13 +146,13 @@ router.post('/', requirePermission(Permission.EMPLOYEES_CREATE), async (req: Aut
         let created;
         try {
             created = await query(
-                `INSERT INTO employees (id, org_id, location_id, full_name, department, email, phone, contracted_hours)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active`,
-                [crypto.randomUUID(), ctx.orgId, branch.id, fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours]
+                `INSERT INTO employees (id, org_id, location_id, full_name, department, email, phone, contracted_hours, employee_code)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active, employee_code`,
+                [crypto.randomUUID(), ctx.orgId, branch.id, fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours, fields.employee_code ?? null]
             );
         } catch (err) {
-            if (isUniqueViolation(err)) throw duplicateName(fields.full_name);
+            if (isUniqueViolation(err)) throw duplicateOf(err, fields);
             throw err;
         }
         const worker = created.rows[0];
@@ -174,13 +189,15 @@ router.put('/:id', requirePermission(Permission.EMPLOYEES_EDIT), async (req: Aut
         let updated;
         try {
             updated = await query(
-                `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, location_id = $6
+                `UPDATE employees SET full_name = $1, department = $2, email = $3, phone = $4, contracted_hours = $5, location_id = $6,
+                        employee_code = CASE WHEN $9::boolean THEN $10 ELSE employee_code END
                   WHERE id = $7 AND org_id = $8
-                  RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active`,
-                [fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours, branchId, worker.id, ctx.orgId]
+                  RETURNING id, org_id, location_id, full_name, department, email, phone, contracted_hours, is_active, employee_code`,
+                [fields.full_name, fields.department, fields.email, fields.phone, fields.contracted_hours, branchId, worker.id, ctx.orgId,
+                    fields.employee_code !== undefined, fields.employee_code ?? null]
             );
         } catch (err) {
-            if (isUniqueViolation(err)) throw duplicateName(fields.full_name);
+            if (isUniqueViolation(err)) throw duplicateOf(err, fields);
             throw err;
         }
 

@@ -21,6 +21,7 @@ import { landingPath } from './utils/landing';
 import Roster from './pages/Roster';
 import TimesheetReview from './pages/TimesheetReview';
 import Employees from './pages/Employees';
+import StaffImport from './pages/StaffImport';
 import Locations from './pages/Locations';
 import RolesPermissions from './pages/RolesPermissions';
 import LeaveRequests from './pages/LeaveRequests';
@@ -142,6 +143,7 @@ export default function App() {
           <Route path="/schedule" element={<Guard permission="rosters.view"><Roster /></Guard>} />
           <Route path="/leave" element={<Guard permission="leave.view"><LeaveRequests /></Guard>} />
           <Route path="/staff" element={<Guard anyOf={['employees.view', 'rosters.view']}><Employees /></Guard>} />
+          <Route path="/staff/import" element={<Guard permission="employees.create"><StaffImport /></Guard>} />
           <Route path="/reports" element={<Guard permission="payroll.view"><Reports /></Guard>} />
           <Route path="/announcements" element={<Guard><Announcements /></Guard>} />
           <Route path="/settings" element={<Guard><Settings /></Guard>} />

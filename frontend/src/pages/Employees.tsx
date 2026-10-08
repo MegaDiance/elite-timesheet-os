@@ -7,10 +7,14 @@ import {
   Phone,
   Plus,
   Search,
+  SlidersHorizontal,
   Trash2,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Menu } from '../components/ui/Menu';
 import api from '../services/apiClient';
 import SmartTimeInput from '../components/SmartTimeInput';
 import { useAccess, type Branch, type Permission } from '../hooks/useAccess';
@@ -49,6 +53,7 @@ interface Worker {
   location_id: string;
   location_name: string | null;
   full_name: string;
+  employee_code?: string | null;
   department: string | null;
   email: string | null;
   phone: string | null;
@@ -121,6 +126,7 @@ export default function Employees() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
 
   const [formWorker, setFormWorker] = useState<Worker | 'new' | null>(null);
   const [templateWorker, setTemplateWorker] = useState<Worker | null>(null);
@@ -194,6 +200,7 @@ export default function Employees() {
   const filtered = workers.filter(w => {
     const matchesSearch = !q
       || w.full_name.toLowerCase().includes(q)
+      || (w.employee_code || '').toLowerCase().includes(q)
       || (w.email || '').toLowerCase().includes(q)
       || (w.phone || '').includes(q);
     const matchesDept = !departmentFilter || w.department === departmentFilter;
@@ -201,9 +208,10 @@ export default function Employees() {
   });
 
   const handleExportCsv = () => {
-    const headers = ['Full name', 'Branch', 'Department', 'Email', 'Phone', 'Contracted hours per fortnight', 'Status'];
+    const headers = ['Full name', 'Employee ID', 'Branch', 'Department', 'Email', 'Phone', 'Contracted hours per fortnight', 'Status'];
     const rows = filtered.map(w => [
       w.full_name,
+      w.employee_code || '',
       w.location_name || '',
       w.department || '',
       w.email || '',
@@ -215,7 +223,7 @@ export default function Employees() {
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `workers-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `staff-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -227,111 +235,118 @@ export default function Employees() {
     : addBranches.length === 1 ? addBranches[0].id : '';
   const anyActions = canAddWorker || workers.some(hasActions);
 
-  /** Everyday actions stay visible; deactivate and delete sit behind "More" so they aren't hit by accident. */
+  /** One obvious action per row (Edit); everything else, including deactivate and delete, sits in "…". */
   const workerActions = (worker: Worker, large: boolean) => {
     const active = isActiveWorker(worker);
-    const btn = `${large ? 'h-11 px-3 text-sm' : 'h-8 px-2.5 text-xs'} rounded-lg font-semibold border border-[var(--border)] bg-[var(--panel-subtle)] text-[var(--text)] hover:bg-[var(--hover-row)] cursor-pointer inline-flex items-center`;
+    const btn = `${large ? 'h-11 px-3 text-sm' : 'h-8 px-2.5 text-xs'} rounded-md font-semibold border border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-row)] cursor-pointer inline-flex items-center`;
     return (
-      <div className={`flex flex-wrap gap-1.5 ${large ? '' : 'justify-end'}`}>
-        {canEditTemplate(worker) && <button type="button" onClick={() => setTemplateWorker(worker)} className={btn} aria-label={`Default roster for ${worker.full_name}`}>Default roster</button>}
-        {canManageAccess(worker) && <button type="button" onClick={() => setPortalWorkerId(worker.id)} className={btn} aria-label={`Portal access for ${worker.full_name}`}>Portal access</button>}
+      <div className={`flex items-center gap-1 ${large ? '' : 'justify-end'}`}>
         {canEditWorker(worker) && <button type="button" onClick={() => setFormWorker(worker)} className={btn} aria-label={`Edit ${worker.full_name}`}>Edit</button>}
-        {canArchive(worker) && <details className="relative">
-          <summary className={`${btn} list-none`} aria-label={`More actions for ${worker.full_name}`}>More…</summary>
-          <div onClick={e => e.currentTarget.parentElement?.removeAttribute('open')} className="absolute right-0 z-30 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--panel)] shadow-lg p-1">
-            {active ? (
-              <button type="button" onClick={() => setPendingAction({ kind: 'deactivate', worker })} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--warn)] hover:bg-[var(--warn-light)]">Deactivate…</button>
-            ) : (
-              <button type="button" onClick={() => handleReactivate(worker)} disabled={reactivatingId === worker.id} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--success)] hover:bg-[var(--success-light)] disabled:opacity-50">Reactivate</button>
-            )}
-            <button type="button" onClick={() => setPendingAction({ kind: 'delete', worker })} className="w-full text-left px-3 py-2 rounded-md text-sm text-[var(--danger)] hover:bg-[var(--danger-light)]">Delete…</button>
-          </div>
-        </details>}
+        <Menu
+          label={`More actions for ${worker.full_name}`}
+          items={[
+            { label: 'Default roster', onSelect: () => setTemplateWorker(worker), disabled: !canEditTemplate(worker) },
+            { label: 'Portal access', onSelect: () => setPortalWorkerId(worker.id), disabled: !canManageAccess(worker) },
+            active
+              ? { label: 'Deactivate…', onSelect: () => setPendingAction({ kind: 'deactivate', worker }), disabled: !canArchive(worker) }
+              : { label: 'Reactivate', onSelect: () => handleReactivate(worker), disabled: !canArchive(worker) || reactivatingId === worker.id },
+            { label: 'Delete…', danger: true, onSelect: () => setPendingAction({ kind: 'delete', worker }), disabled: !canArchive(worker) },
+          ]}
+        />
       </div>
     );
   };
 
+  const activeFilters = (branchFilter && branches.length > 1 ? 1 : 0) + (departmentFilter ? 1 : 0) + (includeInactive ? 1 : 0);
+
   return (
     <div className="flex flex-col space-y-4">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Staff</h1>
-          <p className="text-sm text-[var(--muted)] max-w-2xl">
-            Workers are the people you roster and pay. {anyActions
-              ? 'Keep their details and default roster here, and give them portal access to see their own schedule.'
-              : 'You can see the workers in your branches. Changing them needs more access than your roles include.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {canManageHolidays && (
-            <Button variant="outline" size="md" onClick={() => setShowHolidays(true)} leftIcon={<CalendarDays className="w-4 h-4" />}>
-              Public holidays
-            </Button>
-          )}
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={handleExportCsv}
-            disabled={filtered.length === 0}
-            leftIcon={<FileSpreadsheet className="w-4 h-4 text-[var(--success)]" />}
-          >
-            Export CSV
-          </Button>
-          {canAddWorker && (
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold tracking-tight text-[var(--text)]">Staff</h1>
+        {canAddWorker && (
+          <div className="flex items-center gap-2">
+            <Link
+              to="/staff/import"
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-md border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--hover-row)]"
+            >
+              <Upload className="w-4 h-4" aria-hidden="true" />
+              Import
+            </Link>
             <Button
               variant="primary"
               size="md"
               onClick={() => setFormWorker('new')}
               disabled={addBranches.length === 0}
-              title={addBranches.length === 0 ? 'An active branch is needed before adding workers' : undefined}
+              title={addBranches.length === 0 ? 'An active branch is needed before adding employees' : undefined}
               leftIcon={<Plus className="w-4 h-4" />}
             >
-              Add worker
+              Add employee
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col lg:flex-row lg:items-center gap-3 bg-[var(--panel)] p-3 rounded-xl border border-[var(--border)]">
-        <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search by name, email or phone…"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 text-xs bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg text-[var(--text)] placeholder-[var(--muted)] outline-none focus:border-[var(--primary)]"
+      {/* Search · Filter · More */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+            <input
+              type="search"
+              aria-label="Search staff"
+              placeholder="Search by name, employee ID, email or phone"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full h-10 pl-9 pr-3 text-sm bg-[var(--input-bg)] border border-[var(--border)] rounded-md text-[var(--text)] placeholder-[var(--muted)] outline-none focus:border-[var(--primary)]"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFilters(v => !v)}
+            aria-expanded={showFilters}
+            aria-controls="staff-filters"
+            className={`inline-flex items-center gap-2 h-10 px-3 rounded-md border text-sm font-medium cursor-pointer ${activeFilters ? 'border-[var(--primary)] text-[var(--primary-text)]' : 'border-[var(--border)] text-[var(--text)] hover:bg-[var(--hover-row)]'}`}
+          >
+            <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+            Filter{activeFilters ? ` (${activeFilters})` : ''}
+          </button>
+          <Menu
+            label="More staff actions"
+            items={[
+              { label: 'Export CSV', icon: <FileSpreadsheet />, onSelect: handleExportCsv, disabled: filtered.length === 0 },
+              { label: 'Public holidays', icon: <CalendarDays />, onSelect: () => setShowHolidays(true), disabled: !canManageHolidays },
+            ]}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {branches.length > 1 && (
+        {showFilters && (
+          <div id="staff-filters" className="flex flex-wrap items-center gap-3 p-3 rounded-md border border-[var(--border)]">
+            {branches.length > 1 && (
+              <div className="w-48">
+                <Select aria-label="Branch" value={branchFilter} onChange={e => setBranchFilter(e.target.value)}>
+                  <option value="">All my branches</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (deactivated)'}</option>
+                  ))}
+                </Select>
+              </div>
+            )}
             <div className="w-48">
-              <Select aria-label="Branch" value={branchFilter} onChange={e => setBranchFilter(e.target.value)} className="text-xs py-1.5">
-                <option value="">All my branches</option>
-                {branches.map(b => (
-                  <option key={b.id} value={b.id}>{b.name}{b.is_active ? '' : ' (deactivated)'}</option>
-                ))}
+              <Select aria-label="Department" value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)}>
+                <option value="">All departments</option>
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </Select>
             </div>
-          )}
-          <div className="w-44">
-            <Select aria-label="Department" value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="text-xs py-1.5">
-              <option value="">All departments</option>
-              {departments.map(d => <option key={d} value={d}>{d}</option>)}
-            </Select>
+            <label className="flex items-center gap-2 text-sm text-[var(--text)] cursor-pointer select-none">
+              <input type="checkbox" checked={includeInactive} onChange={e => setIncludeInactive(e.target.checked)} className="h-4 w-4" />
+              Show deactivated
+            </label>
+            {activeFilters > 0 && (
+              <button type="button" onClick={() => { setBranchFilter(''); setDepartmentFilter(''); setIncludeInactive(false); }} className="text-sm font-semibold text-[var(--primary-text)] hover:underline cursor-pointer">
+                Clear filters
+              </button>
+            )}
           </div>
-          <label className="flex items-center gap-2 text-xs text-[var(--text)] cursor-pointer select-none px-1">
-            <input
-              type="checkbox"
-              checked={includeInactive}
-              onChange={e => setIncludeInactive(e.target.checked)}
-              className="rounded border-[var(--border)] accent-[var(--primary)]"
-            />
-            Show deactivated
-          </label>
-        </div>
+        )}
       </div>
 
       {/* Workers: a table on wide screens, one card per worker on phones */}
@@ -339,25 +354,30 @@ export default function Employees() {
         {loading && workers.length === 0 ? (
           <div className="p-4"><TableSkeleton rows={6} /></div>
         ) : loadError ? (
-          <EmptyState className="m-4" icon={<Users className="w-5 h-5" aria-hidden="true" />} title="Workers could not be loaded" description={loadError} actionLabel="Try again" onAction={reload} />
+          <EmptyState className="m-4" icon={<Users className="w-5 h-5" aria-hidden="true" />} title="Staff could not be loaded" description={loadError} actionLabel="Try again" onAction={reload} />
         ) : filtered.length === 0 ? (
           <EmptyState
             className="m-4 border-dashed"
             icon={<Users className="w-5 h-5" aria-hidden="true" />}
-            title={q || departmentFilter ? 'No workers match your filters' : 'No workers yet'}
+            title={q || departmentFilter ? 'No one matches your search' : 'No employees yet'}
             description={q || departmentFilter
-              ? 'Check the spelling, or clear the search and department filter.'
-              : canAddWorker ? 'Workers are the people you roster and pay. Add your first one, then give them shifts on the Schedule.' : 'There are no workers in this branch yet.'}
+              ? 'Check the spelling, or clear the search and filters.'
+              : canAddWorker ? 'Add your first employee, or import your existing staff list.' : 'There are no employees in this branch yet.'}
             action={q || departmentFilter
               ? <Button variant="secondary" size="md" onClick={() => { setSearchQuery(''); setDepartmentFilter(''); }}>Clear filters</Button>
-              : canAddWorker && addBranches.length > 0 ? <Button variant="primary" size="md" onClick={() => setFormWorker('new')} leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}>Add worker</Button> : undefined}
+              : canAddWorker && addBranches.length > 0 ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button variant="primary" size="md" onClick={() => setFormWorker('new')} leftIcon={<Plus className="w-4 h-4" aria-hidden="true" />}>Add employee</Button>
+                  <Link to="/staff/import" className="inline-flex items-center gap-2 h-10 px-4 rounded-md border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--hover-row)]"><Upload className="w-4 h-4" aria-hidden="true" />Import</Link>
+                </div>
+              ) : undefined}
           />
         ) : (
           <>
             <table className="hidden md:table w-full text-left border-collapse">
               <thead className="bg-[var(--table-header)]">
                 <tr>
-                  {['Name & contact', 'Branch', 'Department', 'Contract (fortnight)', 'Status'].map(h => (
+                  {['Name', 'Branch', 'Department', 'Hours (fortnight)', 'Status'].map(h => (
                     <th key={h} scope="col" className="py-3 px-4 text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">{h}</th>
                   ))}
                   {anyActions && <th scope="col" className="py-3 px-4 text-right text-[var(--muted)] font-bold text-xs uppercase tracking-wider border-b border-[var(--border)]">Actions</th>}
@@ -367,7 +387,10 @@ export default function Employees() {
                 {filtered.map(worker => (
                   <tr key={worker.id} className={`hover:bg-[var(--hover-row)] border-b border-[var(--border)] last:border-0 ${isActiveWorker(worker) ? '' : 'opacity-70'}`}>
                     <td className="py-3 px-4">
-                      <div className="font-bold text-sm text-[var(--text)]">{worker.full_name}</div>
+                      <div className="font-semibold text-sm text-[var(--text)]">
+                        {worker.full_name}
+                        {worker.employee_code && <span className="ml-2 text-xs font-normal text-[var(--muted)]">#{worker.employee_code}</span>}
+                      </div>
                       <WorkerContact worker={worker} canSee={canSeeContact(worker)} />
                     </td>
                     <td className="py-3 px-4 text-sm text-[var(--text)]">{worker.location_name || '—'}</td>
@@ -436,7 +459,7 @@ export default function Employees() {
         message={pendingAction?.kind === 'delete'
           ? 'Their rosters and timesheets are deleted too, and this cannot be undone. Workers with approved timesheets cannot be deleted; deactivate them instead.'
           : 'They no longer appear in active lists, rosters or timesheets. Their history is kept and you can reactivate them at any time.'}
-        confirmLabel={pendingAction?.kind === 'delete' ? 'Delete worker' : 'Deactivate worker'}
+        confirmLabel={pendingAction?.kind === 'delete' ? 'Delete employee' : 'Deactivate employee'}
         variant={pendingAction?.kind === 'delete' ? 'danger' : 'warning'}
         loading={actionBusy}
       />
@@ -453,6 +476,7 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
 }) {
   const [form, setForm] = useState({
     full_name: worker?.full_name || '',
+    employee_code: worker?.employee_code || '',
     location_id: worker?.location_id || defaultBranchId,
     department: worker?.department || '',
     email: worker?.email || '',
@@ -472,17 +496,18 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.full_name.trim()) {
-      setError('Enter the worker’s full name.');
+      setError('Enter the employee’s full name.');
       return;
     }
     if (!form.location_id) {
-      setError('Choose the branch this worker belongs to.');
+      setError('Choose the branch this employee belongs to.');
       return;
     }
     setSaving(true);
     setError(null);
     const body = {
       full_name: form.full_name.trim(),
+      employee_code: form.employee_code.trim(),
       location_id: form.location_id,
       department: form.department.trim(),
       email: form.email.trim(),
@@ -502,25 +527,30 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
         onSaved(`${body.full_name} has been added.`);
       }
     } catch (err: any) {
-      setError(errorMessage(err, 'The worker could not be saved.'));
+      setError(errorMessage(err, 'The employee could not be saved. Nothing was changed.'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal isOpen onClose={onClose} title={worker ? `Edit ${worker.full_name}` : 'Add a worker'} maxWidth="lg">
+    <Modal isOpen onClose={onClose} title={worker ? `Edit ${worker.full_name}` : 'Add an employee'} maxWidth="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
           <div className="p-3 rounded-md text-xs bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)]">{error}</div>
         )}
-        <Input label="Full name" value={form.full_name} onChange={set('full_name')} maxLength={120} required autoFocus />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="sm:col-span-2">
+            <Input label="Full name" value={form.full_name} onChange={set('full_name')} maxLength={120} required autoFocus />
+          </div>
+          <Input label="Employee ID (optional)" value={form.employee_code} onChange={set('employee_code')} maxLength={40} />
+        </div>
         <Select
           label="Branch"
           value={form.location_id}
           onChange={set('location_id')}
           required
-          helperText={moving ? 'Saving moves this worker to the selected branch.' : 'Every worker belongs to one branch.'}
+          helperText={moving ? 'Saving moves this employee to the selected branch.' : undefined}
         >
           <option value="" disabled>Choose a branch…</option>
           {branchOptions.map(b => (
@@ -543,10 +573,9 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
           <Input label="Email (optional)" type="email" value={form.email} onChange={set('email')} leftIcon={<Mail className="w-4 h-4" />} />
           <Input label="Phone (optional)" type="tel" value={form.phone} onChange={set('phone')} leftIcon={<Phone className="w-4 h-4" />} />
         </div>
-        <p className="text-[11px] text-[var(--muted)]">Contact details are for your records. A worker is only emailed if you invite them to the employee portal (Portal access).</p>
         <div className="flex justify-end gap-2 pt-4 border-t border-[var(--border)]">
           <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button type="submit" variant="primary" size="sm" loading={saving}>{worker ? 'Save changes' : 'Add worker'}</Button>
+          <Button type="submit" variant="primary" size="sm" loading={saving}>{worker ? 'Save changes' : 'Add employee'}</Button>
         </div>
       </form>
     </Modal>

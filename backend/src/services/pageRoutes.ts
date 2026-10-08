@@ -22,7 +22,7 @@ export const PAGE_PATHS: readonly string[] = [
     // Finding a lost company login link (creates no session; needs the account's password, or emails the account)
     '/recover-login-link',
     // Signed-in application (the API authorises every request; these only need to load the app)
-    '/app', '/timesheets', '/schedule', '/leave', '/staff', '/reports', '/announcements',
+    '/app', '/timesheets', '/schedule', '/leave', '/staff', '/staff/import', '/reports', '/announcements',
     '/settings', '/settings/branches', '/settings/roles', '/settings/audit',
     // Old addresses that now redirect (bookmarks and emails keep working)
     '/dashboard', '/roster', '/leave-requests', '/workers', '/branches', '/audit',
