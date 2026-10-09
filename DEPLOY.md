@@ -162,3 +162,17 @@ real worker or payroll data:
    deploying, confirm on the Owner's People screen that each former Branch Admin
    shows an Admin role for the same branches. Migrations `…706` and `…707`
    (private links, tutorial progress) must also be applied.
+7. Branch `overhaul/work-tool` adds migrations `…801` to `…803`. Take a backup first. None of
+   them drops data.
+   - `…801` renames the built-in Admin role to **Manager**, adds **Branch Manager** and
+     **Payroll** roles to every organisation, and renames permission categories.
+   - `…802` adds an optional employee ID and the `import_jobs` table.
+   - `…803` allows the **Submitted** timesheet status.
+
+   New runtime dependencies:
+   - `argon2`, a native module with prebuilt Linux binaries.
+   - `compression`.
+
+   After deploying, signing in still works for everyone. Each person's bcrypt hash is replaced
+   with Argon2id the next time they sign in. Existing private login links keep working; newly
+   issued ones are longer.

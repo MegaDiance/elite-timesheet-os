@@ -40,6 +40,20 @@ function visibleDays(view: View, anchor: string): { days: string[]; inPeriod: (d
   return { days: Array.from({ length: count }, (_, i) => shiftIso(start, i)), inPeriod: d => d.slice(0, 7) === first.slice(0, 7) };
 }
 
+/** "9am–5pm", "9:30am–1pm": short enough for a calendar box. */
+function compactWhen(e: Entry): string {
+  const part = (t?: string | null) => {
+    if (!t || !/^\d{1,2}:\d{2}/.test(t)) return '';
+    const [h, m] = t.split(':').map(Number);
+    const suffix = h < 12 ? 'am' : 'pm';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}${m ? `:${String(m).padStart(2, '0')}` : ''}${suffix}`;
+  };
+  const a = part(e.start);
+  const b = part(e.finish);
+  return a && b ? `${a}–${b}` : entryWhen(e);
+}
+
 function readView(): View {
   try { const v = localStorage.getItem(VIEW_KEY); return v === 'day' || v === 'month' ? v : 'week'; } catch { return 'week'; }
 }
@@ -220,7 +234,7 @@ export default function EmployeeSchedule() {
                   >
                     <button type="button" onClick={() => { setAnchor(dayIso); setView('day'); }} className="w-full h-full text-left" aria-label={`Open ${dayLabel(dayIso, 'long')}`}>
                       <span className={`text-xs ${isToday ? 'font-bold text-[var(--primary-text)]' : 'text-[var(--muted)]'}`}>{dayOfMonth(dayIso)}</span>
-                      {work.map((e, i) => <span key={i} className="block text-[11px] sm:text-xs font-semibold text-[var(--text)] tabular-nums leading-tight truncate">{entryWhen(e)}</span>)}
+                      {work.map((e, i) => <span key={i} className="block text-[11px] sm:text-xs font-semibold text-[var(--text)] tabular-nums leading-tight truncate">{compactWhen(e)}</span>)}
                       {leave.length > 0 && <span className="block text-[11px] text-[var(--muted)] truncate">{TYPE_LABEL[leave[0].type]}</span>}
                     </button>
                   </li>
