@@ -51,6 +51,41 @@ export function isRateLimited(key: string): boolean {
     return attempts.count >= MAX_ATTEMPTS;
 }
 
+/**
+ * Checks a signed-in person's password for a sensitive step (two-step verification, locks,
+ * security settings). Wrong answers count against the same per-account budget as the sign-in
+ * page, so a stolen session can't be used to guess the password faster than signing in allows.
+ * `candidates` are the hashes that would be accepted (the account password, and for locks the
+ * organisation's lock password).
+ */
+export async function checkSensitivePassword(
+    email: string,
+    password: unknown,
+    candidates: Array<string | null | undefined>,
+    compare: (plain: string, hash: string) => Promise<boolean>
+): Promise<'ok' | 'wrong' | 'limited'> {
+    const key = accountRateLimitKey(email);
+    if (isRateLimited(key)) return 'limited';
+    if (typeof password === 'string' && password && password.length <= 1024) {
+        for (const hash of candidates) if (hash && await compare(password, hash)) return 'ok';
+    }
+    recordFailedAttempt(key);
+    return 'wrong';
+}
+
+/** Failed sign-ins from one address, across every email (stops trying one password against many accounts). */
+const LOGIN_IP_FAILURES_BEFORE_LOCK = 30;
+export const loginIpKey = (ip: string | null | undefined) => `login-ip:${ip || '127.0.0.1'}`;
+export function isLoginIpLimited(key: string): boolean {
+    const attempts = rateLimits.get(key);
+    if (!attempts) return false;
+    if (Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
+        rateLimits.delete(key);
+        return false;
+    }
+    return attempts.count >= LOGIN_IP_FAILURES_BEFORE_LOCK;
+}
+
 export const TOO_MANY_ATTEMPTS = { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in 15 minutes.' } };
 
 /** Counts every call (not only failures). For unauthenticated endpoints that send email. */

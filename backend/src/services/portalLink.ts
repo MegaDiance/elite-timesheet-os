@@ -9,7 +9,8 @@ import { badRequest } from './policy';
  * The token is an entry point only — it identifies which organisation's sign-in page to show and
  * grants nothing by itself (a password is still required, and access is still resolved per user).
  * It is still treated as a secret:
- *   - 128 random bits, generated with crypto.randomBytes.
+ *   - 192 random bits (24 bytes from crypto.randomBytes, base64url: 32 characters). The database's
+ *     unique constraint on the hash is the final authority: a collision is retried with a new token.
  *   - Looked up only by its SHA-256 hash (`organisations.portal_slug_hash`).
  *   - A copy is kept AES-256-GCM encrypted (`portal_slug_enc`) so the server can show it to the
  *     Owner again and send people back to it after an invitation or password reset. The plain
@@ -21,8 +22,10 @@ import { badRequest } from './policy';
  * encrypted copy the first time it is needed, after which the plain value is cleared.
  */
 
-/** Anything outside this shape is rejected before touching the database. */
-const TOKEN_SHAPE = /^[a-z0-9-]{8,128}$/;
+/** Anything outside this shape is rejected before touching the database. Base64url (new) or lowercase hex (older links). */
+const TOKEN_SHAPE = /^[A-Za-z0-9_-]{8,128}$/;
+const TOKEN_BYTES = 24;
+const MAX_ISSUE_ATTEMPTS = 5;
 
 export type PortalLinkStatus =
     | { status: 'valid'; orgId: string; name: string }
@@ -31,7 +34,8 @@ export type PortalLinkStatus =
 
 export function normalisePortalToken(raw: unknown): string | null {
     if (typeof raw !== 'string') return null;
-    const token = raw.trim().toLowerCase();
+    // Case matters for new (base64url) tokens, so it is kept; older hex tokens are matched in lowercase too.
+    const token = raw.trim();
     return TOKEN_SHAPE.test(token) ? token : null;
 }
 
@@ -69,8 +73,8 @@ export async function resolvePortalToken(raw: unknown): Promise<PortalLinkStatus
     if (!token) return { status: 'invalid' };
     const res = await query(
         `SELECT id, name, portal_link_expires_at IS NOT NULL AND portal_link_expires_at <= NOW() AS expired
-           FROM organisations WHERE is_active = true AND portal_slug_hash = $1`,
-        [hashPortalToken(token)]
+           FROM organisations WHERE is_active = true AND portal_slug_hash = ANY($1::text[])`,
+        [[...new Set([hashPortalToken(token), hashPortalToken(token.toLowerCase())])]]
     );
     const org = res.rows[0];
     if (!org) return { status: 'invalid' };
@@ -80,24 +84,39 @@ export async function resolvePortalToken(raw: unknown): Promise<PortalLinkStatus
 
 export interface IssuedPortalLink { token: string; path: string; expiresAt: string | null }
 
+const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === '23505';
+
 /**
  * Creates a new link for an organisation, replacing (and so revoking) any previous one.
- * `run` lets callers issue the link inside their own transaction.
+ * `run` lets callers issue the link inside their own transaction; there each attempt is wrapped in
+ * a savepoint, so a collision on the unique hash can be retried without aborting the transaction.
+ * A collision is astronomically unlikely at 192 bits, but the constraint, not a prior SELECT, is
+ * what decides: two requests can never be handed the same link.
  */
 export async function issuePortalLink(
     orgId: string,
     expiresAt: Date | null = null,
     run: (text: string, params?: any[]) => Promise<any> = query
 ): Promise<IssuedPortalLink> {
-    const token = crypto.randomBytes(16).toString('hex');
-    await run(
-        `UPDATE organisations
-            SET portal_slug = NULL, portal_slug_hash = $1, portal_slug_enc = $2,
-                portal_link_expires_at = $3, portal_link_created_at = NOW()
-          WHERE id = $4`,
-        [hashPortalToken(token), encrypt(token), expiresAt ? expiresAt.toISOString() : null, orgId]
-    );
-    return { token, path: `/login/${token}`, expiresAt: expiresAt ? expiresAt.toISOString() : null };
+    const inTransaction = run !== query;
+    for (let attempt = 1; ; attempt++) {
+        const token = crypto.randomBytes(TOKEN_BYTES).toString('base64url');
+        try {
+            if (inTransaction) await run('SAVEPOINT issue_portal_link');
+            await run(
+                `UPDATE organisations
+                    SET portal_slug = NULL, portal_slug_hash = $1, portal_slug_enc = $2,
+                        portal_link_expires_at = $3, portal_link_created_at = NOW()
+                  WHERE id = $4`,
+                [hashPortalToken(token), encrypt(token), expiresAt ? expiresAt.toISOString() : null, orgId]
+            );
+            if (inTransaction) await run('RELEASE SAVEPOINT issue_portal_link');
+            return { token, path: `/login/${token}`, expiresAt: expiresAt ? expiresAt.toISOString() : null };
+        } catch (err) {
+            if (inTransaction) await run('ROLLBACK TO SAVEPOINT issue_portal_link');
+            if (!isUniqueViolation(err) || attempt >= MAX_ISSUE_ATTEMPTS) throw err;
+        }
+    }
 }
 
 export interface PortalLinkInfo { token: string; path: string; expiresAt: string | null; expired: boolean; createdAt: string | null }

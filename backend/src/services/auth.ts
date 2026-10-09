@@ -1,7 +1,14 @@
+import argon2 from 'argon2';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const SALT_ROUNDS = 10;
+/**
+ * Passwords are hashed with Argon2id at OWASP's recommended settings (19 MiB, 2 passes, 1 lane).
+ * Hashes made before that are bcrypt; they still verify, and are replaced with an Argon2id hash
+ * the next time the person signs in (needsRehash).
+ */
+const ARGON2_OPTIONS = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 } as const;
+const isArgon2 = (hash: string) => hash.startsWith('$argon2');
 if (process.env.NODE_ENV === 'production') {
     if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'super_secret_jwt_key_for_local_dev') {
         throw new Error('FATAL SECURITY ERROR: JWT_SECRET environment variable must be set to a secure secret in production.');
@@ -10,11 +17,22 @@ if (process.env.NODE_ENV === 'production') {
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_for_local_dev';
 
 export async function hashPassword(password: string): Promise<string> {
-    return bcrypt.hash(password, SALT_ROUNDS);
+    return argon2.hash(password, ARGON2_OPTIONS);
 }
 
 export async function comparePassword(password: string, hash: string): Promise<boolean> {
-    return bcrypt.compare(password, hash);
+    if (typeof hash !== 'string' || !hash) return false;
+    try {
+        return isArgon2(hash) ? await argon2.verify(hash, password) : await bcrypt.compare(password, hash);
+    } catch {
+        return false; // a malformed stored hash never matches
+    }
+}
+
+/** True for a hash that should be replaced with a current Argon2id hash (an older bcrypt one, or weaker settings). */
+export function needsRehash(hash: string): boolean {
+    if (!isArgon2(hash)) return true;
+    return argon2.needsRehash(hash, ARGON2_OPTIONS);
 }
 
 /**

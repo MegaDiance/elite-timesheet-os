@@ -2,9 +2,9 @@ import { Router, Response } from 'express';
 import { query, withTransaction } from '../services/db';
 import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requireOwner, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
+import { HttpError, badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
-import { RateLimitedRequest, checkRateLimit, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
+import { RateLimitedRequest, checkRateLimit, checkSensitivePassword, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
 import { currentPortalLink, issuePortalLink, parseExpiry, resolvePortalToken } from '../services/portalLink';
 
 const router = Router();
@@ -183,10 +183,10 @@ router.put('/portal-link', requireAuth, requirePermission(Permission.SECURITY_MA
 });
 
 async function requireCurrentPassword(userId: string, password: unknown) {
-    const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [userId]);
-    if (typeof password !== 'string' || !password || !(await comparePassword(password, userRes.rows[0].password_hash))) {
-        throw forbidden('Your current password is incorrect.');
-    }
+    const userRes = await query('SELECT email, password_hash FROM users WHERE id = $1', [userId]);
+    const check = await checkSensitivePassword(userRes.rows[0].email, password, [userRes.rows[0].password_hash], comparePassword);
+    if (check === 'limited') throw new HttpError(429, 'TOO_MANY_REQUESTS', 'Too many attempts. Please try again in 15 minutes.');
+    if (check === 'wrong') throw forbidden('Your current password is incorrect.');
 }
 
 router.put('/lock-passwords', requireAuth, requirePermission(Permission.SECURITY_MANAGE), async (req: AuthRequest, res: Response) => {

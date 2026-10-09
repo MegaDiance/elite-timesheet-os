@@ -494,7 +494,7 @@ describe('the standard sign-in stays private', () => {
 
     it('uses the same hashing as everything else: a plain-text comparison would not pass', async () => {
         const hash = (await sql('SELECT password_hash FROM users WHERE id = $1', [w.users.owner.id])).rows[0].password_hash;
-        expect(hash).toMatch(/^\$2[aby]\$/);
+        expect(hash).toMatch(/^\$argon2id\$/);
         expect(hash).not.toContain(PASSWORD);
         expect(crypto.createHash('sha256').update(PASSWORD).digest('hex')).not.toBe(hash);
     });

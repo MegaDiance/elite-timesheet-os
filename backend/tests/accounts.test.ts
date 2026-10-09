@@ -40,7 +40,7 @@ describe('organisation sign-up', () => {
         const org = (await sql("SELECT o.portal_slug, o.portal_slug_hash, o.portal_slug_enc, u.email FROM organisations o JOIN users u ON u.id = o.owner_user_id WHERE o.name = 'New Clinic'")).rows[0];
         expect(org.email).toBe('founder@new.test');
         const linkToken = String(done.body.data.login_path).replace('/login/', '');
-        expect(linkToken).toMatch(/^[0-9a-f]{32}$/);
+        expect(linkToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
         // The sign-in link is stored only as a hash (for lookup) and an encrypted copy — never in plain text.
         expect(org.portal_slug).toBeNull();
         expect(org.portal_slug_hash).toBe(crypto.createHash('sha256').update(linkToken).digest('hex'));

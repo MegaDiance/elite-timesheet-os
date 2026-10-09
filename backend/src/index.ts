@@ -1,3 +1,4 @@
+import compression from 'compression';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -64,6 +65,16 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Text responses (the app bundle, JSON) are compressed for clients that accept it.
+app.use(compression());
+
+// Nothing from the API may be kept by a browser or a shared cache: responses are per person and
+// often carry personal data, sign-in links or access decisions.
+app.use('/api', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+});
 
 // Payload limits to prevent memory exhaustion DoS. A staff spreadsheet (up to 5,000 rows) is the
 // one larger body, and only on its own route.

@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword } from '../services/auth';
+import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword, needsRehash } from '../services/auth';
 import { requireAuth, AuthRequest, sendError } from '../middleware/auth';
 import { countOtherOrganisations, hasManagementAccess, listAccessibleOrganisations, resolveAccess, writeAudit, isUuid } from '../services/policy';
 import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate, isEmailSendingEnabled } from '../services/emailService';
@@ -9,7 +9,7 @@ import { createSession, touchSession, revokeSession, revokeAllUserSessions, getA
 import { ClientInfo, parseClientInfo, assessLoginRisk, createLoginChallenge } from '../services/securityService';
 import {
     RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit, accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
-    isStrongPassword, sha256Hex, hashesEqual, newSecretToken, newSixDigitCode, publicBaseUrl, maskEmail
+    isStrongPassword, sha256Hex, hashesEqual, newSecretToken, newSixDigitCode, publicBaseUrl, maskEmail, checkSensitivePassword, isLoginIpLimited, loginIpKey,
 } from '../services/authUtils';
 import { resolvePortalToken, usablePortalPath } from '../services/portalLink';
 
@@ -141,8 +141,11 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
 
     const cleanEmail = email.trim().toLowerCase();
     const clientInfo = parseClientInfo(req);
+    const ipKey = loginIpKey(clientInfo.ip);
+    if (isLoginIpLimited(ipKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
     const fail = async (userId?: string) => {
         recordFailedAttempt(req.rateLimitKey);
+        recordFailedAttempt(ipKey);
         await recordLoginAttempt({ userId, email: cleanEmail, status: 'FAILED', clientInfo, authMethod: 'password' });
         return res.status(401).json(INVALID_CREDENTIALS);
     };
@@ -161,6 +164,12 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
 
         if (!(await resolveAccess(user.id, orgId))) {
             return fail(user.id);
+        }
+
+        // The password is right: an older (bcrypt) hash is replaced with an Argon2id one. Only if the
+        // stored hash is still the one just checked, so a password change made meanwhile is never undone.
+        if (needsRehash(user.password_hash)) {
+            await query('UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3', [await hashPassword(password), user.id, user.password_hash]);
         }
 
         // The suspicious-login email challenge and 2FA codes both need working email. While email
@@ -778,9 +787,9 @@ router.post('/2fa/enable', requireAuth, async (req: AuthRequest, res: Response) 
         }
 
         const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [ctx.userId]);
-        if (!(await comparePassword(password, userRes.rows[0].password_hash))) {
-            return res.status(401).json({ success: false, error: { message: 'Invalid current password.' } });
-        }
+        const check = await checkSensitivePassword(ctx.email, password, [userRes.rows[0].password_hash], comparePassword);
+        if (check === 'limited') return res.status(429).json(TOO_MANY_ATTEMPTS);
+        if (check === 'wrong') return res.status(401).json({ success: false, error: { message: 'Invalid current password.' } });
 
         const codeRes = await query('SELECT * FROM two_factor_codes WHERE user_id = $1 AND expires_at > NOW()', [ctx.userId]);
         const stored = codeRes.rows[0];
@@ -810,9 +819,9 @@ router.post('/2fa/disable', requireAuth, async (req: AuthRequest, res: Response)
             return res.status(400).json({ success: false, error: { message: 'Current password required to disable 2FA.' } });
         }
         const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [ctx.userId]);
-        if (!(await comparePassword(password, userRes.rows[0].password_hash))) {
-            return res.status(401).json({ success: false, error: { message: 'Invalid password.' } });
-        }
+        const check = await checkSensitivePassword(ctx.email, password, [userRes.rows[0].password_hash], comparePassword);
+        if (check === 'limited') return res.status(429).json(TOO_MANY_ATTEMPTS);
+        if (check === 'wrong') return res.status(401).json({ success: false, error: { message: 'Invalid password.' } });
 
         await query('UPDATE users SET two_factor_enabled = false WHERE id = $1', [ctx.userId]);
         await query('DELETE FROM two_factor_codes WHERE user_id = $1', [ctx.userId]);

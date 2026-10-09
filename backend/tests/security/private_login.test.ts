@@ -13,9 +13,9 @@ import crypto from 'crypto';
 import request from 'supertest';
 import app from '../../src/index';
 import { clearAllRateLimits } from '../../src/services/authUtils';
-import { currentPortalLink, resolvePortalToken } from '../../src/services/portalLink';
+import { currentPortalLink, hashPortalToken, issuePortalLink, resolvePortalToken } from '../../src/services/portalLink';
 import { PAGE_PATHS } from '../../src/services/pageRoutes';
-import { getPool } from '../../src/services/db';
+import { getPool, withTransaction } from '../../src/services/db';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from '../helpers/testDb';
 import { PASSWORD, PERIOD, World, bearer, buildWorld, simpleDay } from '../helpers/fixtures';
 
@@ -56,8 +56,62 @@ describe('private sign-in link pages', () => {
         expect(res.status).toBe(200);
         expect(res.headers['cache-control']).toBe('no-store');
         expect(res.headers['x-robots-tag']).toMatch(/noindex/);
-        // Case and a trailing slash do not matter for a real link.
-        expect((await page(`/login/${w.abc.portalSlug.toUpperCase()}/`)).status).toBe(200);
+        // A trailing slash does not matter. Case does: a link is 192 random bits in base64url.
+        expect((await page(`/login/${w.abc.portalSlug}/`)).status).toBe(200);
+        const flipped = w.abc.portalSlug.replace(/[a-z]/, c => c.toUpperCase());
+        if (flipped !== w.abc.portalSlug) expect((await page(`/login/${flipped}`)).status).toBe(404);
+    });
+
+    it('an older lowercase hex link still works, whatever the case it is typed in', async () => {
+        const legacy = crypto.randomBytes(16).toString('hex');
+        await sql('UPDATE organisations SET portal_slug_hash = $1, portal_slug_enc = NULL WHERE id = $2', [hashPortalToken(legacy), w.abc.id]);
+        expect((await page(`/login/${legacy}`)).status).toBe(200);
+        expect((await page(`/login/${legacy.toUpperCase()}`)).status).toBe(200);
+    });
+
+    it('issues a link from 24 random bytes, and retries with a new one if the database reports a collision', async () => {
+        const taken = (await currentPortalLink(w.xyz.id))!.token;
+        const real = crypto.randomBytes.bind(crypto);
+        let calls = 0;
+        // The first draw repeats XYZ's token exactly; the unique constraint refuses it and a new one is drawn.
+        // Only link draws (24 bytes) are counted; encryption draws its own IV.
+        const spy = jest.spyOn(crypto, 'randomBytes').mockImplementation(((size: number) => {
+            if (size !== 24) return real(size);
+            calls++;
+            return calls === 1 ? Buffer.from(taken, 'base64url') : real(size);
+        }) as any);
+        try {
+            const issued = await issuePortalLink(w.abc.id);
+            expect(calls).toBe(2);
+            expect(issued.token).not.toBe(taken);
+            expect(issued.token).toMatch(/^[A-Za-z0-9_-]{32}$/);
+        } finally {
+            spy.mockRestore();
+        }
+        expect((await currentPortalLink(w.xyz.id))!.token).toBe(taken);
+        expect((await resolvePortalToken((await currentPortalLink(w.abc.id))!.token)).status).toBe('valid');
+    });
+
+    it('inside a transaction a collision is retried without aborting it', async () => {
+        const taken = (await currentPortalLink(w.xyz.id))!.token;
+        const real = crypto.randomBytes.bind(crypto);
+        let calls = 0;
+        // Only link draws (24 bytes) are counted; encryption draws its own IV.
+        const spy = jest.spyOn(crypto, 'randomBytes').mockImplementation(((size: number) => {
+            if (size !== 24) return real(size);
+            calls++;
+            return calls === 1 ? Buffer.from(taken, 'base64url') : real(size);
+        }) as any);
+        try {
+            const issued = await withTransaction(async (tx) => {
+                const link = await issuePortalLink(w.abc.id, null, tx);
+                await tx('SELECT 1'); // the transaction is still usable
+                return link;
+            });
+            expect(issued.token).not.toBe(taken);
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     it('random, malformed and made-up tokens are 404', async () => {
@@ -92,7 +146,7 @@ describe('private sign-in link pages', () => {
         const regen = await request(app).post('/api/organisation/regenerate-portal-url').set(bearer(w.tokens.owner)).send({});
         expect(regen.status).toBe(200);
         const fresh = regen.body.data.portal_slug;
-        expect(fresh).toMatch(/^[0-9a-f]{32}$/);
+        expect(fresh).toMatch(/^[A-Za-z0-9_-]{32}$/);
 
         expect((await page(`/login/${w.abc.portalSlug}`)).status).toBe(404);
         expect((await request(app).get(`/api/organisation/lookup/${w.abc.portalSlug}`)).status).toBe(404);

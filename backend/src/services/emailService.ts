@@ -365,7 +365,7 @@ export function buildPasswordResetEmailTemplate(params: { resetLink: string, rec
         <div class="brand">SIMPLEHOURS</div>
         <div class="title">Reset Your Password</div>
         <p class="desc">
-          We received a request to reset your password for <span class="highlight">${params.recipientEmail}</span>. Click the button below to choose a secure new password.
+          We received a request to reset your password for <span class="highlight">${escapeHtml(params.recipientEmail)}</span>. Click the button below to choose a secure new password.
         </p>
         <div style="text-align: center; margin: 32px 0;">
           <a href="${params.resetLink}" class="btn">Reset Password →</a>
@@ -518,7 +518,7 @@ export function buildTwoFactorEmailTemplate(params: { code: string, recipientEma
         <span class="badge">Security Verification</span>
         <div class="title">Two-Step Verification Code</div>
         <p class="desc">
-          Enter this one-time code to complete sign-in for <strong style="color: #ffffff;">${params.recipientEmail}</strong>:
+          Enter this one-time code to complete sign-in for <strong style="color: #ffffff;">${escapeHtml(params.recipientEmail)}</strong>:
         </p>
         
         <div class="code-box">
@@ -586,17 +586,17 @@ export function buildSuspiciousLoginVerificationTemplate(params: {
         <span class="alert-badge">⚠️ Suspicious Sign-In Detected</span>
         <div class="title">Confirm Sign-In From New Location</div>
         <p class="desc">
-          We detected an attempt to sign in to your account (<strong style="color: #ffffff;">${params.recipientEmail}</strong>) from a new or unrecognised location:
+          We detected an attempt to sign in to your account (<strong style="color: #ffffff;">${escapeHtml(params.recipientEmail)}</strong>) from a new or unrecognised location:
         </p>
 
         <div class="meta-table">
           <div class="meta-row">
             <span class="meta-label">Approx. Location:</span>
-            <span class="meta-value">${params.approxLocation}</span>
+            <span class="meta-value">${escapeHtml(params.approxLocation)}</span>
           </div>
           <div class="meta-row">
             <span class="meta-label">Device & Browser:</span>
-            <span class="meta-value">${params.deviceInfo}</span>
+            <span class="meta-value">${escapeHtml(params.deviceInfo)}</span>
           </div>
           <div class="meta-row">
             <span class="meta-label">Time:</span>

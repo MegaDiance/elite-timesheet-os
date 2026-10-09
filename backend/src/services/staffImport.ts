@@ -235,7 +235,7 @@ async function runJob(ctx: AccessContext, jobId: string, rows: CleanRow[]): Prom
         await auditImport(ctx, rows);
     } catch (err) {
         const message = isUniqueViolation(err) ? IMPORT_RACE : 'The import failed, so nothing was imported. Please try again.';
-        if (!isUniqueViolation(err)) console.error('[STAFF IMPORT] job failed:', err instanceof Error ? err.message : 'unknown error');
+        if (!isUniqueViolation(err)) console.error('[IMPORT] job failed:', err instanceof Error ? err.message : 'unknown error');
         await query(`UPDATE import_jobs SET status = 'failed', done_rows = 0, error = $1, finished_at = NOW() WHERE id = $2`, [message, jobId]).catch(() => undefined);
     }
 }

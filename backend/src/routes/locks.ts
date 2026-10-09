@@ -4,6 +4,7 @@ import { query, withTransaction } from '../services/db';
 import { comparePassword } from '../services/auth';
 import { requireAnyPermission, requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, loadBranch, resolveBranchFilterAny, writeAudit } from '../services/policy';
+import { checkSensitivePassword } from '../services/authUtils';
 import { isFortnightStart } from '../services/periodUtils';
 import { lockBranchPeriod } from '../services/periodLocks';
 
@@ -61,12 +62,10 @@ router.post('/', requirePermission(Permission.TIMESHEETS_LOCK), async (req: Auth
         if (roster_locked !== undefined && timesheet_locked === undefined && orgRes.rows[0].roster_lock_password_hash) candidates.push(orgRes.rows[0].roster_lock_password_hash);
         if (timesheet_locked !== undefined && roster_locked === undefined && orgRes.rows[0].timesheet_lock_password_hash) candidates.push(orgRes.rows[0].timesheet_lock_password_hash);
 
-        let passwordOk = false;
-        for (const hash of candidates) {
-            if (hash && await comparePassword(password, hash)) { passwordOk = true; break; }
-        }
+        const check = await checkSensitivePassword(ctx.email, password, candidates, comparePassword);
+        if (check === 'limited') throw new HttpError(429, 'TOO_MANY_REQUESTS', 'Too many attempts. Please try again in 15 minutes.');
         // 403, not 401: the session is still valid, so the client must not sign the user out.
-        if (!passwordOk) throw new HttpError(403, 'INVALID_PASSWORD', 'That password is not correct. The lock was not changed.');
+        if (check === 'wrong') throw new HttpError(403, 'INVALID_PASSWORD', 'That password is not correct. The lock was not changed.');
 
         const result = await withTransaction(async (tx) => {
             await lockBranchPeriod(tx, ctx.orgId, branch.id, start_date);

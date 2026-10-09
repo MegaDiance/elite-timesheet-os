@@ -19,7 +19,7 @@ router.post('/validate', async (req: AuthRequest, res: Response) => {
         const result = await checkRows(req.auth!, req.body?.rows);
         res.json({ success: true, data: result });
     } catch (err) {
-        sendError(res, err, 'STAFF IMPORT VALIDATE ERROR');
+        sendError(res, err, 'IMPORT VALIDATE ERROR');
     }
 });
 
@@ -38,7 +38,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
         }
         res.status(201).json({ success: true, data: { imported: outcome.count }, message: `${outcome.count} ${outcome.count === 1 ? 'person' : 'people'} imported.` });
     } catch (err) {
-        sendError(res, err, 'STAFF IMPORT ERROR');
+        sendError(res, err, 'IMPORT ERROR');
     }
 });
 
@@ -49,7 +49,7 @@ router.get('/jobs/:id', async (req: AuthRequest, res: Response) => {
         if (!job) throw notFound('Import');
         res.json({ success: true, data: job });
     } catch (err) {
-        sendError(res, err, 'STAFF IMPORT JOB ERROR');
+        sendError(res, err, 'IMPORT JOB ERROR');
     }
 });
 
