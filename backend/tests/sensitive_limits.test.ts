@@ -24,14 +24,14 @@ beforeEach(async () => {
 
 const WRONG = 'Wrong12345';
 
-it('30 failed sign-ins from one address, across different emails, stop the next one, even with a right password', async () => {
-    for (let i = 0; i < 30; i++) {
+it('100 failed sign-ins from one address, across different emails, stop the next one, even with a right password', async () => {
+    for (let i = 0; i < 100; i++) {
         const res = await request(app).post('/api/auth/login').send({ email: `nobody${i}@nowhere.test`, password: WRONG, organisation_slug: w.abc.portalSlug });
         expect(res.status).toBe(401);
     }
     const blocked = await request(app).post('/api/auth/login').send({ email: w.users.sarah.email, password: PASSWORD, organisation_slug: w.abc.portalSlug });
     expect(blocked.status).toBe(429);
-});
+}, 120_000);
 
 it('turning two-step verification off counts wrong passwords like the sign-in page does', async () => {
     const off = (password: string) => request(app).post('/api/auth/2fa/disable').set(bearer(w.tokens.sarah)).send({ password });

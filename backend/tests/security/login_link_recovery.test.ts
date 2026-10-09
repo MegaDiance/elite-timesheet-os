@@ -13,14 +13,14 @@ import { clearAllRateLimits } from '../../src/services/authUtils';
 import { ipLimitKey, resetRecoveryLimits } from '../../src/services/loginLinkRecovery';
 import { currentPortalLink, resolvePortalToken } from '../../src/services/portalLink';
 import { clearTestOutbox, getTestOutbox } from '../../src/services/emailService';
-import { comparePassword } from '../../src/services/auth';
+import { comparePasswordUniform } from '../../src/services/auth';
 import { connectTestDb, resetTestDb, closeTestDb, sql } from '../helpers/testDb';
 import { PASSWORD, World, bearer, buildWorld, createBranch, createOrganisation, createUser, assignRole } from '../helpers/fixtures';
 
 // The comparison must always run, whether or not the account exists — counted here.
 jest.mock('../../src/services/auth', () => {
     const actual = jest.requireActual('../../src/services/auth');
-    return { ...actual, comparePassword: jest.fn(actual.comparePassword) };
+    return { ...actual, comparePassword: jest.fn(actual.comparePassword), comparePasswordUniform: jest.fn(actual.comparePasswordUniform) };
 });
 
 let w: World;
@@ -235,7 +235,7 @@ describe('failures', () => {
     });
 
     it('always compares a password, even when there is no such account or the input is malformed', async () => {
-        const compare = comparePassword as jest.Mock;
+        const compare = comparePasswordUniform as jest.Mock;
         compare.mockClear();
         await lookup(as('nobody@nowhere.test'));
         await lookup(owner({ password: WRONG }));

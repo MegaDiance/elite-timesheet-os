@@ -122,6 +122,7 @@ router.get('/', requireAnyPermission(Permission.EMPLOYEES_VIEW, Permission.ROSTE
             worker.template = byWorker.get(worker.id) || [];
             worker.status = worker.is_active ? 'Active' : 'Inactive';
             if (!canAccessBranch(ctx, Permission.EMPLOYEES_VIEW, worker.location_id)) {
+                worker.employee_code = null;
                 worker.email = null;
                 worker.phone = null;
                 worker.portal_status = 'none';

@@ -1,8 +1,7 @@
-import crypto from 'crypto';
 import { query, withTransaction } from './db';
-import { comparePassword, hashPassword } from './auth';
+import { comparePasswordUniform } from './auth';
 import { ClientInfo } from './securityService';
-import { accountRateLimitKey, clearRateLimit, isRateLimited, isValidEmail, publicBaseUrl, recordFailedAttempt, sha256Hex } from './authUtils';
+import { accountRateLimitKey, clearRateLimit, isValidEmail, publicBaseUrl, recordFailedAttempt, sha256Hex, tryReserveAttempt } from './authUtils';
 import { currentPortalLink, issuePortalLink } from './portalLink';
 import { listAccessibleOrganisations, writeAudit } from './policy';
 import { recordLoginAttempt } from './sessionService';
@@ -30,7 +29,6 @@ import {
  * built only from what was submitted.
  */
 
-const dummyPasswordHash = hashPassword(crypto.randomUUID());
 const PASSWORD_MAX_LENGTH = 1024;
 
 // ---------------------------------------------------------------------------
@@ -195,20 +193,28 @@ export async function findLoginLinks(input: { email?: unknown; password?: unknow
     if (!isValidEmail(rawEmail) || typeof password !== 'string' || !password || password.length > PASSWORD_MAX_LENGTH) {
         const ipKey = `recover:ip:${ipLimitKey(ip)}`;
         if (isLocked(ipKey)) return { kind: 'rate-limited' };
-        await comparePassword('x', await dummyPasswordHash);
+        await comparePasswordUniform('x', null);
         recordFailure(ipKey, IP_FAILURES_BEFORE_LOCK);
         return { kind: 'unverified' };
     }
 
     const email = rawEmail.trim().toLowerCase();
     const keys = limitKeys(ip, email);
-    if (isLocked(keys.ip) || isLocked(keys.email) || isRateLimited(keys.account)) return { kind: 'rate-limited' };
-
-    const found = await query('SELECT id, email, is_active, password_hash FROM users WHERE LOWER(email) = $1', [email]);
-    const user = found.rows[0];
-    // Always compare, so the time taken does not say whether the account exists.
-    const passwordOk = await comparePassword(password, user?.password_hash || await dummyPasswordHash);
-    if (!user || !user.is_active || !user.password_hash || !passwordOk) return fail(user?.id, email, keys, client);
+    if (isLocked(keys.ip) || isLocked(keys.email)) return { kind: 'rate-limited' };
+    // A slot on the shared per-account budget, held while the password is checked, so attempts sent
+    // at the same moment can't all slip past the limit before any of them has failed.
+    const release = tryReserveAttempt(keys.account);
+    if (!release) return { kind: 'rate-limited' };
+    let user: any;
+    try {
+        const found = await query('SELECT id, email, is_active, password_hash FROM users WHERE LOWER(email) = $1', [email]);
+        user = found.rows[0];
+        // Always compare, so the time taken does not say whether the account exists.
+        const passwordOk = await comparePasswordUniform(password, user?.password_hash);
+        if (!user || !user.is_active || !user.password_hash || !passwordOk) return await fail(user?.id, email, keys, client);
+    } finally {
+        release();
+    }
 
     buckets.delete(keys.email);
     clearRateLimit(keys.account);

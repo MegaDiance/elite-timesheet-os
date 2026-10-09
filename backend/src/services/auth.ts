@@ -29,6 +29,24 @@ export async function comparePassword(password: string, hash: string): Promise<b
     }
 }
 
+const dummyArgon2 = argon2.hash('not-a-real-password', ARGON2_OPTIONS);
+const dummyBcrypt = bcrypt.hash('not-a-real-password', 10);
+
+/**
+ * For checks anyone can reach without signing in (sign-in, link recovery): every call runs one
+ * Argon2id AND one bcrypt verification, real or stand-in, so the time taken is the same whether
+ * the account exists, has an older bcrypt hash or a new Argon2id one. Otherwise timing would show
+ * which emails have accounts while some hashes are still bcrypt.
+ */
+export async function comparePasswordUniform(password: string, hash: string | null | undefined): Promise<boolean> {
+    const real = typeof hash === 'string' && hash ? hash : null;
+    const argonHash = real && isArgon2(real) ? real : await dummyArgon2;
+    const bcryptHash = real && !isArgon2(real) ? real : await dummyBcrypt;
+    const [argonOk, bcryptOk] = await Promise.all([comparePassword(password, argonHash), comparePassword(password, bcryptHash)]);
+    if (!real) return false;
+    return isArgon2(real) ? argonOk : bcryptOk;
+}
+
 /** True for a hash that should be replaced with a current Argon2id hash (an older bcrypt one, or weaker settings). */
 export function needsRehash(hash: string): boolean {
     if (!isArgon2(hash)) return true;

@@ -16,6 +16,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Menu } from '../components/ui/Menu';
 import api from '../services/apiClient';
+import { csvCell } from '../utils/csv';
 import SmartTimeInput from '../components/SmartTimeInput';
 import { useAccess, type Branch, type Permission } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
@@ -66,11 +67,6 @@ interface Worker {
 
 const errorMessage = friendlyError;
 const isActiveWorker = (w: Worker) => w.is_active;
-
-function csvCell(value: unknown): string {
-  const text = value === null || value === undefined ? '' : String(value);
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
 
 function WorkerContact({ worker, canSee }: { worker: Worker; canSee: boolean }) {
   // Without permission to see workers' details in this branch the server leaves them out, so say that rather than "none".

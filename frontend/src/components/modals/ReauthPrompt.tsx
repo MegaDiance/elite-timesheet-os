@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Lock } from 'lucide-react';
 import api from '../../services/apiClient';
 import { onPasswordRequested } from '../../services/reauth';
@@ -13,13 +13,20 @@ export function ReauthPrompt() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Whatever is waiting is answered "no" if the prompt goes away (e.g. sign-out), so nothing hangs.
+  const pendingRef = useRef<{ resolve: (ok: boolean) => void } | null>(null);
+  useEffect(() => { pendingRef.current = pending; }, [pending]);
+
   useEffect(() => {
     onPasswordRequested(next => {
       setPassword('');
       setError(null);
       setPending(next);
     });
-    return () => onPasswordRequested(null);
+    return () => {
+      onPasswordRequested(null);
+      pendingRef.current?.resolve(false);
+    };
   }, []);
 
   const finish = (ok: boolean) => {

@@ -1,22 +1,21 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { query } from '../services/db';
-import { comparePassword, generateToken, generateTempToken, verifyTempToken, hashPassword, needsRehash } from '../services/auth';
+import { comparePassword, comparePasswordUniform, generateToken, generateTempToken, verifyTempToken, hashPassword, needsRehash } from '../services/auth';
 import { requireAuth, AuthRequest, sendError } from '../middleware/auth';
 import { countOtherOrganisations, hasManagementAccess, listAccessibleOrganisations, resolveAccess, writeAudit, isUuid } from '../services/policy';
 import { sendTransactionalEmail, buildPasswordResetEmailTemplate, buildTwoFactorEmailTemplate, buildSuspiciousLoginVerificationTemplate, isEmailSendingEnabled } from '../services/emailService';
 import { createSession, touchSession, revokeSession, revokeAllUserSessions, getActiveUserSessions, recordLoginAttempt, markReauthenticated, hasFreshReauthentication, REAUTH_WINDOW_MS } from '../services/sessionService';
 import { ClientInfo, parseClientInfo, assessLoginRisk, createLoginChallenge } from '../services/securityService';
 import {
-    RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit, accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
-    isStrongPassword, sha256Hex, hashesEqual, newSecretToken, newSixDigitCode, publicBaseUrl, maskEmail, checkSensitivePassword, isLoginIpLimited, loginIpKey,
+    RateLimitedRequest, checkRateLimit, throttle, recordFailedAttempt, clearRateLimit, accountRateLimitKey, isRateLimited, reserveForResponse, TOO_MANY_ATTEMPTS,
+    isStrongPassword, sha256Hex, hashesEqual, newSecretToken, newSixDigitCode, publicBaseUrl, maskEmail, checkSensitivePassword, reserveLoginIpAttempt, loginIpKey,
 } from '../services/authUtils';
 import { resolvePortalToken, usablePortalPath } from '../services/portalLink';
 
 const router = Router();
 
 // Compared against when the email is unknown, so unknown and known emails take the same time.
-const dummyPasswordHash = hashPassword(crypto.randomUUID());
 
 const INVALID_CREDENTIALS = { success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.' } };
 
@@ -142,7 +141,10 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
     const cleanEmail = email.trim().toLowerCase();
     const clientInfo = parseClientInfo(req);
     const ipKey = loginIpKey(clientInfo.ip);
-    if (isLoginIpLimited(ipKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
+    const releaseIp = reserveLoginIpAttempt(ipKey);
+    if (!releaseIp) return res.status(429).json(TOO_MANY_ATTEMPTS);
+    res.once('finish', releaseIp);
+    res.once('close', releaseIp);
     const fail = async (userId?: string) => {
         recordFailedAttempt(req.rateLimitKey);
         recordFailedAttempt(ipKey);
@@ -153,7 +155,7 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
     try {
         const userRes = await query('SELECT * FROM users WHERE LOWER(email) = $1', [cleanEmail]);
         const user = userRes.rows[0];
-        const passwordOk = await comparePassword(password, user?.password_hash || await dummyPasswordHash);
+        const passwordOk = await comparePasswordUniform(password, user?.password_hash);
         if (!user || !user.is_active || !user.password_hash || !passwordOk) {
             return fail(user?.id);
         }
@@ -168,8 +170,13 @@ router.post('/login', checkRateLimit, async (req: RateLimitedRequest, res: Respo
 
         // The password is right: an older (bcrypt) hash is replaced with an Argon2id one. Only if the
         // stored hash is still the one just checked, so a password change made meanwhile is never undone.
+        // Best effort: a failure here never stops a correct sign-in; the upgrade is tried again next time.
         if (needsRehash(user.password_hash)) {
-            await query('UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3', [await hashPassword(password), user.id, user.password_hash]);
+            try {
+                await query('UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3', [await hashPassword(password), user.id, user.password_hash]);
+            } catch (err) {
+                console.warn('[LOGIN] password hash upgrade skipped:', err instanceof Error ? err.message : 'unknown error');
+            }
         }
 
         // The suspicious-login email challenge and 2FA codes both need working email. While email
@@ -511,7 +518,7 @@ router.post('/reauthenticate', requireAuth, async (req: AuthRequest, res: Respon
     try {
         const ctx = req.auth!;
         const accountKey = accountRateLimitKey(ctx.email);
-        if (isRateLimited(accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
+        if (!reserveForResponse(res, accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
 
         const password = req.body?.password;
         const userRes = await query('SELECT password_hash FROM users WHERE id = $1', [ctx.userId]);

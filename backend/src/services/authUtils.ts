@@ -13,21 +13,53 @@ export interface RateLimitedRequest extends Request {
     rateLimitKey?: string;
 }
 
+/**
+ * Attempts still being checked count against a limit too. Without this, many requests sent at the
+ * same moment all pass the "too many failures?" check before any of them has failed, so a limit
+ * of 5 could be beaten by sending 40 at once. A reservation is taken before the password (or
+ * code) is checked and released when the request finishes; a failure is recorded before release.
+ */
+const inFlight = new Map<string, number>();
+
+function liveCount(key: string): number {
+    const attempts = rateLimits.get(key);
+    if (!attempts) return 0;
+    if (Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
+        rateLimits.delete(key);
+        return 0;
+    }
+    return attempts.count;
+}
+
+/** Takes a slot for one attempt, or returns null when recorded failures plus attempts in progress reach `max`. */
+export function tryReserveAttempt(key: string, max: number = MAX_ATTEMPTS): (() => void) | null {
+    const pending = inFlight.get(key) ?? 0;
+    if (liveCount(key) + pending >= max) return null;
+    inFlight.set(key, pending + 1);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        const left = (inFlight.get(key) ?? 1) - 1;
+        if (left <= 0) inFlight.delete(key); else inFlight.set(key, left);
+    };
+}
+
 export function checkRateLimit(req: RateLimitedRequest, res: Response, next: NextFunction) {
     const rawEmail = req.body?.email;
     const key = typeof rawEmail === 'string' && rawEmail.trim()
         ? `email:${rawEmail.trim().toLowerCase()}`
         : `ip:${parseClientInfo(req).ip || '127.0.0.1'}`;
 
-    const attempts = rateLimits.get(key);
-    if (attempts && Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
-        rateLimits.delete(key);
-    } else if (attempts && attempts.count >= MAX_ATTEMPTS) {
+    const release = tryReserveAttempt(key);
+    if (!release) {
         return res.status(429).json({
             success: false,
             error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in 15 minutes.' }
         });
     }
+    res.once('finish', release);
+    res.once('close', release);
 
     req.rateLimitKey = key;
     next();
@@ -41,14 +73,18 @@ export function checkRateLimit(req: RateLimitedRequest, res: Response, next: Nex
  */
 export const accountRateLimitKey = (email: string) => `email:${email.trim().toLowerCase()}`;
 
+/** Whether recorded failures alone have reached the limit. Code that then checks a password takes a slot with tryReserveAttempt instead. */
 export function isRateLimited(key: string): boolean {
-    const attempts = rateLimits.get(key);
-    if (!attempts) return false;
-    if (Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
-        rateLimits.delete(key);
-        return false;
-    }
-    return attempts.count >= MAX_ATTEMPTS;
+    return liveCount(key) >= MAX_ATTEMPTS;
+}
+
+/** Takes a slot for the whole request and gives it back when the response ends. False when locked. */
+export function reserveForResponse(res: Response, key: string, max: number = MAX_ATTEMPTS): boolean {
+    const release = tryReserveAttempt(key, max);
+    if (!release) return false;
+    res.once('finish', release);
+    res.once('close', release);
+    return true;
 }
 
 /**
@@ -65,25 +101,30 @@ export async function checkSensitivePassword(
     compare: (plain: string, hash: string) => Promise<boolean>
 ): Promise<'ok' | 'wrong' | 'limited'> {
     const key = accountRateLimitKey(email);
-    if (isRateLimited(key)) return 'limited';
-    if (typeof password === 'string' && password && password.length <= 1024) {
-        for (const hash of candidates) if (hash && await compare(password, hash)) return 'ok';
+    const release = tryReserveAttempt(key);
+    if (!release) return 'limited';
+    try {
+        if (typeof password === 'string' && password && password.length <= 1024) {
+            for (const hash of candidates) if (hash && await compare(password, hash)) return 'ok';
+        }
+        recordFailedAttempt(key);
+        return 'wrong';
+    } finally {
+        release();
     }
-    recordFailedAttempt(key);
-    return 'wrong';
 }
 
-/** Failed sign-ins from one address, across every email (stops trying one password against many accounts). */
-const LOGIN_IP_FAILURES_BEFORE_LOCK = 30;
+/**
+ * Failed sign-ins from one address, across every email (stops trying one password against many
+ * accounts). Kept high because a workplace often shares one address: 100 failures in 15 minutes
+ * from one office is an attack, not people mistyping. Trade-off: an attacker inside that network
+ * can still lock it out for 15 minutes; see DEPLOY.md.
+ */
+const LOGIN_IP_FAILURES_BEFORE_LOCK = 100;
 export const loginIpKey = (ip: string | null | undefined) => `login-ip:${ip || '127.0.0.1'}`;
-export function isLoginIpLimited(key: string): boolean {
-    const attempts = rateLimits.get(key);
-    if (!attempts) return false;
-    if (Date.now() - attempts.firstAttempt > LOCKOUT_MS) {
-        rateLimits.delete(key);
-        return false;
-    }
-    return attempts.count >= LOGIN_IP_FAILURES_BEFORE_LOCK;
+/** A slot for one sign-in attempt from this address, or null while the address is locked (see tryReserveAttempt). */
+export function reserveLoginIpAttempt(key: string): (() => void) | null {
+    return tryReserveAttempt(key, LOGIN_IP_FAILURES_BEFORE_LOCK);
 }
 
 export const TOO_MANY_ATTEMPTS = { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in 15 minutes.' } };
@@ -109,6 +150,7 @@ export function clearRateLimit(key?: string) {
 
 export function clearAllRateLimits() {
     rateLimits.clear();
+    inFlight.clear();
 }
 
 // ---------------------------------------------------------------------------

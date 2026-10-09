@@ -70,3 +70,15 @@ describe('fileKind', () => {
     assert.equal(fileKind('staff.numbers'), null);
   });
 });
+
+describe('csvCell', () => {
+  it('keeps formulas as text and quotes when needed', async () => {
+    const { csvCell } = await import('../src/utils/csv.ts');
+    assert.equal(csvCell('=HYPERLINK("x")'), `"'=HYPERLINK(""x"")"`);
+    assert.equal(csvCell('+61 400'), "'+61 400");
+    assert.equal(csvCell('@sum'), "'@sum");
+    assert.equal(csvCell(-5), '-5');
+    assert.equal(csvCell('Smith, Jo'), '"Smith, Jo"');
+    assert.equal(csvCell(null), '');
+  });
+});

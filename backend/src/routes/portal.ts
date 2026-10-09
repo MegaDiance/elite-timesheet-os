@@ -377,7 +377,7 @@ router.post('/leave-requests', requirePermission(Permission.LEAVE_CREATE), async
         );
 
         if (!requireApproval) {
-            const result = await materializeLeaveRequest(ctx.orgId, worker, { leave_type, start_date, end_date, start_time: hasTimes ? start_time : null, end_time: hasTimes ? end_time : null, hours: hoursValue });
+            const result = await materializeLeaveRequest(ctx.orgId, worker, { leave_type, start_date, end_date, start_time: hasTimes ? start_time : null, end_time: hasTimes ? end_time : null, hours: hoursValue }, { byEmployee: true });
             return res.status(201).json({ success: true, data: { id, status: 'Approved', ...result }, message: 'Leave recorded.' });
         }
         res.status(201).json({ success: true, data: { id, status: 'Pending' }, message: 'Leave request sent for approval.' });

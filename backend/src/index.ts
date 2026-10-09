@@ -23,6 +23,7 @@ import auditRoutes from './routes/audit';
 import announcementsRoutes from './routes/announcements';
 import attentionRoutes from './routes/attention';
 import staffImportRoutes from './routes/staffImport';
+import { requireAuth } from './middleware/auth';
 import { initDB } from './services/db';
 import { classifyPage, sendPage } from './services/pageRoutes';
 import path from 'path';
@@ -78,7 +79,7 @@ app.use('/api', (_req, res, next) => {
 
 // Payload limits to prevent memory exhaustion DoS. A staff spreadsheet (up to 5,000 rows) is the
 // one larger body, and only on its own route.
-app.use('/api/staff-import', express.json({ limit: '5mb' }));
+app.use('/api/staff-import', requireAuth, express.json({ limit: '5mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 

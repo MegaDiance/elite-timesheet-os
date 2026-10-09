@@ -75,7 +75,8 @@ describe('validating a file', () => {
             person({ row: 4, full_name: 'Other Org', branch: 'Sydney' }),
         ]);
         const errors = Object.fromEntries(res.body.data.rows.map((r: any) => [r.row, r.errors.map((e: any) => e.message).join(' ')]));
-        expect(errors).toEqual({ 2: '', 3: 'You can’t add staff to Geelong.', 4: 'There is no branch called “Sydney”.' });
+        // A branch out of reach and one that doesn't exist get the same answer.
+        expect(errors).toEqual({ 2: '', 3: 'You can’t add staff to a branch called “Geelong”.', 4: 'You can’t add staff to a branch called “Sydney”.' });
     });
 
     it('the branch can be left out when the caller can add staff to exactly one branch', async () => {

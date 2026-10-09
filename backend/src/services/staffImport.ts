@@ -58,7 +58,7 @@ export async function checkRows(ctx: AccessContext, input: unknown): Promise<{ r
 
     const [branchesRes, existingRes] = await Promise.all([
         query('SELECT id, name, is_active FROM locations WHERE org_id = $1', [ctx.orgId]),
-        query('SELECT full_name, email, employee_code FROM employees WHERE org_id = $1', [ctx.orgId]),
+        query('SELECT full_name, email, employee_code, location_id FROM employees WHERE org_id = $1', [ctx.orgId]),
     ]);
     const creatable = new Set(scopedBranchIds(ctx, Permission.EMPLOYEES_CREATE));
     const branchByName = new Map<string, { id: string; name: string; is_active: boolean }>();
@@ -67,13 +67,18 @@ export async function checkRows(ctx: AccessContext, input: unknown): Promise<{ r
     // With exactly one branch to add staff to, the branch column can be left out.
     const onlyBranch = usable.length === 1 ? usable[0] : null;
 
+    // Someone already in the organisation is named only when the caller may see them (employees.view
+    // in their branch); otherwise the message says just that it's taken, so checking a file can't be
+    // used to find out who works in branches the caller can't see.
+    const visible = new Set(scopedBranchIds(ctx, Permission.EMPLOYEES_VIEW));
+    const who = (e: { full_name: string; location_id: string }) => (visible.has(e.location_id) ? e.full_name : 'someone in your organisation');
     const existingName = new Map<string, string>();
     const existingEmail = new Map<string, string>();
     const existingCode = new Map<string, string>();
     for (const e of existingRes.rows) {
-        existingName.set(String(e.full_name).toLowerCase(), e.full_name);
-        if (e.email) existingEmail.set(String(e.email).toLowerCase(), e.full_name);
-        if (e.employee_code) existingCode.set(String(e.employee_code).toLowerCase(), e.full_name);
+        existingName.set(String(e.full_name).toLowerCase(), who(e));
+        if (e.email) existingEmail.set(String(e.email).toLowerCase(), who(e));
+        if (e.employee_code) existingCode.set(String(e.employee_code).toLowerCase(), who(e));
     }
     const seenName = new Map<string, number>();
     const seenEmail = new Map<string, number>();
@@ -98,7 +103,7 @@ export async function checkRows(ctx: AccessContext, input: unknown): Promise<{ r
         else if (v.full_name.length > 120) add('full_name', 'Name is longer than 120 characters.');
         else {
             const key = v.full_name.toLowerCase();
-            if (existingName.has(key)) add('full_name', `${existingName.get(key)} is already in SimpleHours.`);
+            if (existingName.has(key)) add('full_name', existingName.get(key) === 'someone in your organisation' ? 'This name is already used by someone in your organisation.' : `${existingName.get(key)} is already in SimpleHours.`);
             else if (seenName.has(key)) add('full_name', `Same name as row ${seenName.get(key)}.`);
             else seenName.set(key, rowNumber);
         }
@@ -110,9 +115,9 @@ export async function checkRows(ctx: AccessContext, input: unknown): Promise<{ r
             else add('branch', 'Branch is missing.');
         } else {
             const found = branchByName.get(v.branch.toLowerCase());
-            if (!found) add('branch', `There is no branch called “${v.branch}”.`);
+            // A branch the caller can't add staff to gets the same answer as one that doesn't exist.
+            if (!found || !creatable.has(found.id)) add('branch', `You can’t add staff to a branch called “${v.branch}”.`);
             else if (!found.is_active) add('branch', `${found.name} is deactivated.`);
-            else if (!creatable.has(found.id)) add('branch', `You can’t add staff to ${found.name}.`);
             else branch = found;
         }
 

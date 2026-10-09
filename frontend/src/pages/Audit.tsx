@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FileSpreadsheet, Filter, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import api from '../services/apiClient';
+import { csvCell } from '../utils/csv';
 import { useAccess } from '../hooks/useAccess';
 import { SettingsNav } from '../components/SettingsNav';
 import { Button } from '../components/ui/Button';
@@ -86,11 +87,6 @@ function actionTone(action: string): string {
   if (/CREATE|ADD|APPROVE|INVITE|ACCEPT|REACTIVATE|CONFIGURED/.test(action)) return 'bg-[var(--success-light)] text-[var(--success)]';
   if (/UPDATE|CHANGE|LOCK|MOVE|TRANSFER|REGENERATE|REOPEN/.test(action)) return 'bg-[var(--primary-light)] text-[var(--primary-text)]';
   return 'bg-[var(--glass-8)] text-[var(--muted)]';
-}
-
-function csvCell(value: unknown): string {
-  const text = value === null || value === undefined ? '' : String(value);
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 export default function Audit() {

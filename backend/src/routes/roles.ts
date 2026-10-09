@@ -274,8 +274,14 @@ router.put('/:id', requirePermission(Permission.ROLES_MANAGE), async (req: AuthR
         const removed = role.permissions.filter(p => !after.has(p));
 
         await assertCovers(ctx, [...role.permissions, ...permissions], 'organisation', `change the role “${role.name}”`);
-        const held = (await query('SELECT COUNT(*)::int AS n FROM user_roles WHERE org_id = $1 AND role_id = $2', [ctx.orgId, role.id])).rows[0].n;
-        if (held > 0) await assertReauthenticatedToGrant(ctx, added, 'organisation');
+        // People who hold it, or will as soon as they accept an invitation to it.
+        const held = (await query(
+            `SELECT (SELECT COUNT(*) FROM user_roles WHERE org_id = $1 AND role_id = $2)
+                  + (SELECT COUNT(*) FROM branch_admin_invitations
+                      WHERE org_id = $1 AND role_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()) AS n`,
+            [ctx.orgId, role.id]
+        )).rows[0].n;
+        if (Number(held) > 0) await assertReauthenticatedToGrant(ctx, added, 'organisation');
 
         try {
             await withTransaction(async (tx) => {

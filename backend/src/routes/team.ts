@@ -5,7 +5,7 @@ import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { AccessContext, HttpError, assertResettableLogin, badRequest, isUuid, notFound, writeAudit } from '../services/policy';
 import { sendTransactionalEmail, buildTeamInviteEmailTemplate, isEmailSendingEnabled } from '../services/emailService';
-import { accountRateLimitKey, isRateLimited, TOO_MANY_ATTEMPTS,
+import { accountRateLimitKey, isRateLimited, reserveForResponse, TOO_MANY_ATTEMPTS,
     RateLimitedRequest, checkRateLimit, recordFailedAttempt, clearRateLimit,
     isStrongPassword, isValidEmail, newSecretToken, publicBaseUrl, sha256Hex
 } from '../services/authUtils';
@@ -120,7 +120,7 @@ router.post('/invitations/accept', checkRateLimit, async (req: RateLimitedReques
             // The invitation attaches access to an existing account only once that account has authenticated.
             // Failures count against the account itself, exactly like the sign-in page.
             const accountKey = accountRateLimitKey(invitation.email);
-            if (isRateLimited(accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
+            if (!reserveForResponse(res, accountKey)) return res.status(429).json(TOO_MANY_ATTEMPTS);
             const ok = existingUser.is_active && existingUser.password_hash
                 && await comparePassword(password, existingUser.password_hash);
             if (!ok) {
@@ -559,8 +559,8 @@ router.post('/bulk-assign', async (req: AuthRequest, res: Response) => {
         const raw = req.body?.user_ids;
         if (!Array.isArray(raw) || raw.length === 0) throw badRequest('VALIDATION_FAILED', 'Choose at least one person.');
         if (raw.length > BULK_MAX) throw badRequest('VALIDATION_FAILED', `Choose ${BULK_MAX} people or fewer at a time.`);
-        const userIds = Array.from(new Set(raw));
-        if (!userIds.every(isUuid)) throw notFound('Person');
+        if (!raw.every(isUuid)) throw notFound('Person');
+        const userIds = Array.from(new Set((raw as string[]).map(id => id.toLowerCase())));
 
         const role = await loadRole(ctx.orgId, req.body?.role_id);
         assertAssignable(role);

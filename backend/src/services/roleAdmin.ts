@@ -119,13 +119,15 @@ export async function assertCovers(ctx: AccessContext, permissions: readonly str
 }
 
 /** The people the caller may never change through role administration: themselves and the owner. */
-export async function assertCanChangeUser(ctx: AccessContext, targetUserId: string): Promise<void> {
-    if (targetUserId === ctx.userId) {
+export async function assertCanChangeUser(ctx: AccessContext, rawTargetUserId: string): Promise<void> {
+    // UUIDs are case-insensitive in the database, so they must be here too ("ABC…" is the same person as "abc…").
+    const targetUserId = String(rawTargetUserId).toLowerCase();
+    if (targetUserId === ctx.userId.toLowerCase()) {
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'ACCESS_ESCALATION_BLOCKED', entityType: 'user', targetUserId, details: 'Blocked: changing own access' });
         throw forbidden('You can’t change your own access. Ask the owner or another administrator.');
     }
     const owner = await query('SELECT owner_user_id FROM organisations WHERE id = $1', [ctx.orgId]);
-    if (owner.rows[0]?.owner_user_id === targetUserId) {
+    if (String(owner.rows[0]?.owner_user_id ?? '').toLowerCase() === targetUserId) {
         throw forbidden('The owner has full access to the organisation. It can’t be assigned or removed.');
     }
 }

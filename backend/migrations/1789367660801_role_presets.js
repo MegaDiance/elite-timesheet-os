@@ -107,6 +107,12 @@ exports.down = (pgm) => {
         UPDATE permissions SET category = 'Employees' WHERE category = 'Staff';
         UPDATE permissions SET category = 'Rosters' WHERE category = 'Schedules';
         UPDATE permissions SET category = 'Payroll' WHERE category = 'Reports';
+        UPDATE permissions SET label = v.label FROM (VALUES
+            ('employees.view', 'View employees'), ('employees.create', 'Add employees'), ('employees.edit', 'Edit employees'),
+            ('employees.archive', 'Deactivate and delete employees'),
+            ('rosters.view', 'View rosters'), ('rosters.create', 'Create rosters'), ('rosters.edit', 'Edit rosters'),
+            ('payroll.view', 'View payroll data'), ('payroll.export', 'Export payroll')
+        ) AS v(key, label) WHERE permissions.key = v.key;
         CREATE OR REPLACE FUNCTION create_system_roles(p_org UUID) RETURNS VOID AS $fn$
         DECLARE
             admin_role UUID;

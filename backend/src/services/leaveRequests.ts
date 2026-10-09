@@ -90,7 +90,9 @@ const isoDatesBetween = (startIso: string, endIso: string): string[] => {
 export async function materializeLeaveRequest(
     orgId: string,
     worker: { id: string; location_id: string },
-    request: Pick<LeaveRequestRow, 'leave_type' | 'start_date' | 'end_date' | 'start_time' | 'end_time' | 'hours'>
+    request: Pick<LeaveRequestRow, 'leave_type' | 'start_date' | 'end_date' | 'start_time' | 'end_time' | 'hours'>,
+    /** Leave the employee recorded themselves (no approval needed): skips days in a fortnight they've submitted. */
+    opts: { byEmployee?: boolean } = {}
 ): Promise<{ applied: string[]; skipped: Array<{ date: string; reason: string }> }> {
     const settings = await loadBreakSettings(orgId);
     const applied: string[] = [];
@@ -98,7 +100,7 @@ export async function materializeLeaveRequest(
 
     const writeOne = async (date: string, body: Record<string, unknown>, rule: BreakRule) => {
         try {
-            await writeDayRecord({ orgId, worker, recordDate: date, body, rule });
+            await writeDayRecord({ orgId, worker, recordDate: date, body, rule, refuseSubmitted: opts.byEmployee === true });
             applied.push(date);
         } catch (err) {
             skipped.push({ date, reason: err instanceof HttpError ? err.code : 'ERROR' });
