@@ -21,6 +21,7 @@ interface TimesheetDay {
 interface TimesheetResponse {
   data: TimesheetDay[];
   approved: boolean;
+  submitted?: boolean;
   timesheet_locked: boolean;
 }
 
@@ -34,7 +35,9 @@ interface TimesheetResponse {
 export default function EmployeeTimesheet() {
   const [startDate, setStartDate] = useState(currentFortnightIso());
   const [days, setDays] = useState<Map<string, TimesheetDay>>(new Map());
-  const [readOnly, setReadOnly] = useState({ approved: false, timesheet_locked: false });
+  const [readOnly, setReadOnly] = useState({ approved: false, submitted: false, timesheet_locked: false });
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [breakSettings, setBreakSettings] = useState<BreakSettings>(DEFAULT_BREAK_SETTINGS);
   const [mergeLeave, setMergeLeave] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -50,7 +53,7 @@ export default function EmployeeTimesheet() {
         const map = new Map<string, TimesheetDay>();
         for (const d of body.data) map.set(d.record_date, d);
         setDays(map);
-        setReadOnly({ approved: body.approved, timesheet_locked: body.timesheet_locked });
+        setReadOnly({ approved: body.approved, submitted: Boolean(body.submitted), timesheet_locked: body.timesheet_locked });
       })
       .catch(err => setError(apiErrorMessage(err, 'Your timesheet could not be loaded.')))
       .finally(() => setLoading(false));
@@ -76,9 +79,25 @@ export default function EmployeeTimesheet() {
   }, []);
 
   const total = partTotal(Array.from(days.values()).flatMap(d => d.timesheet));
-  const locked = readOnly.approved || readOnly.timesheet_locked;
+  const locked = readOnly.approved || readOnly.timesheet_locked || readOnly.submitted;
 
-  const status: TimesheetState = readOnly.approved && readOnly.timesheet_locked ? 'Locked' : readOnly.approved ? 'Approved' : 'Draft';
+  const status: TimesheetState = readOnly.approved && readOnly.timesheet_locked ? 'Locked'
+    : readOnly.approved ? 'Approved' : readOnly.submitted ? 'Submitted' : 'Draft';
+
+  /** Hand the fortnight in for approval, or take it back to change it. */
+  const changeStatus = async (action: 'submit' | 'withdraw') => {
+    setStatusBusy(true);
+    setStatusError(null);
+    try {
+      await api.post(`/portal/timesheet/${action}`, { start_date: startDate });
+      setEditingDate(null);
+      await load();
+    } catch (err) {
+      setStatusError(apiErrorMessage(err, action === 'submit' ? 'Your timesheet couldn’t be submitted. Nothing changed.' : 'Your timesheet couldn’t be withdrawn. Nothing changed.'));
+    } finally {
+      setStatusBusy(false);
+    }
+  };
   const navButton = 'min-w-11 h-11 px-3 rounded-lg border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--panel-subtle)] inline-flex items-center justify-center';
 
   return (
@@ -104,13 +123,24 @@ export default function EmployeeTimesheet() {
       {!loading && !error && (
         <section data-tour="my-timesheet" aria-label="Timesheet status" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex items-start gap-3">
           <TimesheetStatusBadge status={status} size="md" />
-          <div className="text-sm">
+          <div className="text-sm flex-1 min-w-0">
             <p className="text-[var(--text)]">{TIMESHEET_STATE[status].employeeMeaning}</p>
-            {!locked && <p className="text-[var(--muted)] mt-1">Choose “Record hours” on a day to enter when you started and finished.</p>}
+            {!locked && <p className="text-[var(--muted)] mt-1">Choose “Record hours” on a day to enter when you started and finished. Submit the fortnight when it’s right.</p>}
+            {statusError && <p role="alert" className="text-[var(--danger)] mt-1">{statusError}</p>}
             {locked && readOnly.timesheet_locked && !readOnly.approved && (
               <p className="text-[var(--warn)] mt-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" aria-hidden="true" /> Timesheets are locked for this pay period.</p>
             )}
           </div>
+          {status === 'Draft' && !readOnly.timesheet_locked && (
+            <button type="button" onClick={() => changeStatus('submit')} disabled={statusBusy} className={`${buttonClass.primary} shrink-0`}>
+              {statusBusy ? 'Submitting…' : 'Submit for approval'}
+            </button>
+          )}
+          {status === 'Submitted' && !readOnly.timesheet_locked && (
+            <button type="button" onClick={() => changeStatus('withdraw')} disabled={statusBusy} className={`${buttonClass.secondary} shrink-0`}>
+              {statusBusy ? 'Withdrawing…' : 'Withdraw to change'}
+            </button>
+          )}
         </section>
       )}
 

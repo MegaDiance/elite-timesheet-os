@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileCheck2, Lock, RotateCcw, Search, ShieldAlert } from 'lucide-react';
 import api from '../services/apiClient';
+import { Menu } from '../components/ui/Menu';
 import { useAccess } from '../hooks/useAccess';
 import { useActiveBranch } from '../hooks/useActiveBranch';
 import { useToast } from '../components/ui/Toast';
@@ -26,6 +27,7 @@ const TAB_LABEL: Record<Tab, string> = { waiting: 'Waiting', approved: 'Approved
  * timesheets are locked).
  */
 export default function TimesheetReview() {
+  const navigate = useNavigate();
   const { access, can } = useAccess();
   const { activeBranchId } = useActiveBranch();
   const toast = useToast();
@@ -171,10 +173,11 @@ export default function TimesheetReview() {
   };
 
   // Approving is a separate permission from viewing, held per branch: only what this person can approve is offered.
-  const mayApprove = (r: TimesheetRow) => r.status === 'Draft' && !r.timesheet_locked && can('timesheets.approve', r.location_id);
+  const isWaiting = (r: TimesheetRow) => r.status === 'Draft' || r.status === 'Submitted';
+  const mayApprove = (r: TimesheetRow) => isWaiting(r) && !r.timesheet_locked && can('timesheets.approve', r.location_id);
   const approvable = rows.filter(mayApprove);
   const counts: Record<Tab, number> = {
-    waiting: rows.filter(r => r.status === 'Draft').length,
+    waiting: rows.filter(isWaiting).length,
     approved: rows.filter(r => r.status === 'Approved').length,
     locked: rows.filter(r => r.status === 'Locked').length,
     all: rows.length,
@@ -182,7 +185,7 @@ export default function TimesheetReview() {
 
   const query = search.trim().toLowerCase();
   const visible = rows.filter(r =>
-    (tab === 'all' || r.status === TAB_STATUS[tab])
+    (tab === 'all' || (tab === 'waiting' ? isWaiting(r) : r.status === TAB_STATUS[tab]))
     && (!query || r.full_name.toLowerCase().includes(query) || (r.department ?? '').toLowerCase().includes(query) || (r.location_name ?? '').toLowerCase().includes(query)));
   const visibleApprovable = visible.filter(mayApprove);
   const allVisibleChosen = visibleApprovable.length > 0 && visibleApprovable.every(r => chosen.has(r.employee_id));
@@ -376,11 +379,11 @@ export default function TimesheetReview() {
           {visible.map(row => {
             const isExpanded = expanded === row.employee_id;
             const canApprove = mayApprove(row);
-            const canReopen = row.status === 'Approved' && can('timesheets.reopen', row.location_id);
+            const canReopen = (row.status === 'Approved' || row.status === 'Submitted') && !row.timesheet_locked && can('timesheets.reopen', row.location_id);
             const detail = details[detailKey(row.employee_id)];
             const detailId = `timesheet-days-${row.employee_id}`;
             return (
-              <Card key={row.employee_id} className={`p-3 sm:p-4 ${row.status === 'Draft' ? 'border-[var(--primary)]/40' : ''}`}>
+              <Card key={row.employee_id} className="p-3 sm:p-4">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 lg:w-[30%]">
                     {canApprove ? (
@@ -404,21 +407,21 @@ export default function TimesheetReview() {
 
                   <dl className="grid grid-cols-4 gap-4 text-xs sm:pl-7 lg:pl-0">
                     <div>
-                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Rostered</dt>
-                      <dd className="font-bold font-mono text-[var(--text)]">{formatHours(row.rostered_hours)}</dd>
+                      <dt className="text-xs text-[var(--muted)]">Rostered</dt>
+                      <dd className="font-semibold tabular-nums text-[var(--text)]">{formatHours(row.rostered_hours)}</dd>
                     </div>
                     <div>
-                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Worked</dt>
-                      <dd className="font-bold font-mono text-[var(--text)]">{formatHours(row.actual_hours)}</dd>
+                      <dt className="text-xs text-[var(--muted)]">Worked</dt>
+                      <dd className="font-semibold tabular-nums text-[var(--text)]">{formatHours(row.actual_hours)}</dd>
                     </div>
                     <div>
-                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]" title="Worked hours minus contracted hours">vs contract</dt>
-                      <dd className={`font-bold font-mono ${row.variance_hours > 0 ? 'text-[var(--warn)]' : row.variance_hours < 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                      <dt className="text-xs text-[var(--muted)]" title="Worked hours minus contracted hours">vs contract</dt>
+                      <dd className={`font-semibold tabular-nums ${row.variance_hours > 0 ? 'text-[var(--warn)]' : row.variance_hours < 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
                         {signedHours(row.variance_hours)}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-[10px] uppercase font-bold text-[var(--muted)]">Status</dt>
+                      <dt className="text-xs text-[var(--muted)]">Status</dt>
                       <dd>
                         <TimesheetStatusBadge status={row.status} />
                       </dd>
@@ -440,11 +443,13 @@ export default function TimesheetReview() {
                         <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Approve
                       </button>
                     )}
-                    {canReopen && (
-                      <button type="button" onClick={() => changeOne(row, 'reopen')} disabled={rowBusy === row.employee_id} className={buttonClass.secondary}>
-                        <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Reopen
-                      </button>
-                    )}
+                    <Menu
+                      label={`More actions for ${row.full_name}`}
+                      items={[
+                        { label: row.status === 'Submitted' ? 'Send back to the employee' : 'Reopen', icon: <RotateCcw />, onSelect: () => changeOne(row, 'reopen'), disabled: !canReopen || rowBusy === row.employee_id },
+                        { label: 'Change days on the schedule', onSelect: () => navigate('/schedule'), disabled: !can('rosters.view', row.location_id) },
+                      ]}
+                    />
                     {row.timesheet_locked && (
                       <span className="text-[11px] text-[var(--muted)] flex items-center gap-1">
                         <Lock className="w-3 h-3" aria-hidden="true" /> Timesheets locked for this branch

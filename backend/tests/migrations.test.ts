@@ -185,7 +185,7 @@ describe('two-role migrations on legacy data', () => {
 
     it('new constraints hold: foreign keys, CHECKs and unique keys', async () => {
         await expect(db.query("UPDATE shift_segments SET segment_type = 'LWOP'")).rejects.toThrow(/shift_segments_segment_type_check/);
-        await expect(db.query("UPDATE timesheet_submissions SET status = 'Submitted'")).rejects.toThrow(/timesheet_submissions_status_check/);
+        await expect(db.query("UPDATE timesheet_submissions SET status = 'Rejected'")).rejects.toThrow(/timesheet_submissions_status_check/); // Submitted is valid again (…803)
         await expect(db.query('UPDATE employees SET location_id = NULL')).rejects.toThrow(/null value/);
         await expect(db.query('INSERT INTO branch_admins (org_id, location_id, user_id) VALUES ($1, $2, $3)', [ids.branchless, ids.melbourne, ids.employee]))
             .rejects.toThrow(/branch_admins_org_id_location_id_fkey/);

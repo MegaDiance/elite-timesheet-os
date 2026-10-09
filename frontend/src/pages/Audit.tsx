@@ -106,6 +106,23 @@ export default function Audit() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [visible, setVisible] = useState(PAGE_SIZE);
+  // The server sends the log a page at a time (newest first); `next` fetches older entries.
+  const [next, setNext] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
+  const loadOlder = async () => {
+    if (!next) return;
+    setLoadingOlder(true);
+    try {
+      const res = await api.get(`/audit?before=${encodeURIComponent(next)}`);
+      setLogs(prev => [...prev, ...(res.data.data || [])]);
+      setNext(res.data.next ?? null);
+    } catch (err: any) {
+      setError(friendlyError(err, 'Older entries could not be loaded.'));
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -113,6 +130,7 @@ export default function Audit() {
     try {
       const res = await api.get('/audit');
       setLogs(res.data.data || []);
+      setNext(res.data.next ?? null);
     } catch (err: any) {
       setError(friendlyError(err, 'The audit log could not be loaded.'));
     } finally {
@@ -359,6 +377,12 @@ export default function Audit() {
           <div className="p-3 flex items-center justify-center gap-3 border-t border-[var(--border)] text-xs text-[var(--muted)]">
             <span>Showing {visible} of {filteredLogs.length}</span>
             <Button variant="outline" size="sm" onClick={() => setVisible(v => v + PAGE_SIZE)}>Show more</Button>
+          </div>
+        )}
+        {!error && filteredLogs.length <= visible && next && (
+          <div className="p-3 flex items-center justify-center gap-3 border-t border-[var(--border)] text-xs text-[var(--muted)]">
+            <span>Searching the {logs.length} most recent entries.</span>
+            <Button variant="outline" size="sm" onClick={loadOlder} loading={loadingOlder}>Load older entries</Button>
           </div>
         )}
       </div>

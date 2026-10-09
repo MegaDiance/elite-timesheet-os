@@ -496,8 +496,10 @@ export async function writeDayRecord(params: {
     recordDate: string;
     body: Record<string, unknown>;
     rule: BreakRule;
+    /** The employee's own save: refused while they have submitted the fortnight for approval. */
+    refuseSubmitted?: boolean;
 }): Promise<NormalisedSegment[]> {
-    const { orgId, worker, recordDate, body, rule } = params;
+    const { orgId, worker, recordDate, body, rule, refuseSubmitted = false } = params;
     const fortnightStart = getFortnightStartIso(recordDate);
     const orgRes = await query('SELECT automatically_merge_leave_with_roster FROM organisations WHERE id = $1', [orgId]);
     const mergeLeave = orgRes.rows[0]?.automatically_merge_leave_with_roster === true;
@@ -508,6 +510,15 @@ export async function writeDayRecord(params: {
         await lockWorkerPeriod(tx, orgId, worker.id, worker.location_id, fortnightStart);
         if (await isTimesheetApproved(orgId, worker.id, fortnightStart, tx)) {
             throw new HttpError(423, 'TIMESHEET_ALREADY_APPROVED', 'This timesheet is approved. Reopen it before changing shifts or hours.');
+        }
+        if (refuseSubmitted) {
+            const submitted = await tx(
+                "SELECT 1 FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3 AND status = 'Submitted'",
+                [orgId, worker.id, fortnightStart]
+            );
+            if (submitted.rows.length > 0) {
+                throw new HttpError(423, 'TIMESHEET_SUBMITTED', 'You’ve submitted this timesheet. Withdraw it to make changes, or ask your manager.');
+            }
         }
         const lock = await getPeriodLock(orgId, worker.location_id, fortnightStart, tx);
 

@@ -44,7 +44,7 @@ function OpenModal({ onClose, title, description, children, maxWidth = 'md' }: M
         aria-labelledby={title ? titleId : undefined}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
-        className={`relative w-full ${maxWidthStyles[maxWidth]} max-h-[calc(100dvh-2rem)] flex flex-col bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-2xl z-10 overflow-hidden outline-none animate-in fade-in zoom-in-95 duration-150`}
+        className={`relative w-full ${maxWidthStyles[maxWidth]} max-h-[calc(100dvh-2rem)] flex flex-col bg-[var(--panel)] border border-[var(--border)] rounded-xl shadow-lg z-10 overflow-hidden outline-none animate-in fade-in zoom-in-95 duration-150`}
       >
         {(title || description) && (
           <div className="px-6 py-4 border-b border-[var(--border)] flex items-start justify-between gap-3 shrink-0">

@@ -9,9 +9,10 @@ import { getPeriodLock, lockWorkerPeriod, timesheetLockedError } from '../servic
 /**
  * Timesheet approval.
  *
- * Hours are entered by the people who manage the roster, so there is no submit / review /
- * reject handshake: a worker's fortnight is either Draft or Approved. Approving freezes that
- * worker's days for the fortnight; reopening (while the period is not locked) makes them editable again.
+ * Managers enter hours, so a worker's fortnight goes Draft → Approved. When the organisation lets
+ * employees handle their own timesheets, an employee can also hand theirs in first (Submitted,
+ * routes/portal.ts). A manager approves from Draft or Submitted, sends a Submitted one back to
+ * Draft, and reopens an Approved one (while the period is not locked).
  */
 const router = Router();
 router.use(requireAuth);
@@ -140,13 +141,14 @@ router.post('/reopen', requirePermission(Permission.TIMESHEETS_REOPEN), async (r
         const ctx = req.auth!;
         const startDate = readStartDate(req.body?.start_date);
         const { worker, result: reopened } = await changeSubmission(req, Permission.TIMESHEETS_REOPEN, req.body?.employee_id, startDate, (tx, w) => tx(
-            `UPDATE timesheet_submissions SET status = 'Draft', reviewed_by = $1, reviewed_at = NOW()
-              WHERE org_id = $2 AND employee_id = $3 AND start_date = $4 AND status = 'Approved' RETURNING id`,
+            `UPDATE timesheet_submissions ts SET status = 'Draft', reviewed_by = $1, reviewed_at = NOW()
+               FROM (SELECT id, status FROM timesheet_submissions WHERE org_id = $2 AND employee_id = $3 AND start_date = $4) prev
+              WHERE ts.id = prev.id AND prev.status IN ('Approved', 'Submitted') RETURNING ts.id, prev.status AS previous`,
             [ctx.userId, ctx.orgId, w.id, startDate]
         ));
-        if (reopened.rows.length === 0) throw new HttpError(409, 'NOT_APPROVED', 'This timesheet is not approved.');
+        if (reopened.rows.length === 0) throw new HttpError(409, 'NOT_APPROVED', 'This timesheet is not approved or submitted.');
         await writeAudit({
-            orgId: ctx.orgId, actorId: ctx.userId, action: 'TIMESHEET_REOPENED', entityType: 'timesheet_submissions', entityId: reopened.rows[0].id,
+            orgId: ctx.orgId, actorId: ctx.userId, action: reopened.rows[0].previous === 'Submitted' ? 'TIMESHEET_SENT_BACK' : 'TIMESHEET_REOPENED', entityType: 'timesheet_submissions', entityId: reopened.rows[0].id,
             branchId: worker.location_id, details: `${worker.full_name}, fortnight ${startDate}`
         });
         res.json({ success: true, data: { employee_id: worker.id, id: reopened.rows[0].id, status: 'Draft' } });

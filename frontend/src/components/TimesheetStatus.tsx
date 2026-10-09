@@ -1,19 +1,25 @@
-import { CheckCircle2, Lock, PencilLine } from 'lucide-react';
+import { CheckCircle2, Lock, PencilLine, Send } from 'lucide-react';
 import { Badge } from './ui/Badge';
 import { HelpTip } from './ui/HelpTip';
 
-export type TimesheetState = 'Draft' | 'Approved' | 'Locked';
+export type TimesheetState = 'Draft' | 'Submitted' | 'Approved' | 'Locked';
 
 /**
  * The one definition of what a timesheet status means, used on every page that shows one.
  * Each status has its own icon and words, so it never depends on colour alone.
  */
-export const TIMESHEET_STATE: Record<TimesheetState, { label: string; variant: 'outline' | 'success' | 'info'; meaning: string; employeeMeaning: string }> = {
+export const TIMESHEET_STATE: Record<TimesheetState, { label: string; variant: 'outline' | 'success' | 'info' | 'warning'; meaning: string; employeeMeaning: string }> = {
   Draft: {
     label: 'Draft',
     variant: 'outline',
     meaning: 'Hours can still be added or changed. A manager approves the timesheet once the pay period’s hours are right.',
     employeeMeaning: 'Your hours can still be changed. Your manager approves them at the end of the pay period.',
+  },
+  Submitted: {
+    label: 'Submitted',
+    variant: 'warning',
+    meaning: 'The employee has handed in their hours (when employees enter their own). Approve it, or send it back if something needs changing.',
+    employeeMeaning: 'You’ve handed in your hours. Your manager will approve them, or send them back if something needs changing.',
   },
   Approved: {
     label: 'Approved',
@@ -29,7 +35,7 @@ export const TIMESHEET_STATE: Record<TimesheetState, { label: string; variant: '
   },
 };
 
-const ICON: Record<TimesheetState, typeof Lock> = { Draft: PencilLine, Approved: CheckCircle2, Locked: Lock };
+const ICON: Record<TimesheetState, typeof Lock> = { Draft: PencilLine, Submitted: Send, Approved: CheckCircle2, Locked: Lock };
 
 export function TimesheetStatusBadge({ status, size = 'sm' }: { status: TimesheetState; size?: 'sm' | 'md' }) {
   const state = TIMESHEET_STATE[status] ?? TIMESHEET_STATE.Draft;
@@ -42,7 +48,7 @@ export function TimesheetStatusBadge({ status, size = 'sm' }: { status: Timeshee
   );
 }
 
-/** "Draft → Approved → Locked" with a one-line meaning for each — for help and empty states. */
+/** "Draft → (Submitted) → Approved → Locked" with a one-line meaning for each — for help and empty states. */
 export function TimesheetStatusGuide({ audience = 'reviewer' }: { audience?: 'reviewer' | 'employee' }) {
   return (
     <dl className="space-y-2">

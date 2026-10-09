@@ -139,7 +139,7 @@ export function Dialog({ title, description, onClose, children, footer, size = '
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
-        className={`relative z-10 w-full ${SIZES[size]} max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] rounded-2xl shadow-2xl outline-none ${
+        className={`relative z-10 w-full ${SIZES[size]} max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] rounded-xl shadow-lg outline-none ${
           sheet ? 'max-md:max-w-none max-md:h-dvh max-md:max-h-none max-md:rounded-none max-md:border-0' : ''
         }`}
       >

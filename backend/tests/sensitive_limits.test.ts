@@ -76,3 +76,24 @@ it('the new-sign-in email escapes the location and device it was told about', ()
     expect(mail.html).not.toContain('<script>alert');
     expect(mail.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
 });
+
+it('the audit log comes a page at a time, newest first, without skipping or repeating entries', async () => {
+    const { sql } = await import('./helpers/testDb');
+    await sql(`INSERT INTO audit_logs (org_id, action, details, created_at)
+               SELECT $1, 'TEST_ENTRY', 'entry ' || g, NOW() - (g || ' microseconds')::interval FROM generate_series(1, 25) g`, [w.abc.id]);
+    const seen: string[] = [];
+    let next: string | null = null;
+    let pages = 0;
+    do {
+        const res: any = await request(app).get(`/api/audit?limit=10${next ? `&before=${encodeURIComponent(next)}` : ''}`).set(bearer(w.tokens.owner));
+        expect(res.status).toBe(200);
+        seen.push(...res.body.data.map((r: any) => r.id));
+        next = res.body.next;
+        pages++;
+    } while (next && pages < 20);
+    const total = (await sql('SELECT COUNT(*)::int AS n FROM audit_logs WHERE org_id = $1', [w.abc.id])).rows[0].n;
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen.length).toBe(total);
+    expect((await request(app).get('/api/audit?before=nonsense').set(bearer(w.tokens.owner))).status).toBe(400);
+    expect((await request(app).get('/api/audit').set(bearer(w.tokens.xavier))).body.data.some((r: any) => r.org_id === w.abc.id)).toBe(false);
+});

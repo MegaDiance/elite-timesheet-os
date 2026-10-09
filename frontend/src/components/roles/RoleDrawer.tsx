@@ -267,7 +267,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
           aria-modal="true"
           aria-labelledby={titleId}
           tabIndex={-1}
-          className="relative z-10 w-full md:max-w-xl h-dvh flex flex-col bg-[var(--panel)] text-[var(--text)] md:border-l border-[var(--border)] shadow-2xl outline-none"
+          className="relative z-10 w-full md:max-w-xl h-dvh flex flex-col bg-[var(--panel)] text-[var(--text)] md:border-l border-[var(--border)] shadow-lg outline-none"
         >
           <div className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[var(--border)] shrink-0">
             <div className="min-w-0">

@@ -19,7 +19,7 @@ export interface LockRow {
   timesheet_locked: boolean;
 }
 
-export type TimesheetStatus = 'Draft' | 'Approved' | 'Locked';
+export type TimesheetStatus = 'Draft' | 'Submitted' | 'Approved' | 'Locked';
 
 export interface TimesheetRow {
   employee_id: string;

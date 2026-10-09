@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { query } from '../services/db';
+import { query, withTransaction } from '../services/db';
 import { requireAuth, requireEmployee, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
-import { HttpError, badRequest, isUuid } from '../services/policy';
+import { HttpError, badRequest, isUuid, writeAudit } from '../services/policy';
+import { getPeriodLock, lockWorkerPeriod } from '../services/periodLocks';
 import { addDays, fmtISO, getFortnightStartIso, isFortnightStart, isIsoDate, parseIsoDateUtc } from '../services/periodUtils';
 import { DayEntry, breakRuleFor, isSegmentType, loadBreakSettings, rowsToDay, writeDayRecord } from '../services/segments';
 import { loadApprovedLeave } from '../services/rosterService';
@@ -69,16 +70,17 @@ router.get('/schedule', async (req: AuthRequest, res: Response) => {
 });
 
 /** Whether the caller's own fortnight can currently be edited by them, and why not if not. */
-async function readOnlyStatus(ctx: NonNullable<AuthRequest['auth']>, startDate: string): Promise<{ approved: boolean; timesheet_locked: boolean }> {
+async function readOnlyStatus(ctx: NonNullable<AuthRequest['auth']>, startDate: string): Promise<{ approved: boolean; submitted: boolean; timesheet_locked: boolean }> {
     const result = await query(
-        `SELECT COALESCE(ts.status, 'Draft') = 'Approved' AS approved, COALESCE(fl.timesheet_locked, false) AS timesheet_locked
+        `SELECT COALESCE(ts.status, 'Draft') = 'Approved' AS approved, COALESCE(ts.status, 'Draft') = 'Submitted' AS submitted,
+                COALESCE(fl.timesheet_locked, false) AS timesheet_locked
            FROM employees e
            LEFT JOIN timesheet_submissions ts ON ts.org_id = e.org_id AND ts.employee_id = e.id AND ts.start_date = $2
            LEFT JOIN fortnight_locks fl ON fl.org_id = e.org_id AND fl.location_id = e.location_id AND fl.start_date = $2
           WHERE e.id = $1`,
         [ctx.employeeId, startDate]
     );
-    return result.rows[0] || { approved: false, timesheet_locked: false };
+    return result.rows[0] || { approved: false, submitted: false, timesheet_locked: false };
 }
 
 /**
@@ -196,12 +198,70 @@ router.post('/timesheet', requirePermission(Permission.TIMESHEETS_SUBMIT), async
             recordDate: record_date,
             body,
             rule,
+            refuseSubmitted: true,
         });
         res.json({ success: true, data: rowsToDay(saved) });
     } catch (err) {
         sendError(res, err, 'PORTAL TIMESHEET SUBMIT ERROR');
     }
 });
+
+/**
+ * POST /api/portal/timesheet/submit  { start_date } — the employee hands in their fortnight for
+ * approval (Draft → Submitted). Only while employee timesheets are on; never once approved or
+ * while the branch's timesheets are locked. Taken under the same worker-period lock as day saves
+ * and approvals, so a save, a submit and an approval can never interleave.
+ *
+ * POST /api/portal/timesheet/withdraw  { start_date } — takes it back to Draft to change it,
+ * while a manager hasn't approved it yet.
+ */
+async function changeOwnStatus(ctx: NonNullable<AuthRequest['auth']>, startDate: string, from: 'Draft' | 'Submitted', to: 'Draft' | 'Submitted') {
+    return withTransaction(async (tx) => {
+        await lockWorkerPeriod(tx, ctx.orgId, ctx.employeeId!, ctx.employeeBranchId!, startDate);
+        if ((await getPeriodLock(ctx.orgId, ctx.employeeBranchId!, startDate, tx)).timesheet_locked) {
+            throw new HttpError(423, 'TIMESHEET_LOCKED', 'Timesheets for this pay period are locked.');
+        }
+        const current = (await tx(
+            'SELECT status FROM timesheet_submissions WHERE org_id = $1 AND employee_id = $2 AND start_date = $3',
+            [ctx.orgId, ctx.employeeId, startDate]
+        )).rows[0]?.status ?? 'Draft';
+        if (current === 'Approved') throw new HttpError(409, 'ALREADY_APPROVED', 'This timesheet is already approved.');
+        if (current !== from) {
+            throw new HttpError(409, to === 'Submitted' ? 'ALREADY_SUBMITTED' : 'NOT_SUBMITTED',
+                to === 'Submitted' ? 'This timesheet is already submitted.' : 'This timesheet isn’t submitted.');
+        }
+        const saved = await tx(
+            `INSERT INTO timesheet_submissions (id, org_id, employee_id, start_date, status, submitted_at, submitted_by)
+             VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 = 'Submitted' THEN NOW() END, CASE WHEN $5 = 'Submitted' THEN $6::uuid END)
+             ON CONFLICT (org_id, employee_id, start_date) DO UPDATE
+                SET status = EXCLUDED.status, submitted_at = EXCLUDED.submitted_at, submitted_by = EXCLUDED.submitted_by
+             RETURNING id`,
+            [crypto.randomUUID(), ctx.orgId, ctx.employeeId, startDate, to, ctx.userId]
+        );
+        return saved.rows[0].id as string;
+    });
+}
+
+for (const [path, from, to, action] of [
+    ['/timesheet/submit', 'Draft', 'Submitted', 'TIMESHEET_SUBMITTED'],
+    ['/timesheet/withdraw', 'Submitted', 'Draft', 'TIMESHEET_WITHDRAWN'],
+] as const) {
+    router.post(path, requirePermission(Permission.TIMESHEETS_SUBMIT), async (req: AuthRequest, res: Response) => {
+        try {
+            const ctx = req.auth!;
+            await assertEmployeeTimesheetsEnabled(ctx.orgId);
+            if (!isFortnightStart(req.body?.start_date)) throw badRequest('VALIDATION_FAILED', 'start_date must be the first day of a pay period.');
+            const id = await changeOwnStatus(ctx, req.body.start_date, from, to);
+            await writeAudit({
+                orgId: ctx.orgId, actorId: ctx.userId, action, entityType: 'timesheet_submissions', entityId: id,
+                branchId: ctx.employeeBranchId, details: `Own timesheet, fortnight ${req.body.start_date}`,
+            });
+            res.json({ success: true, data: { status: to } });
+        } catch (err) {
+            sendError(res, err, 'PORTAL TIMESHEET STATUS ERROR');
+        }
+    });
+}
 
 /**
  * GET /api/portal/history?start_date&end_date — approval status and worked hours of the employee's
