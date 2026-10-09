@@ -176,3 +176,44 @@ real worker or payroll data:
    After deploying, signing in still works for everyone. Each person's bcrypt hash is replaced
    with Argon2id the next time they sign in. Existing private login links keep working; newly
    issued ones are longer.
+
+## Merging `overhaul/work-tool` into the deployed branch
+
+**Before**
+1. Take a Railway Postgres backup (Postgres → Backups → Backup now) and note its time.
+2. Check the app service's `TRUST_PROXY` variable is `1` or unset, not `true`. `true` trusts the
+   left-most `X-Forwarded-For`, which clients can forge to dodge the per-address sign-in limit.
+3. Keep the service at **one replica**. Rate limits live in memory: each replica counts on its own,
+   and a restart or deploy resets the counts.
+
+**Merge and deploy.** It's a fast-forward: `refactor/two-role-model` is the base of
+`overhaul/work-tool`. Pushing the branch deploys it. Migrations 801–803 run on start
+(`npm start` runs `migrate:up`).
+
+**Smoke test** (as the Owner, then as an employee)
+- `GET /health` is 200. The deploy logs show "Migrations complete!".
+- Sign in through the existing link. You land on Timesheets. The Owner's role shows "Owner".
+  A former Branch Admin shows "Manager".
+- Settings → Roles: Manager, Branch Manager and Payroll are listed. Duplicate one, then delete the copy.
+- Staff → Import: a 2-row CSV checks and imports.
+- Employee: My schedule (day/week/month). If employee timesheets are on, submit a fortnight;
+  the manager sees "Submitted" and approves it.
+- `/dashboard` redirects. `curl -sI https://<domain>/api/auth/me` shows `Cache-Control: no-store`.
+
+**Rollback.** Roll **forward** with a fix if you can. A plain code rollback to `f661cba` has
+two traps:
+- Anyone who signed in on the new version has an Argon2id hash, which the old code can't verify.
+  They can't sign in until they reset their password.
+- A login link issued on the new version (regenerated or recovered) is mixed-case base64url,
+  which the old code rejects. The Owner must regenerate it.
+
+If you must roll back the code, first deploy a build of `f661cba` with two small changes:
+`comparePassword` verifies `$argon2` hashes, and `normalisePortalToken` accepts
+`[A-Za-z0-9_-]` without lowercasing. Rolling back the schema (`node-pg-migrate down 3`) is
+optional: the old code works with the new schema. Restoring the backup undoes every change made
+since it was taken, so it's the last resort.
+
+**Known trade-off: account lockout.** Five wrong passwords lock that email for 15 minutes, and
+100 failures lock an address. Anyone who knows an email can keep that person locked out by
+retrying. This is the price of slowing down password guessing per account. Two-step verification
+and a shared limit store are the longer-term answers.
