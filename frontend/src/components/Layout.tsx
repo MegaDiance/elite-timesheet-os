@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { Suspense, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { Outlet, useLocation, Link } from 'react-router-dom';
 import {
   Clock,
@@ -430,7 +430,10 @@ export default function Layout() {
           tabIndex={-1}
           className={`flex-1 w-full outline-none pb-24 md:pb-8 ${isRoster ? 'p-2 sm:p-3 lg:p-4' : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8'}`}
         >
-          <Outlet />
+          {/* Pages load on first visit; the menu stays put meanwhile. */}
+          <Suspense fallback={<div className="p-10 text-center text-sm text-[var(--muted)]" role="status">Loading…</div>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 

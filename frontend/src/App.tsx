@@ -1,38 +1,44 @@
-import { useEffect, useRef, type JSX } from 'react';
+import { Suspense, lazy, useEffect, useRef, type JSX } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import Layout from './components/Layout';
-import { ReauthPrompt } from './components/modals/ReauthPrompt';
 import { PublicLayout } from './layouts/PublicLayout';
 import { Home } from './pages/public/Home';
-import { Features } from './pages/public/Features';
-import { Pricing } from './pages/public/Pricing';
-import { OrgLogin } from './pages/auth/OrgLogin';
-import VerifyLogin from './pages/auth/VerifyLogin';
-import AcceptInvite from './pages/auth/AcceptInvite';
-import SignUp from './pages/auth/SignUp';
-import RecoverLoginLink from './pages/auth/RecoverLoginLink';
-import SetupOrganisation from './pages/SetupOrganisation';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
 import NotFound from './pages/public/NotFound';
 import { portalLoginPath } from './services/portal';
 import { landingPath } from './utils/landing';
 
-import Roster from './pages/Roster';
-import TimesheetReview from './pages/TimesheetReview';
-import Employees from './pages/Employees';
-import StaffImport from './pages/StaffImport';
-import Locations from './pages/Locations';
-import RolesPermissions from './pages/RolesPermissions';
-import LeaveRequests from './pages/LeaveRequests';
-import Reports from './pages/Reports';
-import Audit from './pages/Audit';
-import Announcements from './pages/Announcements';
-import Settings from './pages/Settings';
-import EmployeeSchedule from './pages/EmployeeSchedule';
-import EmployeeTimesheet from './pages/EmployeeTimesheet';
-import EmployeeHistory from './pages/EmployeeHistory';
-import EmployeeLeave from './pages/EmployeeLeave';
+// Everything except the public home page is loaded when it is first opened, so a visitor to the
+// website doesn't download the app, and the app doesn't download every page up front.
+const named = <K extends string>(load: () => Promise<Record<K, React.ComponentType<any>>>, key: K) =>
+  lazy(() => load().then(m => ({ default: m[key] })));
+
+const Layout = lazy(() => import('./components/Layout'));
+const ReauthPrompt = named(() => import('./components/modals/ReauthPrompt'), 'ReauthPrompt');
+const Features = named(() => import('./pages/public/Features'), 'Features');
+const Pricing = named(() => import('./pages/public/Pricing'), 'Pricing');
+const OrgLogin = named(() => import('./pages/auth/OrgLogin'), 'OrgLogin');
+const VerifyLogin = lazy(() => import('./pages/auth/VerifyLogin'));
+const AcceptInvite = lazy(() => import('./pages/auth/AcceptInvite'));
+const SignUp = lazy(() => import('./pages/auth/SignUp'));
+const RecoverLoginLink = lazy(() => import('./pages/auth/RecoverLoginLink'));
+const SetupOrganisation = lazy(() => import('./pages/SetupOrganisation'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+
+const Roster = lazy(() => import('./pages/Roster'));
+const TimesheetReview = lazy(() => import('./pages/TimesheetReview'));
+const Employees = lazy(() => import('./pages/Employees'));
+const StaffImport = lazy(() => import('./pages/StaffImport'));
+const Locations = lazy(() => import('./pages/Locations'));
+const RolesPermissions = lazy(() => import('./pages/RolesPermissions'));
+const LeaveRequests = lazy(() => import('./pages/LeaveRequests'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Audit = lazy(() => import('./pages/Audit'));
+const Announcements = lazy(() => import('./pages/Announcements'));
+const Settings = lazy(() => import('./pages/Settings'));
+const EmployeeSchedule = lazy(() => import('./pages/EmployeeSchedule'));
+const EmployeeTimesheet = lazy(() => import('./pages/EmployeeTimesheet'));
+const EmployeeHistory = lazy(() => import('./pages/EmployeeHistory'));
+const EmployeeLeave = lazy(() => import('./pages/EmployeeLeave'));
 import NoAccess from './components/NoAccess';
 import { holdsHere, useAccess, type Permission } from './hooks/useAccess';
 import { ActiveBranchProvider, useActiveBranch } from './hooks/useActiveBranch';
@@ -115,6 +121,7 @@ function Moved({ to }: { to: string }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <Suspense fallback={<Loading />}>
       <Routes>
         {/* Public website */}
         <Route element={<PublicLayout />}>
@@ -167,6 +174,7 @@ export default function App() {
         {/* Anything else is not a page — the server answers these with a 404 as well. */}
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }
