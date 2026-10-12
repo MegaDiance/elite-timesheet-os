@@ -54,9 +54,9 @@ function readOnlyReason(role: RoleSummary, isOwner: boolean, canManageRoles: boo
   if (role.system_key === 'OWNER') return 'The Owner role always has full access and can’t be changed.';
   if (role.system_key === 'EMPLOYEE') return 'The Employee role covers the employee portal only, and can’t be changed.';
   if (role.system_key === 'ADMIN' && !role.can_edit_permissions) {
-    return isOwner || canManageRoles ? `Only the owner can change what the ${role.name} role can do.` : `You can see what the ${role.name} role can do. Only the owner can change it.`;
+    return isOwner || canManageRoles ? `Only the owner can change what the ${role.name} role can do.` : `View only. Only the owner can change the ${role.name} role.`;
   }
-  if (!role.can_edit_permissions) return 'You can see this role, but you need the “Manage roles and permissions” permission to change it.';
+  if (!role.can_edit_permissions) return 'View only. Changing it needs the “Manage roles and permissions” permission.';
   return null;
 }
 
@@ -108,7 +108,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
       setRole(detail);
       if (resetForm) setForm(formFrom(detail));
     } catch (err) {
-      setLoadError(accessError(err, 'This role could not be loaded.'));
+      setLoadError(accessError(err, 'Couldn’t load this role. Try again.'));
     } finally {
       setLoading(false);
     }
@@ -151,7 +151,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
     setSaveError(null);
     const name = form.name.trim().replace(/\s+/g, ' ');
     if (editDetails && !name) {
-      setNameError('Give the role a name.');
+      setNameError('Enter a role name.');
       return;
     }
     setNameError(null);
@@ -170,12 +170,12 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
         if (editDetails && form.description.trim() !== (role.description ?? '')) body.description = form.description.trim();
         if (editPermissions && !sameSet(form.permissions, new Set(role.permissions))) body.permissions = permissions;
         const res = await api.put(`/roles/${role.id}`, body);
-        toast.success(res.data?.message || 'Role saved.');
+        toast.success(res.data?.message || 'Role saved');
         await load(role.id, true);
         onChanged();
       }
     } catch (err) {
-      setSaveError(accessError(err, 'The role could not be saved. Your changes are still here.'));
+      setSaveError(accessError(err, 'Couldn’t save the role. Your changes are kept.'));
     } finally {
       setSaving(false);
     }
@@ -199,12 +199,12 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
     setSaveError(null);
     try {
       const res = await api.post(`/roles/${role.id}/duplicate`);
-      toast.success(res.data?.message || 'Role copied.');
+      toast.success(res.data?.message || 'Role duplicated');
       onChanged();
       setLoading(true);
       setCurrentId(res.data.data.id);
     } catch (err) {
-      setSaveError(accessError(err, 'The role could not be copied.'));
+      setSaveError(accessError(err, 'Couldn’t duplicate role. Try again.'));
     } finally {
       setDuplicating(false);
     }
@@ -220,7 +220,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
       onClose();
     } catch (err) {
       setConfirmDelete(false);
-      setSaveError(accessError(err, 'The role could not be deleted.'));
+      setSaveError(accessError(err, 'Couldn’t delete role. Try again.'));
     } finally {
       setDeleting(false);
     }
@@ -237,7 +237,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
       onChanged();
     } catch (err) {
       setRemoving(null);
-      setSaveError(accessError(err, 'The role could not be removed from this person.'));
+      setSaveError(accessError(err, 'Couldn’t remove the role from this person. Try again.'));
     } finally {
       setRemoveBusy(false);
     }
@@ -276,7 +276,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
                 {role?.is_system && <Badge variant="info" size="sm">Built-in</Badge>}
               </div>
               <p className="text-xs text-[var(--muted)] mt-0.5">
-                {isNew ? 'Choose a name and what this role can do. You give it to people afterwards.' : role ? `${pluralPeople(role.member_count)} · ${role.is_system ? 'Built-in role' : 'Custom role'}` : ' '}
+                {isNew ? 'Name the role and choose its permissions.' : role ? `${pluralPeople(role.member_count)} · ${role.is_system ? 'Built-in role' : 'Custom role'}` : ' '}
               </p>
             </div>
             <button
@@ -335,7 +335,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
                       readOnly={!editDetails}
                       maxLength={300}
                       rows={2}
-                      placeholder="One line about what this role is for (optional)"
+                      placeholder="What this role is for (optional)"
                       className="w-full text-sm bg-[var(--input-bg)] text-[var(--text)] border border-[var(--border)] rounded-md px-3 py-2 placeholder:text-[var(--muted)]/60 focus:outline-none focus:ring-2 focus:border-[var(--primary)] focus:ring-[var(--primary)]/25 read-only:opacity-80 read-only:resize-none resize-y"
                     />
                   </div>
@@ -351,11 +351,10 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
                         <Button variant="outline" size="sm" onClick={() => setAddingMember(true)} leftIcon={<UserPlus className="w-3.5 h-3.5" />}>Add member</Button>
                       )}
                     </div>
-                    <p className="text-xs text-[var(--muted)]">Where a role applies (the entire organisation or chosen branches) is set for each person you give it to.</p>
                     {role.members.length === 0 ? (
                       <div className="p-4 rounded-lg border border-dashed border-[var(--border)] text-center">
                         <p className="text-sm font-medium text-[var(--text)]">Nobody has this role yet</p>
-                        <p className="text-xs text-[var(--muted)] mt-1">{assignable && canManageUsers ? 'Add someone from your team, or invite a new person.' : 'People are given this role from the People tab.'}</p>
+                        <p className="text-xs text-[var(--muted)] mt-1">{assignable && canManageUsers ? 'Add someone from your team or invite someone new.' : 'Assign it from the People tab.'}</p>
                       </div>
                     ) : (
                       <ul className="rounded-lg border border-[var(--border)] divide-y divide-[var(--border)] max-h-72 overflow-y-auto">
@@ -391,15 +390,15 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
                 )}
 
                 {isNew && (
-                  <p className="text-xs text-[var(--muted)]">Where a role applies (the entire organisation or chosen branches) is set for each person you give it to. Save the role first, then add people to it.</p>
+                  <p className="text-xs text-[var(--muted)]">Add people after saving. You choose where it applies for each person.</p>
                 )}
 
                 {isNew && templates.length > 0 && (
                   <fieldset className="space-y-2">
                     <legend className="text-sm font-semibold text-[var(--text)] mb-1">Start from</legend>
-                    <p className="text-xs text-[var(--muted)]">Copy what an existing role can do, then adjust it below.</p>
+                    <p className="text-xs text-[var(--muted)]">Copy an existing role’s permissions, then adjust them.</p>
                     <div className="grid gap-1.5">
-                      {[...templates.map(r => ({ id: r.id, name: r.name, hint: roleDescription(r) })), { id: 'blank', name: 'Blank role', hint: 'Start with no permissions' }].map(option => (
+                      {[...templates.map(r => ({ id: r.id, name: r.name, hint: roleDescription(r) })), { id: 'blank', name: 'Blank role', hint: 'No permissions' }].map(option => (
                         <label key={option.id} className={`flex items-start gap-3 px-3 py-2 rounded-md border cursor-pointer ${startFrom === option.id ? 'border-[var(--primary)] bg-[var(--primary-light)]' : 'border-[var(--border)] hover:border-[var(--border-hover)]'}`}>
                           <input type="radio" name="start-from" className="mt-1" checked={startFrom === option.id} onChange={() => chooseStart(option.id)} />
                           <span className="min-w-0">
@@ -422,15 +421,15 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
                     <h3 id="role-permissions" className="text-sm font-semibold text-[var(--text)]">Permissions</h3>
                     {!editPermissions && (
                       <button type="button" onClick={() => setShowAll(v => !v)} aria-expanded={showAll} className="text-xs font-semibold text-[var(--primary-text)] hover:underline cursor-pointer">
-                        {showAll ? 'Hide details' : 'Show every permission'}
+                        {showAll ? 'Hide permissions' : 'Show all permissions'}
                       </button>
                     )}
                   </div>
                   {(editPermissions || showAll) && (
                     <>
-                      {editPermissions && <p className="text-xs text-[var(--muted)]">Tick what people with this role can do. Permissions marked “Whole organisation only” work only when the role is given across the entire organisation.</p>}
+                      {editPermissions && <p className="text-xs text-[var(--muted)]">Permissions marked “Entire organisation only” work only when the role is given across the entire organisation.</p>}
                       {groups.length === 0 ? (
-                        <p className="text-xs text-[var(--muted)]">The list of permissions is not available right now.</p>
+                        <p className="text-xs text-[var(--muted)]">Permissions couldn’t be loaded.</p>
                       ) : (
                         <PermissionList groups={groups} selected={form.permissions} onChange={permissions => setForm({ ...form, permissions })} readOnly={!editPermissions} />
                       )}
@@ -471,7 +470,7 @@ export default function RoleDrawer({ roleId, summary, roles, catalogue, team, ca
         onClose={() => setConfirmDiscard(false)}
         onConfirm={() => { setConfirmDiscard(false); onClose(); }}
         title="Discard your changes?"
-        message="You have changes that haven’t been saved. If you close now, they are lost."
+        message="Your unsaved changes will be lost."
         confirmLabel="Discard changes"
         cancelLabel="Keep editing"
         variant="warning"

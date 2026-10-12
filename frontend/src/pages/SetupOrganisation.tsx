@@ -177,7 +177,7 @@ export default function SetupOrganisation() {
         setStep(1);
         setError(message || 'Check your password and try again.');
       } else {
-        setError(message || 'We couldn’t set up your organisation. Please try again.');
+        setError(message || 'We couldn’t set up your organisation. Try again.');
       }
     } finally {
       setSubmitting(false);
@@ -215,7 +215,7 @@ export default function SetupOrganisation() {
         </div>
         <h1 className="text-xl font-bold text-[var(--text)]">This setup link can't be used</h1>
         <p className="text-xs text-[var(--muted)] leading-relaxed max-w-sm mx-auto">
-          It may have expired, already been used or been copied incorrectly. Setup links work once and expire after 24 hours.
+          It has expired, was already used or wasn’t copied in full. Setup links work once and expire after 24 hours.
         </p>
         <Link to="/signup" className="inline-block">
           <Button variant="primary" size="md">Request a new link</Button>
@@ -233,11 +233,11 @@ export default function SetupOrganisation() {
         </div>
         <h1 className="text-2xl font-bold text-[var(--text)]">Your organisation is ready</h1>
         <p className="text-sm text-[var(--muted)] leading-relaxed max-w-md mx-auto">
-          {organisationName.trim()} has been set up with its first branch, {branchName.trim()}. Sign in to add workers,
-          build your first roster and invite your team.
+          {organisationName.trim()} is set up with its first branch, {branchName.trim()}. Sign in to add staff and build
+          your first roster.
         </p>
         <div className="p-3 rounded-xl bg-[var(--panel-subtle)] border border-[var(--border)] text-xs text-left space-y-1">
-          <div className="font-semibold text-[var(--text)]">Your organisation's private sign-in link</div>
+          <div className="font-semibold text-[var(--text)]">Your organisation’s private link</div>
           <div className="font-mono text-[var(--primary-text)] break-all">{fullLink}</div>
           <div className="text-[var(--muted)]">Bookmark it. You and your team sign in here.</div>
         </div>
@@ -283,7 +283,7 @@ export default function SetupOrganisation() {
         {step === 0 && (
           <>
             <p className="text-xs text-[var(--muted)] leading-relaxed">
-              You'll be the Organisation Owner: you can see every branch, invite your team and change organisation settings.
+              You’ll be the Owner, with access to every branch and setting.
             </p>
             <Field label="Organisation name">
               <input
@@ -307,7 +307,7 @@ export default function SetupOrganisation() {
             {accountExists ? (
               <>
                 <p className="text-xs text-[var(--muted)] leading-relaxed">
-                  You already have a SimpleHours account with this email. Enter its current password to add this organisation to it.
+                  You already have an account with this email. Enter its password to add this organisation.
                 </p>
                 <Field label="Current password">
                   <input
@@ -362,7 +362,7 @@ export default function SetupOrganisation() {
         {step === 2 && (
           <>
             <p className="text-xs text-[var(--muted)] leading-relaxed">
-              Branches are the places your workers are rostered. You can add more branches later from the Branches page.
+              You can add more branches later in Settings.
             </p>
             <Field label="Branch name">
               <input
@@ -402,7 +402,7 @@ export default function SetupOrganisation() {
                 <span>Unpaid break</span>
               </div>
               <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                Taken once per day when a day's hours reach the threshold. Weekends can use a different length. You can change this later in Settings.
+                Taken once per day when the day’s hours reach the threshold. You can change this later in Settings.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <Field label="Weekday (mins)">
@@ -423,8 +423,8 @@ export default function SetupOrganisation() {
                 <span>Lock passwords (optional)</span>
               </div>
               <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-                Each branch can lock its roster and its timesheets for a fortnight. Shared lock passwords let your team lock and
-                unlock; anyone can also use their own sign-in password. Leave blank to skip.
+                Shared passwords for locking a branch’s roster or timesheets for a fortnight. People can also use their own
+                password. Leave blank to skip.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Roster lock password">
@@ -449,7 +449,7 @@ export default function SetupOrganisation() {
                     <ShieldCheck className="w-3.5 h-3.5 text-[var(--primary-text)]" /> Turn on two-step verification
                   </span>
                   <span className="block text-[11px] text-[var(--muted)] leading-relaxed">
-                    We'll email you a 6-digit code each time you sign in. You can change this later in Settings.
+                    We’ll email you a 6-digit code each time you sign in.
                   </span>
                 </span>
               </label>

@@ -24,6 +24,7 @@ const PUBLIC_ROUTES = new Set([
     'employeeAccounts GET /invitations/verify',
     'employeeAccounts POST /invitations/accept',
     'organisation GET /lookup/:slug',
+    'recovery POST /company-link',
     'recovery POST /login-link',
     'recovery POST /login-link/email',
     'recovery GET /options',

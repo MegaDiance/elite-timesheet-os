@@ -32,6 +32,7 @@ import { useToast } from '../components/ui/Toast';
 import { TwoFactorModal } from '../components/modals/TwoFactorModal';
 import { AccountSecurityModal } from '../components/modals/AccountSecurityModal';
 import { LockPasswordsModal } from '../components/modals/LockPasswordsModal';
+import { RecoveryPasswordModal } from '../components/modals/RecoveryPasswordModal';
 import { BreakSettingsModal } from '../components/modals/BreakSettingsModal';
 import { friendlyError } from '../services/errors';
 
@@ -50,6 +51,8 @@ interface OrganisationSettings {
   leave_requests_require_approval: boolean;
   has_roster_lock_password: boolean;
   has_timesheet_lock_password: boolean;
+  /** Owner only: when the company recovery password was set, or null. */
+  recovery_password_set_at?: string | null;
 }
 
 /** Someone who could become the owner: a team member who holds a role here (one entry of GET /team `members`). */
@@ -66,7 +69,7 @@ const errorMessage = friendlyError;
 function SectionHeader({ icon, title, description, action }: {
   icon: React.ReactNode;
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
@@ -77,7 +80,7 @@ function SectionHeader({ icon, title, description, action }: {
         </div>
         <div>
           <h2 className="text-sm font-bold text-[var(--text)]">{title}</h2>
-          <p className="text-xs text-[var(--muted)]">{description}</p>
+          {description && <p className="text-xs text-[var(--muted)]">{description}</p>}
         </div>
       </div>
       {action}
@@ -148,6 +151,7 @@ export default function Settings() {
   const [savingDisplayName, setSavingDisplayName] = useState(false);
   const [showBreakModal, setShowBreakModal] = useState(false);
   const [showLockModal, setShowLockModal] = useState(false);
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState('');
   const [savingExpiry, setSavingExpiry] = useState(false);
@@ -208,7 +212,7 @@ export default function Settings() {
     setSavingName(true);
     try {
       await api.put('/auth/me', { full_name: fullName.trim() });
-      toast.success('Your name has been updated.');
+      toast.success('Name saved.');
       refresh();
     } catch (err: any) {
       toast.error(errorMessage(err, 'Your name could not be updated.'));
@@ -221,7 +225,7 @@ export default function Settings() {
     setSendingReset(true);
     try {
       await api.post('/auth/forgot-password', { email: access.user.email });
-      toast.success(`We have emailed a password reset link to ${access.user.email}.`);
+      toast.success(`Reset link sent to ${access.user.email}.`);
     } catch (err: any) {
       toast.error(errorMessage(err, 'The reset link could not be sent. Try again in a few minutes.'));
     } finally {
@@ -278,10 +282,10 @@ export default function Settings() {
     try {
       await navigator.clipboard.writeText(org.portal_url);
       setCopied(true);
-      toast.success('Sign-in link copied.');
+      toast.success('Link copied.');
       setTimeout(() => setCopied(false), 2500);
     } catch {
-      toast.error('The link could not be copied. Select it and copy it manually.');
+      toast.error('Couldn’t copy. Select the link and copy it.');
     }
   };
 
@@ -292,10 +296,10 @@ export default function Settings() {
       const { portal_slug, portal_url, portal_link_expires_at } = res.data.data;
       setOrg(prev => (prev ? { ...prev, portal_slug, portal_url, portal_link_expires_at, portal_link_expired: false } : prev));
       rememberPortal(portal_slug);
-      toast.success(res.data?.message || 'A new sign-in link has been created.');
+      toast.success(res.data?.message || 'New private link created.');
       setShowRegenerateModal(false);
     } catch (err: any) {
-      toast.error(errorMessage(err, 'The sign-in link could not be regenerated.'));
+      toast.error(errorMessage(err, 'The private link could not be regenerated.'));
     } finally {
       setRegenerating(false);
     }
@@ -323,7 +327,7 @@ export default function Settings() {
   const handleRequestTransfer = (e: React.FormEvent) => {
     e.preventDefault();
     if (!transferTarget) {
-      setTransferError('Choose the team member who will become the owner.');
+      setTransferError('Choose the new owner.');
       return;
     }
     if (!transferPassword) {
@@ -342,10 +346,10 @@ export default function Settings() {
         user_id: transferTarget.id,
         current_password: transferPassword,
       });
-      toast.success(res.data?.message || `${transferTarget.email} is now the organisation owner.`);
+      toast.success(res.data?.message || `${transferTarget.email} is now the owner.`);
       setTransferPassword('');
       setShowTransferConfirm(false);
-      // This account is now an Admin of the branches: leave the owner settings, then reload what it may do.
+      // This account is now a Manager of the branches: leave the owner settings, then reload what it may do.
       navigate('/app', { replace: true });
       await refresh();
     } catch (err: any) {
@@ -374,9 +378,9 @@ export default function Settings() {
       {activeTab === 'account' && (
         <div className="space-y-6">
           <Card className="p-6 space-y-4">
-            <SectionHeader icon={<UserRound className="w-4 h-4" />} title="Your details" description="How your name appears to others in this organisation." />
+            <SectionHeader icon={<UserRound className="w-4 h-4" />} title="Your details" />
             <form onSubmit={handleSaveName} className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
-              <Input label="Email" value={access.user.email} disabled helperText="Your sign-in email cannot be changed here." />
+              <Input label="Email" value={access.user.email} disabled helperText="Can’t be changed here." />
               <Input label="Name" value={fullName} onChange={e => setFullName(e.target.value)} maxLength={120} required />
               <div className="sm:col-span-2 flex justify-end">
                 <Button type="submit" variant="primary" size="sm" loading={savingName} disabled={fullName.trim() === (access.user.full_name || '')}>
@@ -390,14 +394,13 @@ export default function Settings() {
             <SectionHeader
               icon={<KeyRound className="w-4 h-4" />}
               title="Password"
-              description={`We email a reset link to ${access.user.email}. It expires after an hour.`}
+              description="Used for every organisation you sign in to with this email."
               action={(
                 <Button variant="outline" size="sm" onClick={handleSendReset} loading={sendingReset} leftIcon={<Mail className="w-3.5 h-3.5" />}>
                   Email me a reset link
                 </Button>
               )}
             />
-            <p className="text-xs text-[var(--muted)]">Your password is shared by every organisation you sign in to with this email.</p>
           </Card>
 
           <Card className="p-6 space-y-4">
@@ -416,21 +419,20 @@ export default function Settings() {
                 </div>
               )}
             />
-            <p className="text-xs text-[var(--muted)]">Recommended for everyone who can approve timesheets or change rosters.</p>
           </Card>
 
           <Card className="p-6 space-y-4">
             <SectionHeader
               icon={<Laptop className="w-4 h-4" />}
               title="Sign-in activity"
-              description="Devices signed in to your account, and recent sign-ins."
+              description="Signed-in devices and recent sign-ins."
               action={(
                 <Button variant="outline" size="sm" onClick={() => setShowActivityModal(true)} leftIcon={<Laptop className="w-3.5 h-3.5" />}>
                   View activity
                 </Button>
               )}
             />
-            <p className="text-xs text-[var(--muted)]">Sign out any device you don't recognise. Sessions end automatically after 15 minutes without activity.</p>
+            <p className="text-xs text-[var(--muted)]">Sign out any device you don't recognise.</p>
           </Card>
 
           {canSeeRoles && (
@@ -438,14 +440,13 @@ export default function Settings() {
               <SectionHeader
                 icon={<UserCog className="w-4 h-4" />}
                 title="Roles & permissions"
-                description="Who can do what in this organisation, and in which branches."
+                description="Who can do what, and in which branches."
                 action={(
                   <Link to="/settings/roles">
-                    <Button variant="outline" size="sm" leftIcon={<UserCog className="w-3.5 h-3.5" />}>Open roles &amp; permissions</Button>
+                    <Button variant="outline" size="sm" leftIcon={<UserCog className="w-3.5 h-3.5" />}>Manage roles</Button>
                   </Link>
                 )}
               />
-              <p className="text-xs text-[var(--muted)]">Invite people, choose their roles and the branches each role covers, or create a role with exactly the access it needs.</p>
             </Card>
           )}
         </div>
@@ -457,7 +458,7 @@ export default function Settings() {
           <div className="space-y-6">
             {!canEditOrganisation && (
               <p role="status" className="text-xs text-[var(--muted)] bg-[var(--panel-subtle)] border border-[var(--border)] rounded-lg px-3 py-2">
-                You can see these settings but not change them. Ask your organisation owner if something needs changing.
+                View only. Ask the owner to make changes.
               </p>
             )}
             <Card className="p-6 space-y-4">
@@ -521,11 +522,10 @@ export default function Settings() {
               <SectionHeader
                 icon={<Sliders className="w-4 h-4" />}
                 title="Employee timesheets"
-                description="Whether employees record their own worked hours, or only managers do."
               />
               <ToggleRow
                 label="Allow employees to submit timesheets"
-                description="On: employees see “My timesheet” and enter the hours they worked; a manager still approves them. Off: the timesheet pages disappear for employees completely and only managers record hours on the Schedule."
+                description="On: employees enter their hours in My timesheet and a manager approves them. Off: only managers record hours, on the Schedule."
                 checked={org?.employees_can_submit_timesheets ?? true}
                 saving={savingWorkforceField === 'employees_can_submit_timesheets'}
                 disabled={!org}
@@ -537,11 +537,10 @@ export default function Settings() {
               <SectionHeader
                 icon={<CalendarDays className="w-4 h-4" />}
                 title="Leave"
-                description="How approved leave interacts with the roster, and whether leave requests need approval."
               />
               <ToggleRow
                 label="Automatically merge leave with rostered hours"
-                description="Example: rostered 9:00–5:00 and sick 1:00–2:00 is saved as 9:00–1:00 work, 1:00–2:00 sick, 2:00–5:00 work. The day editor always says when a shift is split. Off: leave that overlaps work is refused, and you adjust the work times yourself."
+                description="On: leave inside a shift splits it. Rostered 9:00–5:00 with sick 1:00–2:00 becomes 9:00–1:00 work, 1:00–2:00 sick, 2:00–5:00 work. Off: leave that overlaps work is refused."
                 checked={org?.automatically_merge_leave_with_roster ?? false}
                 saving={savingWorkforceField === 'automatically_merge_leave_with_roster'}
                 disabled={!org}
@@ -549,7 +548,7 @@ export default function Settings() {
               />
               <ToggleRow
                 label="Leave requests require approval"
-                description="On: a request waits under Leave requests until a manager approves it. Off: it is added to the roster straight away."
+                description="On: requests wait for a manager to approve them. Off: they go on the roster straight away."
                 checked={org?.leave_requests_require_approval ?? true}
                 saving={savingWorkforceField === 'leave_requests_require_approval'}
                 disabled={!org}
@@ -560,15 +559,15 @@ export default function Settings() {
         )
       )}
 
-      {/* SECURITY (private sign-in link and lock passwords) */}
+      {/* SECURITY (private link, recovery password and lock passwords) */}
       {activeTab === 'security' && canManageSecurity && (
         orgUnavailable || (
           <div className="space-y-6">
             <Card className="p-6 space-y-4">
               <SectionHeader
                 icon={<Lock className="w-4 h-4" />}
-                title="Private sign-in link"
-                description="Your organisation's own sign-in page. Share it only with your team. It is the only way to sign in to SimpleHours."
+                title="Private link"
+                description="The only way to sign in. Share it only with your team."
               />
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <div className="flex-1 min-w-0 px-3.5 py-2.5 rounded-lg bg-[var(--input-bg)] border border-[var(--border)] font-mono text-xs text-[var(--text)] select-all truncate">
@@ -595,7 +594,7 @@ export default function Settings() {
               </div>
               {org?.portal_link_expired && (
                 <p role="alert" className="text-sm text-[var(--danger)] bg-[var(--danger-light)] rounded-md p-3">
-                  This link has expired, so nobody can sign in with it. Choose a new expiry date or regenerate the link, then share it again.
+                  This link has expired, so nobody can sign in with it. Set a new expiry date or regenerate it, then share it again.
                 </p>
               )}
               <div className="flex flex-col sm:flex-row sm:items-end gap-2">
@@ -605,7 +604,7 @@ export default function Settings() {
                       ? `${org.portal_link_expired ? 'Expired' : 'Works until'} ${new Date(org.portal_link_expires_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`
                       : 'This link does not expire'}
                   </p>
-                  <label htmlFor="link-expiry" className="text-xs text-[var(--muted)]">Set an expiry date (optional)</label>
+                  <label htmlFor="link-expiry" className="text-xs text-[var(--muted)]">Expiry date (optional)</label>
                   <input
                     id="link-expiry"
                     type="date"
@@ -625,10 +624,29 @@ export default function Settings() {
                 )}
               </div>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Knowing the link does not give anyone access: people still need an account in {access.organisation.name}.
-                If the link has been shared too widely, regenerate it (the old link stops working straight away) and send the new one to your team.
+                The link alone gives no access: people still need an account. If it has been shared too widely, regenerate it.
               </p>
             </Card>
+
+            {isOwner && (
+              <Card className="p-6 space-y-4">
+                <SectionHeader
+                  icon={<KeyRound className="w-4 h-4" />}
+                  title="Company recovery password"
+                  description="With your company name, it recovers your private link at /recover-link."
+                  action={(
+                    <div className="flex items-center gap-2">
+                      <Badge variant={org?.recovery_password_set_at ? 'success' : 'warning'} size="sm">
+                        {org?.recovery_password_set_at ? 'Set' : 'Not set'}
+                      </Badge>
+                      <Button variant="outline" size="sm" onClick={() => setShowRecoveryModal(true)} disabled={!org}>
+                        {org?.recovery_password_set_at ? 'Change' : 'Set password'}
+                      </Button>
+                    </div>
+                  )}
+                />
+              </Card>
+            )}
 
             <Card className="p-6 space-y-4">
               <SectionHeader
@@ -666,22 +684,22 @@ export default function Settings() {
           <SectionHeader
             icon={<ArrowRightLeft className="w-4 h-4" />}
             title="Transfer ownership"
-            description="Hand the organisation over to one of your current team members."
+            description="Hand the organisation to a team member."
           />
           <ul className="text-xs text-[var(--muted)] leading-relaxed list-disc pl-5 space-y-1">
-            <li>The new owner gets full control, including settings, branches, roles, team members and the audit log.</li>
-            <li>You become an Admin of every active branch. The new owner can change or remove your access.</li>
-            <li>An organisation has exactly one owner, and only the new owner can transfer it back.</li>
+            <li>The new owner gets full control.</li>
+            <li>You become a Manager of every active branch. The new owner can change or remove this.</li>
+            <li>Only the new owner can transfer it back.</li>
           </ul>
 
           {candidates === null ? (
-            <p className="text-xs text-[var(--muted)]">Loading your team…</p>
+            <p className="text-xs text-[var(--muted)]">Loading…</p>
           ) : candidates.length === 0 ? (
             <EmptyState
               icon={<UserRound className="w-5 h-5" />}
               title="No team members yet"
-              description="Ownership can only go to someone who already has a role here. Invite them first."
-              action={<Link to="/settings/roles"><Button variant="outline" size="sm">Go to roles &amp; permissions</Button></Link>}
+              description="Ownership can only go to someone with a role here. Invite them first."
+              action={<Link to="/settings/roles"><Button variant="outline" size="sm">Manage roles</Button></Link>}
             />
           ) : (
             <form onSubmit={handleRequestTransfer} className="space-y-4 max-w-md">
@@ -726,12 +744,20 @@ export default function Settings() {
             hasRosterLockPassword={org?.has_roster_lock_password}
             hasTimesheetLockPassword={org?.has_timesheet_lock_password}
           />
+          {isOwner && (
+            <RecoveryPasswordModal
+              isOpen={showRecoveryModal}
+              onClose={() => setShowRecoveryModal(false)}
+              onSaved={fetchOrganisation}
+              isSet={Boolean(org?.recovery_password_set_at)}
+            />
+          )}
           <ConfirmModal
             isOpen={showRegenerateModal}
             onClose={() => setShowRegenerateModal(false)}
             onConfirm={handleRegenerate}
-            title="Regenerate the sign-in link?"
-            message="The current link stops working straight away. Anyone who uses it, including your team, will need the new link."
+            title="Regenerate the private link?"
+            message="The current link stops working straight away. Your team will need the new one."
             confirmLabel="Regenerate link"
             variant="warning"
             loading={regenerating}
@@ -741,7 +767,7 @@ export default function Settings() {
             onClose={() => setShowTransferConfirm(false)}
             onConfirm={handleTransfer}
             title={`Make ${transferTarget?.full_name || transferTarget?.email || 'this person'} the owner?`}
-            message={`${transferTarget?.email ?? 'They'} will own ${access.organisation.name}. You will become an Admin of every active branch and lose access to owner settings.`}
+            message={`${transferTarget?.email ?? 'They'} will own ${access.organisation.name}. You’ll become a Manager of every active branch and lose owner access.`}
             confirmLabel="Transfer ownership"
             variant="danger"
             loading={transferring}

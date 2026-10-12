@@ -76,7 +76,7 @@ export default function RoleSummary({ permissions, catalogue, everything = false
         </div>
       )}
       <p className="sm:col-span-2 text-xs text-[var(--muted)]">
-        Each person’s role applies only where it’s given to them: the entire organisation, or the branches you choose.
+        Applies only where it’s given to each person.
       </p>
     </div>
   );

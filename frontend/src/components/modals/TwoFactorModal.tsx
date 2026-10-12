@@ -88,7 +88,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
       if (res.data?.success) {
         setIsEnabled(true);
         setStep('status');
-        setMessage({ text: 'Two-step verification is now on for your account.', type: 'success' });
+        setMessage({ text: 'Two-step verification turned on.', type: 'success' });
         onChange?.(true);
       } else {
         setMessage({ text: res.data?.error?.message || 'Verification failed.', type: 'error' });
@@ -115,7 +115,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
       if (res.data?.success) {
         setIsEnabled(false);
         setStep('status');
-        setMessage({ text: 'Two-step verification has been turned off.', type: 'success' });
+        setMessage({ text: 'Two-step verification turned off.', type: 'success' });
         onChange?.(false);
       } else {
         setMessage({ text: res.data?.error?.message || 'Two-step verification could not be turned off.', type: 'error' });
@@ -132,11 +132,10 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
       isOpen={isOpen}
       onClose={onClose}
       title="Two-step verification"
-      description="Protect your SimpleHours account with a code emailed to you each time you sign in."
       maxWidth="md"
     >
       {loading ? (
-        <div className="py-8 text-center text-xs text-[var(--muted)]">Checking your settings…</div>
+        <div className="py-8 text-center text-xs text-[var(--muted)]">Loading…</div>
       ) : (
         <div className="space-y-5">
           {message && (
@@ -174,7 +173,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
                     <div className="text-xs text-[var(--muted)]">
                       {isEnabled
                         ? 'A 6-digit code is emailed to you each time you sign in.'
-                        : 'Your account is protected by your password only.'}
+                        : 'Only your password is needed to sign in.'}
                     </div>
                   </div>
                 </div>
@@ -210,7 +209,7 @@ export const TwoFactorModal: React.FC<TwoFactorModalProps> = ({ isOpen, onClose,
           {step === 'setup' && (
             <form onSubmit={handleConfirmEnable} className="space-y-4">
               <div className="bg-[var(--panel-subtle)] p-3 rounded-md border border-[var(--border)] text-xs text-[var(--muted)]">
-                Enter the 6-digit code we emailed you and your password to finish turning it on.
+                Enter the code we emailed you and your password.
               </div>
 
               <Input

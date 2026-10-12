@@ -15,16 +15,17 @@ interface FoundOrganisation {
 }
 
 /**
- * "I've lost my company's login link" — for anyone with an account. This is not a sign-in page:
- * the email and password only prove whose links to show, and no session is created. The result is
- * held in memory only (never in the address bar, storage or history), so reloading starts over.
- * While email is on there is also an "email it to me" option that needs no password.
+ * "I've lost my company's private link". Not a sign-in page: the company name and the recovery
+ * password the Owner set (Settings → Security) only prove which link to show, and no session is
+ * created. The result is held in memory only (never in the address bar, storage or history), so
+ * reloading starts over. While email is on there is also an "email me my link" option.
  */
-export default function RecoverLoginLink() {
-  const [mode, setMode] = useState<'password' | 'email'>('password');
+export default function RecoverCompanyLink() {
+  const [mode, setMode] = useState<'company' | 'email'>('company');
   const [emailEnabled, setEmailEnabled] = useState(false);
-  const [email, setEmail] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<RecoveryErrors>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -38,18 +39,20 @@ export default function RecoverLoginLink() {
     meta.name = 'robots';
     meta.content = 'noindex, nofollow';
     document.head.appendChild(meta);
-    return () => { meta.remove(); };
+    const previousTitle = document.title;
+    document.title = 'Recover your company link · SimpleHours';
+    return () => { meta.remove(); document.title = previousTitle; };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     api.get('/recovery/options')
       .then(res => { if (!cancelled) setEmailEnabled(res.data?.data?.email_enabled === true); })
-      .catch(() => undefined); // without it the page still works: the password option needs no email
+      .catch(() => undefined); // without it the page still works: the company option needs no email
     return () => { cancelled = true; };
   }, []);
 
-  const switchMode = (next: 'password' | 'email') => {
+  const switchMode = (next: 'company' | 'email') => {
     setMode(next);
     setErrors({});
     setFailure(null);
@@ -58,7 +61,7 @@ export default function RecoverLoginLink() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
-    const problems: RecoveryErrors = mode === 'password' ? validateRecovery({ email, password }) : { email: emailError(email) };
+    const problems: RecoveryErrors = mode === 'company' ? validateRecovery({ companyName, password }) : { email: emailError(email) };
     if (!problems.email) delete problems.email;
     setErrors(problems);
     setFailure(null);
@@ -66,8 +69,8 @@ export default function RecoverLoginLink() {
 
     setLoading(true);
     try {
-      if (mode === 'password') {
-        const res = await api.post('/recovery/login-link', { email: email.trim(), password });
+      if (mode === 'company') {
+        const res = await api.post('/recovery/company-link', { company_name: companyName.trim(), password });
         setPassword('');
         setFound(res.data?.data?.organisations ?? []);
       } else {
@@ -78,9 +81,10 @@ export default function RecoverLoginLink() {
       const status = err?.response?.status;
       if (mode === 'email' && status === 409) {
         setEmailEnabled(false);
-        switchMode('password');
-        setFailure('Sending login links by email is turned off. Use your email and password instead.');
+        switchMode('company');
+        setFailure('Email is turned off. Use the recovery password instead.');
       } else {
+        setPassword('');
         setFailure(recoveryFailureMessage(status, err?.response?.data?.error?.message));
       }
     } finally {
@@ -95,7 +99,7 @@ export default function RecoverLoginLink() {
         <div className="text-center">
           <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)] transition-colors">
             <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Back to the home page</span>
+            <span>Home</span>
           </Link>
         </div>
       </div>
@@ -105,16 +109,9 @@ export default function RecoverLoginLink() {
   if (found) {
     return shell(
       <>
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-            {found.length === 1 ? 'Here’s your login link' : found.length > 1 ? 'Here are your login links' : 'No company found'}
-          </h1>
-          <p className="text-sm text-[var(--muted)] leading-relaxed">
-            {found.length > 0
-              ? `Bookmark ${found.length === 1 ? 'it' : 'the one you use'} so it’s one click next time. You’ll still enter your password to sign in.`
-              : 'Your account isn’t part of any active company right now. Ask your manager to invite you again.'}
-          </p>
-        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-center text-[var(--text)]">
+          {found.length > 1 ? 'Your company links' : 'Your company link'}
+        </h1>
         {found.map((org, i) => <FoundLinkCard key={`${org.name}-${i}`} org={org} />)}
       </>
     );
@@ -128,7 +125,7 @@ export default function RecoverLoginLink() {
         </div>
         <h1 className="text-xl font-bold text-[var(--text)]">Check your inbox</h1>
         <p className="text-sm text-[var(--muted)] leading-relaxed">
-          If <span className="font-medium text-[var(--text)]">{email.trim()}</span> belongs to a SimpleHours account, we’ve sent its login link there. It can take a minute to arrive.
+          If <span className="font-medium text-[var(--text)]">{email.trim()}</span> has an account, its company link is on the way.
         </p>
       </Card>
     );
@@ -140,12 +137,9 @@ export default function RecoverLoginLink() {
         <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center mx-auto">
           <KeyRound className="w-5 h-5" aria-hidden="true" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Find your login link</h1>
-        <p className="text-sm text-[var(--muted)] leading-relaxed">
-          Every company signs in through its own private link.{' '}
-          {mode === 'password'
-            ? 'Enter the email and password you use for SimpleHours and we’ll show you yours.'
-            : 'Enter your email and we’ll send yours there.'}
+        <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Recover your company link</h1>
+        <p className="text-sm text-[var(--muted)]">
+          {mode === 'company' ? 'Lost your company’s private access link? Recover it here.' : 'We’ll email your company link to you.'}
         </p>
       </div>
 
@@ -158,63 +152,75 @@ export default function RecoverLoginLink() {
         )}
 
         <form onSubmit={submit} className="space-y-4" noValidate>
-          <Input
-            label="Email"
-            type="email"
-            autoComplete="username"
-            placeholder="you@company.com"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            error={errors.email}
-            required
-            autoFocus
-            leftIcon={<Mail className="w-4 h-4" />}
-          />
-          {mode === 'password' && (
+          {mode === 'company' ? (
+            <>
+              <Input
+                label="Company name"
+                autoComplete="organization"
+                value={companyName}
+                onChange={e => setCompanyName(e.target.value)}
+                error={errors.companyName}
+                maxLength={120}
+                required
+                autoFocus
+                leftIcon={<Building2 className="w-4 h-4" />}
+              />
+              <Input
+                label="Company recovery password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="off"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                error={errors.password}
+                required
+                leftIcon={<Lock className="w-4 h-4" />}
+                rightIcon={
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                    className="p-1 -mr-1 rounded text-[var(--muted)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                }
+              />
+            </>
+          ) : (
             <Input
-              label="Password"
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
-              placeholder="Your SimpleHours password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              error={errors.password}
+              label="Email"
+              type="email"
+              autoComplete="username"
+              placeholder="you@company.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              error={errors.email}
               required
-              leftIcon={<Lock className="w-4 h-4" />}
-              rightIcon={
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(v => !v)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  aria-pressed={showPassword}
-                  className="p-1 -mr-1 rounded text-[var(--muted)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              }
+              autoFocus
+              leftIcon={<Mail className="w-4 h-4" />}
             />
           )}
           <Button type="submit" variant="primary" size="md" className="w-full" loading={loading}>
-            {mode === 'password' ? 'Show my login link' : 'Email me my login link'}
+            {mode === 'company' ? 'Recover access link' : 'Email me my link'}
           </Button>
         </form>
 
         {emailEnabled && (
           <p className="text-center text-xs text-[var(--muted)]">
-            {mode === 'password' ? 'Don’t remember your password? ' : 'Rather see it right away? '}
             <button
               type="button"
-              onClick={() => switchMode(mode === 'password' ? 'email' : 'password')}
+              onClick={() => switchMode(mode === 'company' ? 'email' : 'company')}
               className="font-medium text-[var(--primary-text)] hover:underline cursor-pointer"
             >
-              {mode === 'password' ? 'Email it to me instead' : 'Use my password'}
+              {mode === 'company' ? 'Email me my link instead' : 'Use the recovery password'}
             </button>
           </p>
         )}
       </Card>
 
       <p className="text-center text-xs text-[var(--muted)] leading-relaxed">
-        Forgotten your password too? Ask your manager to send you your company’s link and a password reset.
+        Your company’s Owner sets the recovery password. No access? Ask them for the link.
       </p>
     </>
   );
@@ -251,7 +257,7 @@ function FoundLinkCard({ org }: { org: FoundOrganisation }) {
           </p>
           {org.replaced && (
             <p className="text-xs text-[var(--muted)] leading-relaxed">
-              The old link had stopped working, so we made this new one. Send it to your team.
+              The old link had stopped working, so this is a new one. Share it with your team.
             </p>
           )}
           {org.expires_at && (
@@ -260,27 +266,27 @@ function FoundLinkCard({ org }: { org: FoundOrganisation }) {
             </p>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <Link to={org.login_path!} className="block">
-              <Button variant="primary" size="md" className="w-full">Open</Button>
-            </Link>
             <Button
               type="button"
-              variant="secondary"
+              variant="primary"
               size="md"
               className="w-full"
               onClick={copy}
               leftIcon={copied === 'done' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
             >
-              {copied === 'done' ? 'Copied' : 'Copy'}
+              {copied === 'done' ? 'Copied' : 'Copy link'}
             </Button>
+            <Link to={org.login_path!} className="block">
+              <Button variant="secondary" size="md" className="w-full">Open</Button>
+            </Link>
           </div>
           <p role="status" className="text-xs text-center text-[var(--muted)] empty:hidden">
-            {copied === 'failed' ? 'Couldn’t copy automatically. Select the link above and copy it.' : ''}
+            {copied === 'failed' ? 'Couldn’t copy. Select the link and copy it.' : ''}
           </p>
         </>
       ) : (
         <p className="text-sm text-[var(--muted)] leading-relaxed">
-          This company’s login link has stopped working. Ask your Organisation Owner for the new one.
+          This link has stopped working. Ask your company’s Owner for the new one.
         </p>
       )}
     </Card>

@@ -130,9 +130,9 @@ export const isAssignable = (role: Pick<RoleSummary, 'system_key'>): boolean =>
 /** One line about a role. Built-in roles always use the standard wording; custom ones show their own. */
 export function roleDescription(role: Pick<RoleSummary, 'system_key' | 'description'>): string {
   if (role.system_key === 'OWNER') return 'Full organisation access';
-  if (role.system_key === 'ADMIN') return role.description?.trim() || 'Runs the day-to-day';
+  if (role.system_key === 'ADMIN') return role.description?.trim() || 'Day-to-day management';
   if (role.system_key === 'EMPLOYEE') return 'Employee portal access';
-  return role.description && role.description.trim() ? role.description : 'No description yet';
+  return role.description && role.description.trim() ? role.description : 'No description';
 }
 
 /** True when every permission in the role only works across the entire organisation. */

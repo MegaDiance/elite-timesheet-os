@@ -34,7 +34,7 @@ export const DEMO_BRANCHES: DemoBranch[] = [
   { name: 'Geelong', activeWorkers: 5, timeZone: 'Melbourne (AEST/AEDT)' },
 ];
 
-/** Branch Admins: one already set up, one being invited in the tour. */
+/** Managers: one already set up, one being invited in the tour. */
 export const DEMO_BRANCH_ADMINS = [
   { name: 'Daniel M.', email: 'daniel.m@example.com', branches: ['Geelong'] },
   { name: 'Priya S.', email: 'priya.s@example.com', branches: ['Richmond', 'Footscray'] },

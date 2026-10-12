@@ -24,7 +24,7 @@ const MAX_FORTNIGHT_HOURS = 336;
 const MAX_TEMPLATE_ROWS = 100;
 
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === '23505';
-const duplicateName = (name: string) => new HttpError(409, 'DUPLICATE_WORKER', `A worker named "${name}" already exists in this organisation. Deactivated workers keep their name.`);
+const duplicateName = (name: string) => new HttpError(409, 'DUPLICATE_WORKER', `An employee named "${name}" already exists, including deactivated employees.`);
 const duplicateCode = (code: string) => new HttpError(409, 'DUPLICATE_EMPLOYEE_CODE', `Employee ID ${code} already belongs to someone in this organisation.`);
 /** Which unique rule a duplicate broke: the employee ID or the name. */
 const duplicateOf = (err: unknown, fields: { full_name: string; employee_code?: string | null }) =>
@@ -269,7 +269,7 @@ router.delete('/:id', requirePermission(Permission.EMPLOYEES_ARCHIVE), async (re
         });
 
         if (!deleted) {
-            throw new HttpError(409, 'WORKER_HAS_APPROVED_TIMESHEETS', 'This worker has approved timesheets, which are payroll history. Deactivate the worker instead.');
+            throw new HttpError(409, 'WORKER_HAS_APPROVED_TIMESHEETS', 'This employee has approved timesheets (payroll history). Deactivate them instead.');
         }
 
         await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'WORKER_DELETED', entityType: 'worker', entityId: worker.id, branchId: worker.location_id, details: `Permanently deleted worker ${worker.full_name}` });

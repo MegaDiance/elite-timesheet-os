@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAccess } from '../hooks/useAccess';
 
@@ -32,11 +33,24 @@ export function SettingsNav() {
 
   const isCurrent = (l: SettingsLink) => pathname === l.match.path && (l.match.path !== '/settings' || tab === l.match.tab);
 
+  // On a narrow screen the row scrolls sideways: bring the current section into view. Only the row
+  // moves (never the page), so opening a section never jumps down the page.
+  const navRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const current = nav?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!nav || !current) return;
+    const left = current.offsetLeft - nav.offsetLeft;
+    if (left < nav.scrollLeft || left + current.offsetWidth > nav.scrollLeft + nav.clientWidth) {
+      nav.scrollLeft = Math.max(0, left - (nav.clientWidth - current.offsetWidth) / 2);
+    }
+  }, [pathname, tab]);
+
   return (
     <div className="space-y-3">
       <h1 className="text-xl font-semibold tracking-tight text-[var(--text)]">Settings</h1>
       {links.length > 1 && (
-        <nav aria-label="Settings sections" className="-mx-1 overflow-x-auto border-b border-[var(--border)]">
+        <nav ref={navRef} aria-label="Settings sections" className="-mx-1 overflow-x-auto border-b border-[var(--border)]">
           <ul className="flex gap-1 px-1 min-w-max">
             {links.map(l => {
               const current = isCurrent(l);

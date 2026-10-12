@@ -73,8 +73,8 @@ export default function NoAccess({ needs, employeePortal }: NoAccessProps) {
   let message: string;
   if (holdsElsewhere) message = `You don’t have access to this in ${activeBranch?.name ?? 'this branch'}. Switch to a branch where you do.`;
   else if (employeePortal) message = 'This page is for employees. Your account isn’t linked to an employee record here.';
-  else if (!needs) message = 'This area is for the people who manage the organisation. If you need it, ask your organisation owner to change your access.';
-  else message = 'Your roles don’t include this. Ask your organisation owner to change your access.';
+  else if (!needs) message = 'This area is for managers. Ask the owner if you need access.';
+  else message = 'Your roles don’t include this. Ask the owner if you need access.';
 
   return (
     <div className="max-w-md mx-auto mt-16 p-8 bg-[var(--panel)] border border-[var(--border)] rounded-2xl text-center space-y-3">

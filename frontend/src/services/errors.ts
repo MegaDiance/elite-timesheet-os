@@ -13,14 +13,14 @@ interface ErrorLike {
 }
 
 const BY_CODE: Record<string, string> = {
-  FORBIDDEN: 'You don’t have access to this. It may belong to a branch you aren’t assigned to.',
-  NOT_FOUND: 'We couldn’t find that. It may have been removed, or it belongs to a branch you can’t see.',
-  INTERNAL_ERROR: 'Something went wrong on our side. Please try again in a moment.',
-  TOO_MANY_REQUESTS: 'Too many attempts in a short time. Please wait 15 minutes and try again.',
-  SESSION_EXPIRED: 'You were signed out because you were inactive. Please sign in again.',
-  LINK_EXPIRED: 'This sign-in link has expired. Ask your manager for the new sign-in link.',
-  LINK_INVALID: 'This sign-in link isn’t valid. Ask your manager for your organisation’s sign-in link.',
-  OVERLAP: 'Two of the times on this day overlap. Change one so they don’t cross.',
+  FORBIDDEN: 'You don’t have access to this. It may be in a branch you aren’t assigned to.',
+  NOT_FOUND: 'Not found. It may have been removed.',
+  INTERNAL_ERROR: 'Something went wrong. Try again in a moment.',
+  TOO_MANY_REQUESTS: 'Too many attempts. Wait 15 minutes and try again.',
+  SESSION_EXPIRED: 'You were signed out after a period of inactivity. Sign in again.',
+  LINK_EXPIRED: 'This link has expired. Ask your manager for the new one.',
+  LINK_INVALID: 'This link isn’t valid. Ask your manager for the correct link.',
+  OVERLAP: 'Two times on this day overlap. Change one of them.',
 };
 
 /** Looks like it was written for a developer: snake_case field names, formats, enum lists. */
@@ -39,7 +39,7 @@ export function friendlyError(err: unknown, fallback: string): string {
 
   if (!e?.response) {
     if (e?.message && !/network|timeout/i.test(e.message)) console.warn('[SimpleHours]', e.message);
-    return 'SimpleHours could not be reached. Check your internet connection and try again.';
+    return 'Can’t connect. Check your internet connection and try again.';
   }
   if (status && status >= 500) {
     console.warn('[SimpleHours]', status, code, message);
@@ -58,17 +58,17 @@ export function friendlyError(err: unknown, fallback: string): string {
 
 /** Why the server left a day unchanged in a bulk action, as the end of a sentence. */
 export const SKIP_REASON_LABEL: Record<string, string> = {
-  INACTIVE: 'the worker is inactive',
-  WORKER_INACTIVE: 'the worker is inactive',
+  INACTIVE: 'the employee is deactivated',
+  WORKER_INACTIVE: 'the employee is deactivated',
   APPROVED: 'the timesheet is approved',
   TIMESHEET_ALREADY_APPROVED: 'the timesheet is approved',
   ROSTER_LOCKED: 'the roster is locked',
   TIMESHEET_LOCKED: 'timesheets are locked',
   HAS_WORKED_HOURS: 'the day already has worked hours',
-  APPROVED_LEAVE: 'approved leave covers the whole day, so it was kept as is',
-  LEAVE_ON_DAY: 'a whole day of leave is rostered, so it was kept as is',
+  APPROVED_LEAVE: 'approved leave covers the whole day',
+  LEAVE_ON_DAY: 'a whole day of leave is rostered',
   LEAVE_CONFLICT: 'it would overlap leave on that day',
-  OVERLAP: 'the new times overlap something already on that day',
+  OVERLAP: 'the new times overlap something on that day',
   NOTHING_TO_CHANGE: 'there was nothing to change',
   NO_SHIFT: 'there is no shift on that day',
 };

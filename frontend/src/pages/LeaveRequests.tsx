@@ -86,8 +86,8 @@ export default function LeaveRequests() {
           </h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
             {can('leave.approve')
-              ? 'Approving adds the leave to that person’s roster and worked hours for those days. Days that are approved or locked are left as they are and listed.'
-              : 'Leave requests from workers in your branches. Deciding on them needs more access than your roles include.'}
+              ? 'Approving adds the leave to the roster and worked hours. Days that are approved or locked are skipped and listed.'
+              : 'View only. Your roles don’t include approving leave.'}
           </p>
         </div>
         <div role="group" aria-label="Show" className="flex gap-1 p-1 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)]">
@@ -119,8 +119,8 @@ export default function LeaveRequests() {
             <p className="text-sm font-semibold text-[var(--text)]">{status === 'Pending' ? 'No leave is waiting for a decision.' : 'No leave requests yet.'}</p>
             <p className="text-sm text-[var(--muted)]">
               {status === 'Pending'
-                ? 'New requests from your workers appear here. Past decisions are under “All”.'
-                : <>Workers with portal access can ask for leave from their phone. {can('employees.manage_access') ? <>Give access on <Link to="/staff" className="text-[var(--primary-text)] font-semibold hover:underline">Staff</Link>. </> : null}Leave can also be entered on the Schedule.</>}
+                ? 'Past decisions are under “All”.'
+                : <>Employees with portal access can request leave. {can('employees.manage_access') ? <>Give access on <Link to="/staff" className="text-[var(--primary-text)] font-semibold hover:underline">Staff</Link>. </> : null}Leave can also be entered on the Schedule.</>}
             </p>
           </div>
         ) : (

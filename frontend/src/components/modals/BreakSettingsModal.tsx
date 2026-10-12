@@ -74,11 +74,11 @@ export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, 
       isOpen={isOpen}
       onClose={onClose}
       title="Break rules"
-      description="The unpaid break SimpleHours takes off each day's hours."
+      description="The unpaid break taken off each day's hours."
       maxWidth="md"
     >
       {loading ? (
-        <div className="py-8 text-center text-xs text-[var(--muted)]">Loading break rules…</div>
+        <div className="py-8 text-center text-xs text-[var(--muted)]">Loading…</div>
       ) : (
         <form onSubmit={handleSave} className="space-y-4">
           {message && (
@@ -101,8 +101,8 @@ export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, 
           <div className="bg-[var(--panel-subtle)] p-3 rounded-md border border-[var(--border)] text-xs text-[var(--muted)] flex items-start gap-2.5">
             <Clock className="w-4 h-4 text-[var(--primary-text)] shrink-0 mt-0.5" />
             <span>
-              The break is taken off once per day, when the day's timed segments add up to the threshold and the gaps between
-              them are shorter than the break. It comes off the longest Normal Work segment. Changes apply to hours saved from now on.
+              Taken off once a day, when the day's work reaches the threshold and any gaps are shorter than the break. It comes
+              off the longest work line. Changes apply to hours saved from now on.
             </span>
           </div>
 
@@ -138,7 +138,7 @@ export const BreakSettingsModal: React.FC<BreakSettingsModalProps> = ({ isOpen, 
             step={0.5}
             value={form.break_threshold_hours}
             onChange={(e) => setForm({ ...form, break_threshold_hours: Number(e.target.value) })}
-            helperText="The break is only taken off days of at least this many hours."
+            helperText="Only days at least this long get a break."
             required
           />
 

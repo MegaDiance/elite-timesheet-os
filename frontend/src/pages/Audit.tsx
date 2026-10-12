@@ -55,9 +55,12 @@ const ACTION_LABEL: Record<string, string> = {
   ORGANISATION_SWITCHED_AWAY: 'Switched to another organisation',
   ORGANISATION_SWITCHED_IN: 'Switched in from another organisation',
   OWNERSHIP_TRANSFERRED: 'Ownership transferred',
-  LOGIN_LINK_RECOVERY_SUCCESS: 'Login link recovered by the owner',
-  LOGIN_LINK_RECOVERY_FAILURE: 'Login link recovery attempt failed',
-  LOGIN_LINK_ROTATED: 'Login link replaced during recovery',
+  LOGIN_LINK_RECOVERY_SUCCESS: 'Private link recovered',
+  LOGIN_LINK_RECOVERY_FAILURE: 'Private link recovery failed',
+  LOGIN_LINK_ROTATED: 'Private link replaced during recovery',
+  LOGIN_LINK_LOOKUP: 'Private link looked up',
+  PORTAL_URL_REGENERATED: 'Private link regenerated',
+  PORTAL_LINK_EXPIRY_CHANGED: 'Private link expiry changed',
   // From before roles were flexible: these stay in the history under their old names.
   BRANCH_ADMIN_INVITED: 'Branch Admin invited',
   BRANCH_ADMIN_INVITATION_ACCEPTED: 'Branch Admin invitation accepted',
@@ -197,7 +200,7 @@ export default function Audit() {
       <SettingsNav />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <p className="text-sm text-[var(--muted)]">
-          Every change made in your organisation: who did it, when, and what changed. Entries can’t be edited.
+          Who changed what, and when. Entries can’t be edited.
         </p>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -333,7 +336,7 @@ export default function Audit() {
               )}
               {loading && logs.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-[var(--muted)] text-sm">Loading the audit log…</td>
+                  <td colSpan={6} className="py-8 text-center text-[var(--muted)] text-sm">Loading…</td>
                 </tr>
               )}
             </tbody>
@@ -365,7 +368,7 @@ export default function Audit() {
             {filteredLogs.length === 0 && !loading && (
               <li className="p-8 text-center text-sm text-[var(--muted)]">{hasFilters ? 'No entries match your filters.' : 'Nothing has been recorded yet.'}</li>
             )}
-            {loading && logs.length === 0 && <li className="p-8 text-center text-sm text-[var(--muted)]">Loading the audit log…</li>}
+            {loading && logs.length === 0 && <li className="p-8 text-center text-sm text-[var(--muted)]">Loading…</li>}
           </ul>
           </>
         )}

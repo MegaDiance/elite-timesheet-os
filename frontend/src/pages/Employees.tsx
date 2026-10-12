@@ -71,7 +71,7 @@ const isActiveWorker = (w: Worker) => w.is_active;
 function WorkerContact({ worker, canSee }: { worker: Worker; canSee: boolean }) {
   // Without permission to see workers' details in this branch the server leaves them out, so say that rather than "none".
   if (!canSee && !worker.email && !worker.phone) {
-    return <div className="mt-0.5 text-xs text-[var(--muted)]">Contact details are hidden for your access</div>;
+    return <div className="mt-0.5 text-xs text-[var(--muted)]">Contact details hidden</div>;
   }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-[var(--muted)]">
@@ -148,7 +148,7 @@ export default function Employees() {
         if (!cancelled) setWorkers(res.data.data || []);
       })
       .catch(err => {
-        if (!cancelled) setLoadError(errorMessage(err, 'Workers could not be loaded.'));
+        if (!cancelled) setLoadError(errorMessage(err, 'Try again in a moment.'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -163,14 +163,14 @@ export default function Employees() {
     try {
       if (kind === 'deactivate') {
         await api.post(`/employees/${worker.id}/deactivate`);
-        toast.success(`${worker.full_name} has been deactivated.`);
+        toast.success(`${worker.full_name} deactivated`);
       } else {
         await api.delete(`/employees/${worker.id}`);
-        toast.success(`${worker.full_name} has been deleted.`);
+        toast.success(`${worker.full_name} deleted`);
       }
       reload();
     } catch (err: any) {
-      toast.error(errorMessage(err, kind === 'delete' ? 'The worker could not be deleted.' : 'The worker could not be deactivated.'));
+      toast.error(errorMessage(err, kind === 'delete' ? 'Couldn’t delete employee. Try again.' : 'Couldn’t deactivate employee. Try again.'));
     } finally {
       setActionBusy(false);
       setPendingAction(null);
@@ -181,10 +181,10 @@ export default function Employees() {
     setReactivatingId(worker.id);
     try {
       await api.post(`/employees/${worker.id}/reactivate`);
-      toast.success(`${worker.full_name} has been reactivated.`);
+      toast.success(`${worker.full_name} reactivated`);
       reload();
     } catch (err: any) {
-      toast.error(errorMessage(err, 'The worker could not be reactivated.'));
+      toast.error(errorMessage(err, 'Couldn’t reactivate employee. Try again.'));
     } finally {
       setReactivatingId(null);
     }
@@ -273,7 +273,7 @@ export default function Employees() {
               size="md"
               onClick={() => setFormWorker('new')}
               disabled={addBranches.length === 0}
-              title={addBranches.length === 0 ? 'An active branch is needed before adding employees' : undefined}
+              title={addBranches.length === 0 ? 'Add an active branch first' : undefined}
               leftIcon={<Plus className="w-4 h-4" />}
             >
               Add employee
@@ -290,7 +290,7 @@ export default function Employees() {
             <input
               type="search"
               aria-label="Search staff"
-              placeholder="Search by name, employee ID, email or phone"
+              placeholder="Search name, employee ID, email or phone"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full h-10 pl-9 pr-3 text-sm bg-[var(--input-bg)] border border-[var(--border)] rounded-md text-[var(--text)] placeholder-[var(--muted)] outline-none focus:border-[var(--primary)]"
@@ -357,8 +357,8 @@ export default function Employees() {
             icon={<Users className="w-5 h-5" aria-hidden="true" />}
             title={q || departmentFilter ? 'No one matches your search' : 'No employees yet'}
             description={q || departmentFilter
-              ? 'Check the spelling, or clear the search and filters.'
-              : canAddWorker ? 'Add your first employee, or import your existing staff list.' : 'There are no employees in this branch yet.'}
+              ? 'Try a different search.'
+              : canAddWorker ? 'Add employees or import a staff list.' : 'None in this branch.'}
             action={q || departmentFilter
               ? <Button variant="secondary" size="md" onClick={() => { setSearchQuery(''); setDepartmentFilter(''); }}>Clear filters</Button>
               : canAddWorker && addBranches.length > 0 ? (
@@ -451,10 +451,10 @@ export default function Employees() {
         onConfirm={handleConfirmAction}
         title={pendingAction?.kind === 'delete'
           ? `Delete ${pendingAction.worker.full_name} permanently?`
-          : `Deactivate ${pendingAction?.worker.full_name ?? 'this worker'}?`}
+          : `Deactivate ${pendingAction?.worker.full_name ?? 'this employee'}?`}
         message={pendingAction?.kind === 'delete'
-          ? 'Their rosters and timesheets are deleted too, and this cannot be undone. Workers with approved timesheets cannot be deleted; deactivate them instead.'
-          : 'They no longer appear in active lists, rosters or timesheets. Their history is kept and you can reactivate them at any time.'}
+          ? 'Their rosters and timesheets are deleted too. This can’t be undone. Employees with approved timesheets can’t be deleted; deactivate them instead.'
+          : 'They’re removed from active lists, rosters and timesheets. Their history is kept and you can reactivate them anytime.'}
         confirmLabel={pendingAction?.kind === 'delete' ? 'Delete employee' : 'Deactivate employee'}
         variant={pendingAction?.kind === 'delete' ? 'danger' : 'warning'}
         loading={actionBusy}
@@ -496,7 +496,7 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
       return;
     }
     if (!form.location_id) {
-      setError('Choose the branch this employee belongs to.');
+      setError('Choose a branch.');
       return;
     }
     setSaving(true);
@@ -515,22 +515,22 @@ function WorkerFormModal({ worker, branches, defaultBranchId, onClose, onSaved }
         const res = await api.put(`/employees/${worker.id}`, body);
         const movedRecords = Number(res.data?.data?.historical_records_affected || 0);
         const warning = moving && movedRecords > 0
-          ? `${body.full_name}’s ${movedRecords} past roster/timesheet day${movedRecords === 1 ? '' : 's'} will now show under the new branch, not where the work actually happened.`
+          ? `${body.full_name}’s ${movedRecords} past roster/timesheet day${movedRecords === 1 ? '' : 's'} now show${movedRecords === 1 ? 's' : ''} under the new branch, not where the work happened.`
           : undefined;
-        onSaved(`${body.full_name} has been updated${moving ? ` and moved to ${branchOptions.find(b => b.id === form.location_id)?.name ?? 'the new branch'}` : ''}.`, warning);
+        onSaved(`${body.full_name} ${moving ? `moved to ${branchOptions.find(b => b.id === form.location_id)?.name ?? 'the new branch'}` : 'updated'}`, warning);
       } else {
         await api.post('/employees', body);
-        onSaved(`${body.full_name} has been added.`);
+        onSaved(`${body.full_name} added`);
       }
     } catch (err: any) {
-      setError(errorMessage(err, 'The employee could not be saved. Nothing was changed.'));
+      setError(errorMessage(err, 'Couldn’t save employee. Nothing was changed.'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal isOpen onClose={onClose} title={worker ? `Edit ${worker.full_name}` : 'Add an employee'} maxWidth="lg">
+    <Modal isOpen onClose={onClose} title={worker ? `Edit ${worker.full_name}` : 'Add employee'} maxWidth="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
           <div className="p-3 rounded-md text-xs bg-[var(--danger-light)] border border-[var(--danger)]/30 text-[var(--danger)]">{error}</div>
@@ -645,7 +645,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
         setSaveState('saved');
         onSaved();
       } catch (err: any) {
-        setError(errorMessage(err, 'The default roster could not be saved.'));
+        setError(errorMessage(err, 'Couldn’t save default roster. Try again.'));
         setSaveState('error');
       }
     });
@@ -720,8 +720,8 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
     idle: 'Changes save automatically',
     saving: 'Saving…',
     saved: 'All changes saved',
-    incomplete: 'Enter both a start and a finish time to save',
-    error: 'Not saved: fix the highlighted problem',
+    incomplete: 'Enter start and finish times to save',
+    error: 'Not saved',
   };
   const statusTone = saveState === 'error' ? 'text-[var(--danger)] bg-[var(--danger-light)] border-[var(--danger)]/20'
     : saveState === 'incomplete' ? 'text-[var(--warn)] bg-[var(--warn-light)] border-[var(--warn)]/20'
@@ -735,7 +735,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
       isOpen
       onClose={handleClose}
       title={`Default roster: ${worker.full_name}`}
-      description="The fortnight Auto-roster copies onto the Roster page. A day can have several segments, e.g. Sick Leave in the morning and Normal Work in the afternoon."
+      description="Used by Apply default roster on the Schedule."
       maxWidth="4xl"
     >
       <div className="space-y-4">
@@ -775,7 +775,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
             </Button>
           </div>
           <p className="text-[11px] text-[var(--muted)]">
-            Applies to every day with a Normal Work shift. Untick a day below to leave it without a break. Leave shifts never have a break taken off.
+            Applies to days with a Normal Work shift. Leave never has a break deducted.
           </p>
         </div>
 
@@ -842,7 +842,7 @@ function TemplateModal({ worker, onClose, onSaved }: { worker: Worker; onClose: 
                             onChange={choice => setDayBreak(dayIndex, choice)}
                           />
                         ) : (
-                          <span className="text-[11px] text-[var(--muted)] sm:text-right">No shift, no break</span>
+                          <span className="text-[11px] text-[var(--muted)] sm:text-right">No shift</span>
                         )}
                       </div>
                       <button
@@ -933,7 +933,7 @@ function HolidaysModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
       const res = await api.get('/organisation/holidays');
       setHolidays(res.data.data || []);
     } catch (err: any) {
-      setError(errorMessage(err, 'Public holidays could not be loaded.'));
+      setError(errorMessage(err, 'Couldn’t load public holidays. Try again.'));
     } finally {
       setLoading(false);
     }
@@ -954,12 +954,12 @@ function HolidaysModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
     setError(null);
     try {
       await api.post('/organisation/holidays', { holiday_date: date, name: name.trim() });
-      toast.success(`${name.trim()} added.`);
+      toast.success(`${name.trim()} added`);
       setDate('');
       setName('');
       fetchHolidays();
     } catch (err: any) {
-      setError(errorMessage(err, 'The holiday could not be added.'));
+      setError(errorMessage(err, 'Couldn’t add holiday. Try again.'));
     } finally {
       setAdding(false);
     }
@@ -970,11 +970,11 @@ function HolidaysModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
     setError(null);
     try {
       await api.delete(`/organisation/holidays/${holiday.id}`);
-      toast.success(`${holiday.name} removed.`);
+      toast.success(`${holiday.name} removed`);
       setConfirmId(null);
       fetchHolidays();
     } catch (err: any) {
-      setError(errorMessage(err, 'The holiday could not be removed.'));
+      setError(errorMessage(err, 'Couldn’t remove holiday. Try again.'));
     } finally {
       setDeletingId(null);
     }
@@ -988,7 +988,7 @@ function HolidaysModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
       isOpen={isOpen}
       onClose={onClose}
       title="Public holidays"
-      description="Hours worked on these dates are reported as public holiday hours, in every branch."
+      description="Hours worked on these dates count as public holiday hours in every branch."
       maxWidth="lg"
     >
       <div className="space-y-4">
@@ -1010,9 +1010,9 @@ function HolidaysModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
 
         <div className="max-h-72 overflow-y-auto">
           {loading && holidays.length === 0 ? (
-            <div className="text-center py-6 text-xs text-[var(--muted)]">Loading holidays…</div>
+            <div className="text-center py-6 text-xs text-[var(--muted)]">Loading…</div>
           ) : holidays.length === 0 ? (
-            <div className="text-center py-6 text-xs text-[var(--muted)]">No public holidays yet. Add one above.</div>
+            <div className="text-center py-6 text-xs text-[var(--muted)]">No public holidays yet</div>
           ) : (
             <table className="w-full text-left text-xs">
               <thead>

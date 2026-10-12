@@ -59,7 +59,7 @@ export type Part = 'roster' | 'timesheet';
 export type Scope = 'ROSTER' | 'TIMESHEET' | 'BOTH';
 
 export const PART_LABEL: Record<Part, string> = { roster: 'Rostered', timesheet: 'Worked' };
-export const PART_HINT: Record<Part, string> = { roster: 'what was planned', timesheet: 'what actually happened' };
+export const PART_HINT: Record<Part, string> = { roster: 'planned', timesheet: 'actual' };
 
 // ── Reading the API ────────────────────────────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ export function breakChoiceLabel(choice: BreakChoice, rule?: BreakRule): string 
 
 export function describeBreakRule(rule: BreakRule): string {
   if (rule.breakMins <= 0) return 'No unpaid break on this day.';
-  return `A ${rule.breakMins} min unpaid break comes off Normal Work on days of ${rule.thresholdHours} h or more.`;
+  return `${rule.breakMins} min unpaid break off Normal Work on days of ${rule.thresholdHours} h or more.`;
 }
 
 /** Longest single time; a finish before the start runs past midnight, up to this long. */
@@ -422,7 +422,7 @@ export function checkLines(lines: DraftLine[], mergeLeave = false): LinesCheck {
       if (!(l.hours > 0)) return flag(i, 'Enter the hours, or remove this line.');
       if (l.hours > 24) return flag(i, 'Hours must be 24 or less.');
       const key = `${l.type}|${round2(l.hours)}`;
-      if (seen.has(key)) return flag(i, 'This is the same as another line. Remove one of them.');
+      if (seen.has(key)) return flag(i, 'Same as another line. Remove one.');
       seen.set(key, i);
       return;
     }

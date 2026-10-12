@@ -1,6 +1,7 @@
 import React from 'react';
-import { Calendar, Clock, Clock3, Lock, Layers, Check, ArrowRight, Building2, KeyRound, FileSpreadsheet, Link2, ScrollText, ServerCog, Plus } from 'lucide-react';
+import { Calendar, Clock, Lock, Layers, Check, ArrowRight, FileSpreadsheet, Plus } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
+import { Navigate, useLocation } from 'react-router-dom';
 import { CtaLink } from './ui';
 import { RosterIllustration } from './illustrations';
 
@@ -24,13 +25,15 @@ function SectionIcon({ children }: { children: React.ReactNode }) {
 }
 
 export const Features: React.FC = () => {
+  // Security used to be a section of this page.
+  if (useLocation().hash === '#security') return <Navigate to="/security" replace />;
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-20">
       <div className="text-center max-w-3xl mx-auto space-y-4">
-        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">What SimpleHours does</h1>
+        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-[var(--text)]">Features</h1>
         <p className="text-base text-[var(--muted)] leading-relaxed">
-          Rosters, timesheets and payroll preparation for Australian organisations with one or more branches, run by an
-          Organisation Owner and the Branch Admins they invite. Workers don't sign in.
+          Rosters, timesheets and payroll preparation for Australian organisations. Each person’s role sets what they can do
+          and in which branches. Employees can sign in to see their schedule and request leave.
         </p>
       </div>
 
@@ -40,12 +43,11 @@ export const Features: React.FC = () => {
           <SectionIcon><Calendar className="w-5 h-5" /></SectionIcon>
           <h2 className="text-2xl font-bold text-[var(--text)]">A fortnightly roster on one screen</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Each pay period runs for 14 days from a Sunday. Plan every worker's fortnight in one grid, with rostered and worked
-            hours kept side by side.
+            Pay periods run for 14 days from a Sunday. Rostered and worked hours sit side by side in one grid.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
-            <Point title="Templates">Give each worker a fortnight template and roster from it in one step.</Point>
-            <Point title="Copy a day">Copy a day to other days or other workers. Days that already have worked hours are never overwritten.</Point>
+            <Point title="Default rosters">Give each employee a default fortnight and apply it in one step.</Point>
+            <Point title="Copy a day">Copy a day’s roster to other days. Days that already have worked hours are never overwritten.</Point>
             <Point title="Quick time entry">
               Type times the way you say them (<code className="text-[var(--primary-text)]">7</code>, <code className="text-[var(--primary-text)]">0730</code>,{' '}
               <code className="text-[var(--primary-text)]">3p</code>, <code className="text-[var(--primary-text)]">15:30</code>). An end time before the start is an overnight shift.
@@ -84,8 +86,7 @@ export const Features: React.FC = () => {
           <SectionIcon><Layers className="w-5 h-5" /></SectionIcon>
           <h2 className="text-2xl font-bold text-[var(--text)]">Days with more than one segment</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Real days aren't one block of time. A day in SimpleHours is a list of segments, so split shifts and part-day leave
-            are recorded exactly as they happened.
+            Record split shifts and part-day leave exactly as they happened.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
             <Point title="Segment types">Normal Work, Sick Leave, Annual Leave, TIL, LWIP (leave without pay) and Other.</Point>
@@ -101,7 +102,7 @@ export const Features: React.FC = () => {
           <SectionIcon><Clock className="w-5 h-5" /></SectionIcon>
           <h2 className="text-2xl font-bold text-[var(--text)]">Unpaid breaks worked out for you</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Set your organisation's break rule once. SimpleHours applies it to every day, on the roster and on timesheets.
+            Set the break rule once. It applies to every day, on the roster and on timesheets.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
             <Point title="Once per day">The break comes off when the day's segments reach your threshold, not once per segment.</Point>
@@ -130,10 +131,10 @@ export const Features: React.FC = () => {
           <SectionIcon><Lock className="w-5 h-5" /></SectionIcon>
           <h2 className="text-2xl font-bold text-[var(--text)]">Approvals and per-branch locks</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Record the hours actually worked against the roster, then sign each worker's fortnight off.
+            Record hours worked against the roster, then approve each employee’s fortnight.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
-            <Point title="Approve and reopen">Approve one worker or many at once. Reopen a timesheet to correct it, then approve it again.</Point>
+            <Point title="Approve and reopen">Approve one employee or many at once. Reopen a timesheet to correct it, then approve it again.</Point>
             <Point title="Roster lock">Stops changes to a branch's rostered shifts for the fortnight, while worked hours can still be entered.</Point>
             <Point title="Timesheet lock">Freezes a branch's timesheets for the fortnight once payroll is done.</Point>
             <Point title="Password protected">Locking and unlocking needs your own password or the organisation's lock password.</Point>
@@ -164,7 +165,7 @@ export const Features: React.FC = () => {
       {/* Reports */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
         <Card className="p-6 space-y-3 bg-[var(--panel-subtle)] text-xs order-2 lg:order-1">
-          <div className="font-semibold text-[var(--text)] pb-2 border-b border-[var(--border)]">Payroll hours · one worker</div>
+          <div className="font-semibold text-[var(--text)] pb-2 border-b border-[var(--border)]">Payroll hours · one employee</div>
           <div className="grid grid-cols-3 gap-2 text-center">
             {[
               { label: 'Normal', value: '60.00' },
@@ -185,37 +186,14 @@ export const Features: React.FC = () => {
           <SectionIcon><FileSpreadsheet className="w-5 h-5" /></SectionIcon>
           <h2 className="text-2xl font-bold text-[var(--text)]">Reports ready for payroll</h2>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Each fortnight's report totals every worker's hours by category, for one branch or the whole organisation.
+            Each employee’s hours by category, for one branch or the whole organisation.
           </p>
           <ul className="space-y-2.5 text-xs text-[var(--muted)]">
             <Point title="Categories">Normal, Saturday, Sunday and public holiday hours, Sick Leave, Annual Leave, TIL, LWIP, Other and unplanned hours.</Point>
             <Point title="Variance">Contracted, rostered and worked hours side by side, with the approval status of each timesheet.</Point>
-            <Point title="Export">Download as CSV, or print it or save it as a PDF, for whoever runs your payroll.</Point>
+            <Point title="Export">Download as CSV, or print or save as PDF.</Point>
             <Point title="Preparation, not payroll">SimpleHours prepares the hours. It doesn't pay anyone, calculate tax or super, or connect to payroll software.</Point>
           </ul>
-        </div>
-      </div>
-
-      {/* Access & security */}
-      <div id="security" className="border-t border-[var(--border)] pt-16 scroll-mt-20">
-        <h2 className="text-2xl font-bold text-center text-[var(--text)] mb-8">Access and security</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { icon: Building2, title: 'Organisations kept apart', text: 'Each organisation’s data is kept separate from every other organisation’s.' },
-            { icon: Layers, title: 'Access by branch and role', text: 'People only see the branches and pages their role gives them, checked on the server.' },
-            { icon: Link2, title: 'Your own login link', text: 'Each organisation signs in through its own private link. Forgot it? Your email and password find it.' },
-            { icon: KeyRound, title: 'Two-step verification', text: 'Optionally confirm each sign-in with a code sent by email.' },
-            { icon: Clock3, title: 'Automatic sign-out', text: 'Sessions end after 15 minutes of inactivity.' },
-            { icon: Lock, title: 'Password to lock', text: 'Locking a pay period’s roster or timesheets asks for a password.' },
-            { icon: ScrollText, title: 'Audit log', text: 'Review the changes made in the organisation.' },
-            { icon: ServerCog, title: 'Checked on the server', text: 'Every request is checked on the server, not just hidden on screen.' },
-          ].map(({ icon: Icon, title, text }) => (
-            <div key={title} className="p-4 rounded-lg bg-[var(--panel)] border border-[var(--border)] space-y-1.5">
-              <Icon aria-hidden="true" className="w-5 h-5 text-[var(--primary-text)]" />
-              <h3 className="font-semibold text-sm text-[var(--text)]">{title}</h3>
-              <p className="text-xs leading-relaxed text-[var(--muted)]">{text}</p>
-            </div>
-          ))}
         </div>
       </div>
 

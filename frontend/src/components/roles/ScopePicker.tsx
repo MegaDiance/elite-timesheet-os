@@ -56,7 +56,7 @@ export default function ScopePicker({ value, onChange, branches, entireOnly = fa
         <span className="min-w-0">
           <span className="flex items-center gap-1.5 text-sm font-medium text-[var(--text)]"><Building2 className="w-3.5 h-3.5 text-[var(--muted)]" aria-hidden="true" />Selected branches</span>
           <span className="block text-xs text-[var(--muted)] mt-0.5">
-            {entireOnly ? 'Not available: this role only works across the entire organisation.' : 'Only the branches you tick below.'}
+            {entireOnly ? 'Not available: this role needs the entire organisation.' : 'Only the branches you tick.'}
           </span>
         </span>
       </label>
@@ -64,7 +64,7 @@ export default function ScopePicker({ value, onChange, branches, entireOnly = fa
       {value.mode === 'branches' && !entireOnly && (
         <div className="space-y-2 pl-1">
           {branches.length === 0 ? (
-            <p className="text-xs text-[var(--muted)]">There are no active branches yet. Add a branch first, or choose the entire organisation.</p>
+            <p className="text-xs text-[var(--muted)]">No active branches yet. Add one first, or choose the entire organisation.</p>
           ) : (
             <>
               <div className="flex items-center justify-between">
@@ -95,7 +95,7 @@ export default function ScopePicker({ value, onChange, branches, entireOnly = fa
             </>
           )}
           {mixedNote && (
-            <p className="text-xs text-[var(--muted)]">Organisation-level permissions in this role only apply when it is given across the entire organisation.</p>
+            <p className="text-xs text-[var(--muted)]">Organisation-level permissions in this role only apply across the entire organisation.</p>
           )}
         </div>
       )}

@@ -45,7 +45,7 @@ export default function RolesPermissions() {
         <EmptyState
           icon={<Lock className="w-5 h-5" />}
           title="You don’t have access to Roles & permissions"
-          description="Only the owner, or people who have been given permission to manage users or roles, can open this page. Ask the owner if you need it."
+          description="Ask the owner if you need it."
         />
       </div>
     );
@@ -62,7 +62,7 @@ export default function RolesPermissions() {
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
       <SettingsNav />
       <p className="text-sm text-[var(--muted)] max-w-2xl">
-        Decide who can do what, and in which branches. Nobody can give someone access they don’t have themselves.
+        You can only give access you have yourself.
       </p>
 
       {tabs.length > 1 && (
@@ -108,7 +108,7 @@ export default function RolesPermissions() {
             if (result.link) {
               setLink({
                 title: 'Invitation link',
-                description: `Email is turned off. Copy this link and share it with ${result.email} yourself.`,
+                description: `Email is off. Share this link with ${result.email} yourself.`,
                 url: result.link,
                 note: 'It works once and expires in 7 days.',
               });

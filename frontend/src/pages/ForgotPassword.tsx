@@ -17,7 +17,7 @@ export default function ForgotPassword() {
   const orgParam = searchParams.get('org') || '';
   const org = SLUG_RE.test(orgParam) ? orgParam : null;
   const backTo = org ? `/login/${org}` : portalLoginPath();
-  const backLabel = backTo === '/' ? 'Back to the home page' : 'Back to sign in';
+  const backLabel = backTo === '/' ? 'Back to home page' : 'Back to sign in';
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
@@ -34,7 +34,7 @@ export default function ForgotPassword() {
       setMessage(res.data?.message || 'If an account exists for that email, we\u2019ve sent it a link to reset the password.');
     } catch (err: any) {
       setStatus('error');
-      setMessage(friendlyError(err, 'We couldn\u2019t send a reset link right now. Please try again.'));
+      setMessage(friendlyError(err, 'We couldn\u2019t send a reset link. Try again.'));
     }
   };
 
@@ -47,10 +47,10 @@ export default function ForgotPassword() {
             <Clock className="w-5 h-5" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
-            Reset Password
+            Reset password
           </h1>
           <p className="text-xs text-[var(--muted)]">
-            Enter your email and we'll send you a link to reset your password
+            We’ll email you a link to reset it
           </p>
         </div>
 

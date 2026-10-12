@@ -52,7 +52,7 @@ export default function EmployeeLeave() {
     setLoadError(null);
     api.get('/portal/leave-requests')
       .then(res => setRequests(res.data.data))
-      .catch(err => setLoadError(apiErrorMessage(err, 'Your leave requests could not be loaded.')))
+      .catch(err => setLoadError(apiErrorMessage(err, 'Couldn’t load your leave requests.')))
       .finally(() => setLoading(false));
   }, []);
   useEffect(load, [load]);
@@ -72,10 +72,10 @@ export default function EmployeeLeave() {
       const res = await api.post('/portal/leave-requests', body);
       setShowForm(false);
       resetForm();
-      toast.success(res.data?.message || 'Your leave request was sent to your manager.');
+      toast.success(res.data?.message || 'Leave request sent');
       load();
     } catch (err) {
-      setError(apiErrorMessage(err, 'Your request could not be sent.'));
+      setError(apiErrorMessage(err, 'Couldn’t send your request. Try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -85,9 +85,9 @@ export default function EmployeeLeave() {
     setConfirmWithdraw(null);
     try {
       await api.delete(`/portal/leave-requests/${requestId}`);
-      toast.success('Your leave request was withdrawn.');
+      toast.success('Leave request withdrawn');
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'The request could not be withdrawn.'));
+      toast.error(apiErrorMessage(err, 'Couldn’t withdraw the request. Try again.'));
     }
     load();
   };
@@ -95,10 +95,7 @@ export default function EmployeeLeave() {
   return (
     <div className="max-w-2xl mx-auto space-y-5">
       <header data-tour="leave-form" className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-[var(--text)]">Leave</h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">Ask for time off and see what your manager decided.</p>
-        </div>
+        <h1 className="text-xl font-bold text-[var(--text)]">Leave</h1>
         {!showForm && (
           <button type="button" onClick={() => setShowForm(true)} className={`${buttonClass.primary} h-11`}>
             <CalendarDays className="w-4 h-4" aria-hidden="true" /> Request leave
@@ -165,7 +162,7 @@ export default function EmployeeLeave() {
             <div>
               <label htmlFor={`${id}-hours`} className={label}>Total hours of leave</label>
               <input id={`${id}-hours`} type="number" inputMode="decimal" min="0.1" max="240" step="0.1" required value={hours} onChange={e => setHours(e.target.value)} aria-describedby={`${id}-hours-hint`} className={`${field} max-w-[10rem]`} />
-              <p id={`${id}-hours-hint`} className="text-xs text-[var(--muted)] mt-1">The hours you would normally have worked on those days, for example 7.6 for one full day.</p>
+              <p id={`${id}-hours-hint`} className="text-xs text-[var(--muted)] mt-1">Hours you’d normally work on those days, e.g. 7.6 for one full day.</p>
             </div>
           )}
 
@@ -192,11 +189,10 @@ export default function EmployeeLeave() {
               <button type="button" onClick={load} className={`${buttonClass.secondary} h-11`}><RotateCcw className="w-4 h-4" aria-hidden="true" /> Try again</button>
             </div>
           ) : loading ? (
-            <p className="p-8 text-center text-sm text-[var(--muted)]">Loading your leave requests…</p>
+            <p className="p-8 text-center text-sm text-[var(--muted)]">Loading…</p>
           ) : requests.length === 0 ? (
-            <div className="p-8 text-center space-y-1">
-              <p className="text-sm font-semibold text-[var(--text)]">You haven’t asked for any leave yet.</p>
-              <p className="text-sm text-[var(--muted)]">When you need time off, choose “Request leave”. Your manager’s decision shows up here.</p>
+            <div className="p-8 text-center">
+              <p className="text-sm text-[var(--muted)]">No leave requests yet</p>
             </div>
           ) : (
             <ul>

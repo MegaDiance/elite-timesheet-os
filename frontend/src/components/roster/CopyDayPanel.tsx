@@ -53,7 +53,7 @@ export default function CopyDayPanel({
     : needsSave && saveBlockedReason
       ? saveBlockedReason
       : targetWorkers.size === 0
-        ? 'Choose at least one worker.'
+        ? 'Choose at least one employee.'
         : chosenDays.length === 0
           ? 'Choose at least one day.'
           : null;
@@ -104,8 +104,8 @@ export default function CopyDayPanel({
   return (
     <section aria-label="Copy this day’s roster" className="mt-2 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)] p-3 space-y-3">
       <p className="text-xs text-[var(--muted)]">
-        Copies what is rostered on {dayLabel(sourceDate)} to the days you choose. Worked hours are never copied or overwritten:
-        days that already have worked hours, an approved timesheet or a locked roster are skipped and listed.
+        Copies the roster for {dayLabel(sourceDate)} to the days you choose. Worked hours are never copied or overwritten:
+        days with worked hours, an approved timesheet or a locked roster are skipped.
       </p>
 
       <fieldset>
@@ -121,7 +121,7 @@ export default function CopyDayPanel({
           {days.map(d => {
             const isSource = d === sourceDate;
             return (
-              <label key={d} className={chipClass} title={isSource ? 'This day (select other workers to copy it to them)' : dayLabel(d)}>
+              <label key={d} className={chipClass} title={isSource ? 'This day (select other employees to copy it to them)' : dayLabel(d)}>
                 <input
                   type="checkbox"
                   className="sr-only"
@@ -142,7 +142,7 @@ export default function CopyDayPanel({
       {branchWorkers.length > 0 && (
         <details className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-2">
           <summary className="text-xs font-semibold text-[var(--text)] cursor-pointer max-md:py-2.5">
-            Workers ({targetWorkers.size} chosen) — also copy to others in this branch
+            Also copy to other workers ({targetWorkers.size} chosen)
           </summary>
           <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-40 overflow-y-auto">
             {[worker, ...branchWorkers].map(w => (
@@ -153,7 +153,7 @@ export default function CopyDayPanel({
                   checked={targetWorkers.has(w.id)}
                   onChange={() => { setResult(null); setTargetWorkers(set => toggle(set, w.id)); }}
                 />
-                <span className="truncate">{w.full_name}{w.id === worker.id ? ' (this worker)' : ''}</span>
+                <span className="truncate">{w.full_name}{w.id === worker.id ? ' (this employee)' : ''}</span>
               </label>
             ))}
           </div>
@@ -178,7 +178,7 @@ export default function CopyDayPanel({
             problemHeading="Skipped"
             anyDone={result.copied.length > 0}
             problems={result.skipped.map(s => ({
-              label: `${names.get(s.employee_id) ?? 'Worker'} · ${dayLabel(s.date)}`,
+              label: `${names.get(s.employee_id) ?? 'Employee'} · ${dayLabel(s.date)}`,
               detail: skipReason(s.reason),
             }))}
           />

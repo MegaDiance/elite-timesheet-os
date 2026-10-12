@@ -42,7 +42,7 @@ export default function PortalAccessModal({ worker, onClose, onChanged }: {
     try {
       await fn();
     } catch (err) {
-      setError(errorMessage(err, 'That didn’t work. Please try again.'));
+      setError(errorMessage(err, 'That didn’t work. Try again.'));
     } finally {
       setBusy(null);
     }
@@ -86,14 +86,14 @@ export default function PortalAccessModal({ worker, onClose, onChanged }: {
       await navigator.clipboard.writeText(url);
       toast.success('Link copied.');
     } catch {
-      toast.error('Couldn’t copy automatically. Select the link and copy it.');
+      toast.error('Couldn’t copy. Select the link and copy it.');
     }
   };
 
   const statusText: Record<PortalStatus, string> = {
     none: 'No portal access. They can’t sign in.',
     invited: 'Invited. Waiting for them to accept.',
-    active: 'Has portal access. They sign in at your organisation’s sign-in link.',
+    active: 'Has portal access. Signs in with your private link.',
   };
 
   return (
@@ -101,7 +101,7 @@ export default function PortalAccessModal({ worker, onClose, onChanged }: {
       isOpen
       onClose={onClose}
       title={`Portal access: ${worker.full_name}`}
-      description="With portal access, a worker can see their own schedule, request leave and, if your organisation allows it, record their own hours. They never see anyone else’s."
+      description="They can see their own schedule, request leave and, if allowed, record their own hours. Never anyone else’s."
       maxWidth="lg"
     >
       <div className="space-y-4">
@@ -137,7 +137,7 @@ export default function PortalAccessModal({ worker, onClose, onChanged }: {
                 Invite {worker.email}
               </Button>
             ) : (
-              <p className="text-xs text-[var(--muted)]">Add an email address to this worker (Edit) before inviting them.</p>
+              <p className="text-xs text-[var(--muted)]">Add an email address (Edit) before inviting them.</p>
             )
           )}
           {worker.portal_status === 'invited' && (
@@ -169,7 +169,7 @@ export default function PortalAccessModal({ worker, onClose, onChanged }: {
           )}
         </div>
         {!worker.is_active && worker.portal_status === 'none' && (
-          <p className="text-xs text-[var(--muted)]">Reactivate this worker before inviting them.</p>
+          <p className="text-xs text-[var(--muted)]">Reactivate this employee before inviting them.</p>
         )}
 
         <div className="flex justify-end pt-3 border-t border-[var(--border)]">

@@ -18,9 +18,9 @@ const GENERIC_FAILURE = 'Email or password is incorrect.';
 
 const REASONS: Record<string, { text: string; tone: 'info' | 'warning' | 'danger' }> = {
   inactivity: { text: 'You were signed out after 15 minutes without activity.', tone: 'warning' },
-  revoked: { text: 'Your session was ended from another device. Please sign in again.', tone: 'warning' },
-  deactivated: { text: 'This account has been deactivated. Contact your Organisation Owner if you think this is a mistake.', tone: 'danger' },
-  'access-ended': { text: 'Your access to this organisation has ended. Contact your Organisation Owner if you still need it.', tone: 'danger' },
+  revoked: { text: 'Your session was ended from another device. Sign in again.', tone: 'warning' },
+  deactivated: { text: 'This account has been deactivated. Contact your organisation’s Owner if this is a mistake.', tone: 'danger' },
+  'access-ended': { text: 'Your access to this organisation has ended. Contact its Owner if you still need it.', tone: 'danger' },
   logout: { text: 'You have signed out.', tone: 'info' },
   'password-reset': { text: 'Your password has been changed. Sign in with your new password.', tone: 'info' },
 };
@@ -86,7 +86,7 @@ export const OrgLogin: React.FC = () => {
   const failureMessage = (err: any): string => {
     const status = err?.response?.status;
     if (status === 429 || status === 503) {
-      return friendlyError(err, 'Sign-in is unavailable right now. Please try again in a few minutes.');
+      return friendlyError(err, 'Sign-in is unavailable. Try again in a few minutes.');
     }
     if (!err?.response) return 'We couldn’t reach SimpleHours. Check your connection and try again.';
     return GENERIC_FAILURE;
@@ -154,7 +154,7 @@ export const OrgLogin: React.FC = () => {
         setStep('credentials');
         setPassword('');
       }
-      setError(friendlyError(err, 'That code didn’t work. Please try again.'));
+      setError(friendlyError(err, 'That code didn’t work. Try again.'));
     } finally {
       setLoading(false);
     }
@@ -166,9 +166,9 @@ export const OrgLogin: React.FC = () => {
     setNotice(null);
     try {
       const res = await api.post('/auth/resend-2fa', { temp_token: tempToken });
-      setNotice(res.data?.message || 'A new code has been sent to your email.');
+      setNotice(res.data?.message || 'New code sent to your email.');
     } catch (err: any) {
-      setError(friendlyError(err, 'We couldn’t send a new code. Please sign in again.'));
+      setError(friendlyError(err, 'We couldn’t send a new code. Sign in again.'));
     } finally {
       setResending(false);
     }
@@ -195,16 +195,16 @@ export const OrgLogin: React.FC = () => {
   if (lookupState !== 'ready') {
     const copy = {
       invalid: {
-        title: 'This sign-in link isn’t valid',
-        body: 'Check that you copied the whole link. If it still doesn’t work, ask your manager for your organisation’s sign-in link.',
+        title: 'This link isn’t valid',
+        body: 'Check you copied the whole link, or ask your manager for the current one.',
       },
       expired: {
-        title: 'This sign-in link has expired',
-        body: 'Your organisation has replaced this link. Ask your manager for the new sign-in link.',
+        title: 'This link has expired',
+        body: 'Your organisation replaced this link. Ask your manager for the new one.',
       },
       unavailable: {
-        title: 'We couldn’t check this sign-in link',
-        body: 'This is usually a connection problem, or too many attempts in a short time. Wait a moment, then try again.',
+        title: 'We couldn’t check this link',
+        body: 'Usually a connection problem or too many attempts. Wait a moment, then try again.',
       },
     }[lookupState];
     return (
@@ -220,10 +220,10 @@ export const OrgLogin: React.FC = () => {
           ) : (
             <>
               <Link to="/" className="block pt-2">
-                <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
+                <Button variant="secondary" size="md" className="w-full">Go to home page</Button>
               </Link>
-              <Link to="/recover-login-link" className="inline-block text-xs text-[var(--muted)] hover:text-[var(--text)] hover:underline">
-                Lost your login link?
+              <Link to="/recover-link" className="inline-block text-xs text-[var(--muted)] hover:text-[var(--text)] hover:underline">
+                Lost your company link?
               </Link>
             </>
           )}
@@ -246,7 +246,7 @@ export const OrgLogin: React.FC = () => {
           <div className="text-[11px] font-semibold tracking-wider uppercase text-[var(--primary-text)]">SimpleHours</div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">{title}</h1>
           <p className="text-xs text-[var(--muted)]">
-            Sign in to your rosters, timesheets and schedule
+            Sign in to your account
           </p>
         </div>
 

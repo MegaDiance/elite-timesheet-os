@@ -80,7 +80,6 @@ export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Lock passwords"
-      description="Shared passwords for locking and unlocking rosters and timesheets."
       maxWidth="md"
     >
       <form onSubmit={handleSave} className="space-y-4">
@@ -100,8 +99,8 @@ export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
         <div className="bg-[var(--panel-subtle)] p-3 rounded-md border border-[var(--border)] text-xs text-[var(--muted)] flex items-start gap-2.5">
           <Info className="w-4 h-4 text-[var(--primary-text)] shrink-0 mt-0.5" />
           <span>
-            Locking or unlocking a pay period always accepts the person's own account password. A lock password is an extra,
-            shared password for that kind of lock. Leave a field blank to keep the current one.
+            Locking and unlocking always accept the person's own account password. A lock password is an optional shared
+            alternative. Leave a field blank to keep it unchanged.
           </span>
         </div>
 
@@ -110,7 +109,7 @@ export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
             label="New roster lock password"
             type="password"
             autoComplete="new-password"
-            placeholder={hasRosterLockPassword ? 'Leave blank to keep the current password' : 'Not set'}
+            placeholder={hasRosterLockPassword ? 'Leave blank to keep current' : 'Not set'}
             value={form.new_roster_lock_password}
             onChange={e => setForm({ ...form, new_roster_lock_password: e.target.value })}
             disabled={form.remove_roster}
@@ -134,7 +133,7 @@ export const LockPasswordsModal: React.FC<LockPasswordsModalProps> = ({
             label="New timesheet lock password"
             type="password"
             autoComplete="new-password"
-            placeholder={hasTimesheetLockPassword ? 'Leave blank to keep the current password' : 'Not set'}
+            placeholder={hasTimesheetLockPassword ? 'Leave blank to keep current' : 'Not set'}
             value={form.new_timesheet_lock_password}
             onChange={e => setForm({ ...form, new_timesheet_lock_password: e.target.value })}
             disabled={form.remove_timesheet}

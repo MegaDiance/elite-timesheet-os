@@ -19,7 +19,7 @@ export const BranchSwitchModal: React.FC<BranchSwitchModalProps> = ({ isOpen, on
       isOpen={isOpen}
       onClose={onClose}
       title="Switch branch"
-      description="Choose the branch you want to work in. Everything you see — rosters, timesheets, workers, reports — follows it."
+      description="Schedules, timesheets, staff and reports all follow the branch you choose."
       maxWidth="md"
     >
       <div className="space-y-3">

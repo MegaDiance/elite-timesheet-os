@@ -87,7 +87,7 @@ router.post('/:id/review', requirePermission(Permission.LEAVE_APPROVE), async (r
             success: true,
             data: result,
             message: result.skipped.length > 0
-                ? `Approved. ${result.applied.length} day(s) updated; ${result.skipped.length} could not be (check locks/approval).`
+                ? `Approved. ${result.applied.length} day(s) updated, ${result.skipped.length} skipped (locked or approved).`
                 : 'Leave request approved.',
         });
     } catch (err) {

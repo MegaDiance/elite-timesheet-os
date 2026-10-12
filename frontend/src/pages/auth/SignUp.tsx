@@ -30,7 +30,7 @@ export default function SignUp() {
       await api.post('/signup/request', { email: clean });
       setSentTo(clean);
     } catch (err: any) {
-      setError(friendlyError(err, 'We couldn’t send your setup link. Please try again.'));
+      setError(friendlyError(err, 'We couldn’t send your setup link. Try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -47,7 +47,7 @@ export default function SignUp() {
           </Link>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Set up your organisation</h1>
           <p className="text-xs text-[var(--muted)]">
-            You'll be the Organisation Owner. You can add branches and invite your team once you're set up.
+            You’ll be its Owner. Add branches and invite your team after setup.
           </p>
         </div>
 
@@ -59,8 +59,8 @@ export default function SignUp() {
               </div>
               <h2 className="text-base font-bold text-[var(--text)]">Check your email</h2>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Check your email for a link to set up your organisation. We sent it to{' '}
-                <strong className="text-[var(--text)]">{sentTo}</strong>. The link works once and expires in 24 hours.
+                We sent a setup link to <strong className="text-[var(--text)]">{sentTo}</strong>. It works once and expires in
+                24 hours.
               </p>
               <button
                 type="button"
@@ -97,7 +97,7 @@ export default function SignUp() {
         </Card>
 
         <div className="text-center text-xs text-[var(--muted)] space-y-2">
-          <p>Already use SimpleHours? Sign in with your organisation’s own sign-in link.</p>
+          <p>Already use SimpleHours? Sign in with your company link.</p>
           <Link to="/" className="inline-flex items-center gap-1 hover:text-[var(--text)]">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to home
           </Link>

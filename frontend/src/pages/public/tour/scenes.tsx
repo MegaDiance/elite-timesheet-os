@@ -13,7 +13,6 @@ import {
   Download,
   FileText,
   Globe,
-  LayoutDashboard,
   Lock,
   LockOpen,
   MapPin,
@@ -244,7 +243,7 @@ interface GridState {
 function RosterGrid({ state }: { state: GridState }) {
   return (
     <div className={GRID}>
-      <div className="self-end px-1 pb-0.5 text-[10px] font-semibold text-[var(--muted)]">Workers</div>
+      <div className="self-end px-1 pb-0.5 text-[10px] font-semibold text-[var(--muted)]">Staff</div>
       {DEMO_WEEK.map((iso, d) => (
         <div key={iso} className={`${DAY_SHOW[d]} px-1 pb-0.5 text-[10px] font-semibold text-[var(--muted)]`}>
           {weekdayShort(iso)} <span className="text-[var(--text)]">{dayOfMonth(iso)}</span>
@@ -317,7 +316,7 @@ function RosterPage({ actions, badges, children }: { actions?: ReactNode; badges
     <Page
       title={
         <>
-          <span>Roster</span>
+          <span>Schedule</span>
           <span className="hidden text-xs font-normal @2xl:inline-flex">
             <PlannedWorkedKey />
           </span>
@@ -354,7 +353,7 @@ function OrganisationScene({ step }: SceneProps) {
             {DEMO_ORGANISATION} has been set up with its first branch, {BRANCH.name}.
           </p>
           <div className="space-y-1.5 rounded-xl border border-[var(--border)] bg-[var(--panel-subtle)] p-3 text-left text-xs">
-            <div className="font-semibold text-[var(--text)]">Your organisation's private sign-in link</div>
+            <div className="font-semibold text-[var(--text)]">Your organisation's private link</div>
             <div className="flex items-center justify-between gap-2">
               <span className="truncate font-mono text-[11px] text-[var(--muted)]">{DEMO_SIGN_IN_LINK}</span>
               <FakeButton>
@@ -403,7 +402,7 @@ function OrganisationScene({ step }: SceneProps) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 2. Branches and Branch Admins                                       */
+/* 2. Branches and Managers                                           */
 /* ------------------------------------------------------------------ */
 
 function BranchesScene({ step }: SceneProps) {
@@ -437,14 +436,14 @@ function BranchesScene({ step }: SceneProps) {
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--muted)]">
               <span className="inline-flex items-center gap-1">
                 <Users className="h-3 w-3" aria-hidden="true" />
-                {branch.activeWorkers} active workers
+                {branch.activeWorkers} active employees
               </span>
               <span className="hidden items-center gap-1 @md:inline-flex">
                 <Globe className="h-3 w-3" aria-hidden="true" />
                 {branch.timeZone}
               </span>
             </div>
-            <div className="mt-2 border-t border-[var(--border)] pt-2 text-[11px] text-[var(--muted)] italic">No Branch Admin assigned</div>
+            <div className="mt-2 border-t border-[var(--border)] pt-2 text-[11px] text-[var(--muted)] italic">No Manager assigned</div>
           </Reveal>
         ))}
       </div>
@@ -452,7 +451,7 @@ function BranchesScene({ step }: SceneProps) {
   );
 }
 
-/** The Branch Admins page (Owner only): invite someone and choose which branches they run. */
+/** Inviting a Manager (Owner only): invite someone and choose which branches they run. */
 function BranchAdminsPage({ step }: SceneProps) {
   const [daniel, priya] = DEMO_BRANCH_ADMINS;
   const invited = step >= 7;
@@ -463,12 +462,12 @@ function BranchAdminsPage({ step }: SceneProps) {
   return (
     <div className="ptour-anim ptour-fade h-full">
       <Page
-        title="Branch Admins"
+        title="Managers"
         meta={<span>Who runs each branch</span>}
         actions={
           <FakeButton variant="primary">
             <UserCog className="h-3 w-3" aria-hidden="true" />
-            Invite Branch Admin
+            Invite Manager
           </FakeButton>
         }
       >
@@ -525,14 +524,14 @@ function BranchAdminsPage({ step }: SceneProps) {
         >
           <Building2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted)]" aria-hidden="true" />
           <span>
-            Priya will see only {priya.branches.join(' and ')}, and Daniel only {daniel.branches.join(', ')}. The Organisation Owner sees
-            every branch.
+            Priya will see only {priya.branches.join(' and ')}, and Daniel only {daniel.branches.join(', ')}. The Owner sees every
+            branch.
           </span>
         </Reveal>
 
         {step < 7 && (
           <FakeDialog
-            title="Invite a Branch Admin"
+            title="Invite a Manager"
             footer={
               <>
                 <FakeButton>Cancel</FakeButton>
@@ -572,8 +571,8 @@ function BranchAdminsPage({ step }: SceneProps) {
               </div>
             </div>
             <p className="text-[10.5px] leading-relaxed text-[var(--muted)]">
-              Branch Admins manage the workers, roster and timesheets of their branches. They cannot change organisation settings or
-              other admins.
+              Managers run the staff, schedule and timesheets of their branches. They can’t change organisation settings or
+              roles.
             </p>
           </FakeDialog>
         )}
@@ -583,7 +582,7 @@ function BranchAdminsPage({ step }: SceneProps) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 3. Workers                                                          */
+/* 3. Staff                                                           */
 /* ------------------------------------------------------------------ */
 
 function WorkersScene({ step }: SceneProps) {
@@ -592,11 +591,11 @@ function WorkersScene({ step }: SceneProps) {
   const defaultFor = DEMO_WORKERS[0];
   return (
     <Page
-      title="Workers"
+      title="Staff"
       meta={
         <>
           <BranchChip />
-          <span>{count} active workers</span>
+          <span>{count} active employees</span>
         </>
       }
       actions={
@@ -606,7 +605,7 @@ function WorkersScene({ step }: SceneProps) {
           </span>
           <FakeButton variant="primary" pressed={step === 4}>
             <Plus className="h-3 w-3" aria-hidden="true" />
-            Add worker
+            Add employee
           </FakeButton>
         </>
       }
@@ -786,7 +785,7 @@ function ApproveScene({ step }: SceneProps) {
           <>
             <span>Pay period {PERIOD}</span>
             <span aria-hidden="true">·</span>
-            <span>{DEMO_TIMESHEETS.length} workers</span>
+            <span>{DEMO_TIMESHEETS.length} employees</span>
           </>
         }
         actions={
@@ -810,7 +809,7 @@ function ApproveScene({ step }: SceneProps) {
         </div>
         <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] text-xs">
           <div className={`grid ${cols} gap-3 border-b border-[var(--border)] bg-[var(--table-header)] px-3 py-2 text-[10px] font-bold text-[var(--muted)] uppercase`}>
-            <span>Worker</span>
+            <span>Employee</span>
             <span className="hidden text-right @xl:block">Rostered</span>
             <span className="hidden text-right @xl:block">Worked</span>
             <span className="hidden text-right @xl:block">vs contract</span>
@@ -982,7 +981,7 @@ function ReportScene({ step }: SceneProps) {
         <table className="w-full border-collapse text-left text-[11px]">
           <thead>
             <tr className="bg-[var(--table-header)] text-[10px] text-[var(--muted)]">
-              <th className="px-3 py-2 font-semibold">Worker</th>
+              <th className="px-3 py-2 font-semibold">Employee</th>
               {DEMO_REPORT_COLUMNS.map(column => (
                 <th key={column} className={`${REPORT_SHOW[column]} px-2 py-2 text-right font-semibold`}>
                   {column}
@@ -1014,7 +1013,7 @@ function ReportScene({ step }: SceneProps) {
       </div>
       <Reveal show={step >= 2} className="mt-2.5 flex items-center gap-1.5 text-[11px] text-[var(--muted)]">
         <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        One row per worker, ready for whoever runs your payroll.
+        One row per employee, ready for payroll.
       </Reveal>
     </Page>
   );
@@ -1024,37 +1023,18 @@ function ReportScene({ step }: SceneProps) {
 /* The app around the scenes                                           */
 /* ------------------------------------------------------------------ */
 
-type NavKey = 'today' | 'roster' | 'timesheets' | 'leave' | 'workers' | 'branch-admins' | 'reports' | 'audit' | 'branches' | 'chat' | 'settings';
+type NavKey = 'timesheets' | 'roster' | 'leave' | 'workers' | 'reports' | 'chat' | 'settings';
 
-/** The manager menu, in the app's order and words (components/Layout.tsx). */
+/** The manager menu, in the app's order and words (components/Layout.tsx). Branches and roles live under Settings. */
 const NAV: Array<{ title: string; items: Array<{ key: NavKey; label: string; icon: typeof Calendar }> }> = [
   {
-    title: 'Daily work',
+    title: '',
     items: [
-      { key: 'today', label: 'Today', icon: LayoutDashboard },
-      { key: 'roster', label: 'Roster', icon: Calendar },
       { key: 'timesheets', label: 'Timesheets', icon: CheckSquare },
-      { key: 'leave', label: 'Leave requests', icon: CalendarDays },
-    ],
-  },
-  {
-    title: 'People',
-    items: [
-      { key: 'workers', label: 'Workers', icon: Users },
-      { key: 'branch-admins', label: 'Branch Admins', icon: UserCog },
-    ],
-  },
-  {
-    title: 'Records',
-    items: [
+      { key: 'roster', label: 'Schedule', icon: Calendar },
+      { key: 'leave', label: 'Leave', icon: CalendarDays },
+      { key: 'workers', label: 'Staff', icon: Users },
       { key: 'reports', label: 'Reports', icon: BarChart3 },
-      { key: 'audit', label: 'Audit log', icon: FileText },
-    ],
-  },
-  {
-    title: 'Organisation',
-    items: [
-      { key: 'branches', label: 'Branches', icon: Building2 },
       { key: 'chat', label: 'Team chat', icon: MessageSquare },
       { key: 'settings', label: 'Settings', icon: Sliders },
     ],
@@ -1085,7 +1065,7 @@ function Sidebar({ active, ready }: { active: NavKey | null; ready: boolean }) {
       <div className={`mt-2.5 space-y-1.5 px-2 transition-opacity duration-300 ${ready ? '' : 'opacity-40'}`}>
         {NAV.map(section => (
           <div key={section.title} className="space-y-px">
-            <div className="px-2.5 pb-0.5 text-[9px] font-bold tracking-wider text-[var(--sidebar-text)] uppercase opacity-60">{section.title}</div>
+            {section.title && <div className="px-2.5 pb-0.5 text-[9px] font-bold tracking-wider text-[var(--sidebar-text)] uppercase opacity-60">{section.title}</div>}
             {section.items.map(({ key, label, icon: Icon }) => (
               <div
                 key={key}
@@ -1108,7 +1088,7 @@ function Sidebar({ active, ready }: { active: NavKey | null; ready: boolean }) {
 
 const SCENES: Record<TourChapter['id'], { Scene: (props: SceneProps) => ReactNode; nav: (step: number) => NavKey | null; page: (step: number) => string }> = {
   organisation: { Scene: OrganisationScene, nav: () => null, page: () => 'setup' },
-  branches: { Scene: BranchesScene, nav: step => (step < 4 ? 'branches' : 'branch-admins'), page: step => (step < 4 ? 'branches' : 'branch-admins') },
+  branches: { Scene: BranchesScene, nav: () => 'settings', page: step => (step < 4 ? 'branches' : 'branch-admins') },
   workers: { Scene: WorkersScene, nav: () => 'workers', page: () => 'workers' },
   roster: { Scene: RosterScene, nav: () => 'roster', page: () => 'roster' },
   hours: { Scene: HoursScene, nav: () => 'roster', page: () => 'roster' },

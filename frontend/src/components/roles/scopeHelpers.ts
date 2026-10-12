@@ -8,7 +8,7 @@ export const initialScope = (entireOnly: boolean): ScopeChoice =>
 export function scopeProblem(value: ScopeChoice, entireOnly: boolean): string | null {
   if (value.mode === null) return 'Choose the entire organisation or selected branches.';
   if (value.mode === 'all') return null;
-  if (entireOnly) return 'This role only works across the entire organisation. Choose the entire organisation.';
+  if (entireOnly) return 'This role needs the entire organisation.';
   if (value.branchIds.length === 0) return 'Choose at least one branch, or the entire organisation.';
   return null;
 }

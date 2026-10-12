@@ -62,8 +62,8 @@ function OpenOrgSwitchModal({ onClose }: OrgSwitchModalProps) {
       setOrganisations(Array.isArray(list) ? list : []);
       setStep('choose');
     } catch (err) {
-      if (errorCode(err) === 'REAUTH_REQUIRED') backToPassword('For your security, please enter your password again.');
-      else setError(friendlyError(err, 'Could not load your organisations. Please try again.'));
+      if (errorCode(err) === 'REAUTH_REQUIRED') backToPassword('Enter your password again to continue.');
+      else setError(friendlyError(err, 'Your organisations could not be loaded. Try again.'));
     }
   };
 
@@ -80,7 +80,7 @@ function OpenOrgSwitchModal({ onClose }: OrgSwitchModalProps) {
       await api.post('/auth/reauthenticate', { password: attempt });
     } catch (err) {
       // A wrong password says only that it is not correct (the server's own words); a 429 says to wait.
-      setError(friendlyError(err, 'Could not check your password. Please try again.'));
+      setError(friendlyError(err, 'Your password could not be checked. Try again.'));
       setBusy(false);
       return;
     }
@@ -101,8 +101,8 @@ function OpenOrgSwitchModal({ onClose }: OrgSwitchModalProps) {
       // A full page load, so nothing from the previous organisation stays in memory.
       window.location.assign('/app');
     } catch (err) {
-      if (errorCode(err) === 'REAUTH_REQUIRED') backToPassword('For your security, please enter your password again.');
-      else setError(friendlyError(err, 'Could not switch organisation. Please try again.'));
+      if (errorCode(err) === 'REAUTH_REQUIRED') backToPassword('Enter your password again to continue.');
+      else setError(friendlyError(err, 'Organisation could not be switched. Try again.'));
       setBusy(false);
     }
   };
@@ -118,7 +118,7 @@ function OpenOrgSwitchModal({ onClose }: OrgSwitchModalProps) {
       isOpen
       onClose={close}
       title="Switch organisation"
-      description={step === 'password' ? 'Enter your password to switch organisation.' : 'Choose the organisation you want to work in.'}
+      description={step === 'password' ? 'Enter your password to continue.' : 'Choose an organisation.'}
       maxWidth="md"
     >
       {step === 'password' ? (

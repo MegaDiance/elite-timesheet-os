@@ -229,8 +229,8 @@ export default function Layout() {
               Branch
               <HelpTip label="Branch" onDark>
                 {isOwner
-                  ? 'You can work in every branch. Pages show the branch chosen here; switch to see another.'
-                  : 'You only see the branches your roles cover. Pages show the branch chosen here.'}
+                  ? 'You can access every branch. Pages show the one chosen here.'
+                  : 'You see the branches your roles cover. Pages show the one chosen here.'}
               </HelpTip>
             </div>
             <div className="font-semibold text-white truncate flex items-center gap-1.5" title={activeBranch.name}>

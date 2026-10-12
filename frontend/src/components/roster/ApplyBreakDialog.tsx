@@ -45,7 +45,7 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
       setResult(res);
       if (res.skipped.length === 0) onApplied();
     } catch (err) {
-      setError(apiErrorMessage(err, 'Could not update the break for these days.'));
+      setError(apiErrorMessage(err, 'The break could not be updated.'));
     } finally {
       setBusy(false);
     }
@@ -54,7 +54,7 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
   return (
     <Dialog
       title={`${startAllChecked ? 'Apply break to all days' : 'Apply break to chosen days'} · ${worker.full_name}`}
-      description={startAllChecked ? 'Every day is ticked. Untick the days that are different — those keep their current break.' : 'Tick the days that should get this break.'}
+      description={startAllChecked ? 'Untick the days that should keep their current break.' : 'Tick the days that should get this break.'}
       onClose={onClose}
       closeDisabled={busy}
       size="md"
@@ -70,7 +70,7 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
                 const problems = result.skipped.filter(s => !empty.includes(s));
                 return (
                   <>
-                    {empty.length > 0 && <p className="text-[var(--muted)] mt-1">{empty.length} day{empty.length === 1 ? ' has' : 's have'} no work shift, so nothing changed there.</p>}
+                    {empty.length > 0 && <p className="text-[var(--muted)] mt-1">{empty.length} day{empty.length === 1 ? ' has' : 's have'} no work shift and stayed the same.</p>}
                     {problems.length > 0 && (
                       <>
                         <p className="text-[var(--text)] font-semibold mt-1">Not changed:</p>
@@ -111,7 +111,7 @@ export default function ApplyBreakDialog({ startAllChecked, worker, days, onClos
             <option key={c} value={c}>{breakChoiceLabel(c)}</option>
           ))}
         </select>
-        <span className="block mt-1 text-[11px] text-[var(--muted)]">Applies to the Normal Work shifts on each chosen day, rostered and worked. Leave is never changed.</span>
+        <span className="block mt-1 text-[11px] text-[var(--muted)]">Applies to Normal Work shifts, rostered and worked. Leave is never changed.</span>
       </label>
 
       <div className="flex flex-wrap gap-1 mb-2">

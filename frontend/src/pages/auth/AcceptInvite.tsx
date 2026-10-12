@@ -33,8 +33,8 @@ const whereItApplies = (inv: Invitation): string => {
 };
 
 const INVALID_MESSAGE: Record<InviteKind, string> = {
-  team: 'This invitation has expired, has already been used or isn’t valid. Ask the Organisation Owner to send you a new one.',
-  employee: 'This invitation has expired, has already been used or isn’t valid. Ask your manager to send you a new one.',
+  team: 'This invitation has expired, was already used or isn’t valid. Ask whoever invited you for a new one.',
+  employee: 'This invitation has expired, was already used or isn’t valid. Ask your manager for a new one.',
 };
 
 /**
@@ -112,9 +112,9 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
       if (code === 'INVALID_INVITATION') {
         setInvalid(true);
       } else if (code === 'INVALID_CREDENTIALS') {
-        setError('That password isn’t right. Enter the current password for this SimpleHours account.');
+        setError('That password isn’t right. Enter your current SimpleHours password.');
       } else {
-        setError(friendlyError(err, 'We couldn’t accept the invitation. Please try again.'));
+        setError(friendlyError(err, 'We couldn’t accept the invitation. Try again.'));
       }
     } finally {
       setSubmitting(false);
@@ -155,7 +155,7 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
         <h1 className="text-xl font-bold text-[var(--text)]">This invitation can't be used</h1>
         <p className="text-xs text-[var(--muted)] leading-relaxed">{INVALID_MESSAGE[kind]}</p>
         <Link to="/" className="block pt-2">
-          <Button variant="secondary" size="md" className="w-full">Go to the SimpleHours home page</Button>
+          <Button variant="secondary" size="md" className="w-full">Go to home page</Button>
         </Link>
       </Card>
     );
@@ -170,12 +170,12 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
         <h1 className="text-xl font-bold text-[var(--text)]">{kind === 'employee' ? 'Your account is ready' : `You’re now ${invitation.role_name ?? 'a team member'}`}</h1>
         <p className="text-xs text-[var(--muted)] leading-relaxed">
           {kind === 'employee'
-            ? `You can now see your schedule for ${invitation.organisation_name}. Sign in to get started, and bookmark the sign-in page — it’s your organisation’s own link.`
-            : `You now have the ${invitation.role_name ?? 'team'} role for ${invitation.organisation_name}, covering ${whereItApplies(invitation)}. Sign in to get started.`}
+            ? `Bookmark the sign-in page — it’s ${invitation.organisation_name}’s own link.`
+            : `At ${invitation.organisation_name}, covering ${whereItApplies(invitation)}.`}
         </p>
         {loginPath === 'none' ? (
           <p className="text-sm text-[var(--text)] bg-[var(--panel-subtle)] rounded-md p-3">
-            Your organisation’s sign-in link has been replaced. Ask your manager for the new link, then sign in there.
+            Your organisation’s link has changed. Ask your manager for the new one.
           </p>
         ) : (
           <Link to={loginPath} className="block pt-2">
@@ -194,7 +194,7 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
         <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Accept your invitation</h1>
         <p className="text-sm text-[var(--muted)] leading-relaxed">
           {kind === 'employee' ? (
-            <><strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to SimpleHours to see your schedule.</>
+            <><strong className="text-[var(--text)]">{invitation.organisation_name}</strong> invited you to SimpleHours.</>
           ) : (
             <>
               You’ve been invited to join <strong className="text-[var(--text)]">{invitation.organisation_name}</strong> as{' '}
@@ -212,8 +212,8 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
           </div>
           <div className="text-[var(--muted)] leading-relaxed">
             {kind === 'employee'
-              ? 'You’ll be able to see your roster and request leave, and — if your organisation allows it — record your own hours.'
-              : `Your access covers ${whereItApplies(invitation)}. You’ll only see and do what your role allows.`}
+              ? 'You’ll see your schedule and request leave and, if your organisation allows it, record your own hours.'
+              : 'You’ll only see and do what your role allows.'}
           </div>
         </div>
 
@@ -230,7 +230,7 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
           {invitation.account_exists ? (
             <>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Enter your current SimpleHours password to add this access to your account.
+                You already have an account. Enter its password to add this access.
               </p>
               <Input
                 label="Current password"
@@ -260,8 +260,7 @@ export default function AcceptInvite({ kind = 'team' }: { kind?: InviteKind }) {
                 label="Create a password"
                 type="password"
                 autoComplete="new-password"
-                placeholder="At least 8 characters"
-                helperText="Use at least 8 characters, with both letters and numbers."
+                helperText="At least 8 characters, with letters and numbers."
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

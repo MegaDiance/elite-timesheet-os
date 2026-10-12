@@ -162,12 +162,16 @@ real worker or payroll data:
    deploying, confirm on the Owner's People screen that each former Branch Admin
    shows an Admin role for the same branches. Migrations `…706` and `…707`
    (private links, tutorial progress) must also be applied.
-7. Branch `overhaul/work-tool` adds migrations `…801` to `…803`. Take a backup first. None of
+7. Branch `overhaul/work-tool` adds migrations `…801` to `…804`. Take a backup first. None of
    them drops data.
    - `…801` renames the built-in Admin role to **Manager**, adds **Branch Manager** and
      **Payroll** roles to every organisation, and renames permission categories.
    - `…802` adds an optional employee ID and the `import_jobs` table.
    - `…803` allows the **Submitted** timesheet status.
+   - `…804` adds the optional company recovery password (`organisations.recovery_password_hash`,
+     `recovery_password_set_at`, plus a partial index on the lower-cased name). Nothing is set until
+     an Owner sets one in Settings → Security, so `/recover-link` can't recover any company until then;
+     the "email me my link" option keeps working meanwhile. `/recover-login-link` redirects to `/recover-link`.
 
    New runtime dependencies:
    - `argon2`, a native module with prebuilt Linux binaries.
@@ -187,7 +191,7 @@ real worker or payroll data:
    and a restart or deploy resets the counts.
 
 **Merge and deploy.** It's a fast-forward: `refactor/two-role-model` is the base of
-`overhaul/work-tool`. Pushing the branch deploys it. Migrations 801–803 run on start
+`overhaul/work-tool`. Pushing the branch deploys it. Migrations 801–804 run on start
 (`npm start` runs `migrate:up`).
 
 **Smoke test** (as the Owner, then as an employee)

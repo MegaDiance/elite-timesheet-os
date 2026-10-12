@@ -30,7 +30,7 @@ export const TOUR_CHAPTERS: readonly TourChapter[] = [
     title: 'Organisation',
     heading: 'Set up your organisation',
     caption:
-      'Name your organisation, add your first branch and choose your unpaid break rule. You get a private sign-in link for your organisation.',
+      'Name your organisation, add your first branch and set the unpaid break rule. Your organisation gets its own private link for signing in.',
     durationMs: 7000,
     beats: [500, 1300, 2100, 3100, 3700],
   },
@@ -38,19 +38,19 @@ export const TOUR_CHAPTERS: readonly TourChapter[] = [
     id: 'branches',
     group: 'Set up once',
     title: 'Branches',
-    heading: 'Add branches and Branch Admins',
+    heading: 'Add branches and Managers',
     caption:
-      'Add each branch, then invite the Branch Admins who run them. A Branch Admin sees only their own branches. The Organisation Owner sees them all.',
+      'Add each branch, then invite the Managers who run them. A Manager sees only their own branches. The Owner sees them all.',
     durationMs: 7500,
     beats: [400, 900, 1400, 2500, 3300, 4100, 4700, 5600],
   },
   {
     id: 'workers',
     group: 'Set up once',
-    title: 'Workers',
-    heading: 'Add the people you roster',
+    title: 'Staff',
+    heading: 'Add your staff',
     caption:
-      'Add each worker once, with their branch, department and contracted hours, and give them a default roster for the fortnight.',
+      'Add each employee once, with their branch, department and contracted hours, and give them a default roster for the fortnight.',
     durationMs: 7000,
     beats: [300, 600, 900, 1900, 2400, 3700],
   },
@@ -80,7 +80,7 @@ export const TOUR_CHAPTERS: readonly TourChapter[] = [
     title: 'Approve & lock',
     heading: 'Approve, then lock the pay period',
     caption:
-      'Check each worker’s fortnight and approve it. Then lock the branch’s timesheets so the hours can’t change. Locking asks for a password.',
+      'Check each employee’s fortnight and approve it. Then lock the branch’s timesheets so the hours can’t change. Locking asks for a password.',
     durationMs: 8500,
     beats: [900, 1300, 3000, 3700, 4400, 5300, 5900],
   },
@@ -90,7 +90,7 @@ export const TOUR_CHAPTERS: readonly TourChapter[] = [
     title: 'Payroll report',
     heading: 'Hand over payroll-ready hours',
     caption:
-      'Each worker’s hours, split into ordinary, weekend and public holiday hours and each type of leave. Export CSV, or print or save a PDF, for whoever runs your payroll.',
+      'Each employee’s hours, split into ordinary, weekend and public holiday hours and each type of leave. Export CSV, or print or save a PDF, for whoever runs payroll.',
     durationMs: 7500,
     beats: [400, 3200],
   },

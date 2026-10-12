@@ -154,7 +154,7 @@ export default function TimesheetReview() {
     try {
       const res = await api.post('/submissions/bulk-approve', { start_date: startIso, employee_ids: ids });
       const data = res.data?.data as BulkApproveResult;
-      const nameOf = (id: string) => rows.find(r => r.employee_id === id)?.full_name ?? 'Worker';
+      const nameOf = (id: string) => rows.find(r => r.employee_id === id)?.full_name ?? 'Employee';
       setResult({
         title: 'Approve timesheets',
         summary: `Approved ${data.approved.length} timesheet${data.approved.length === 1 ? '' : 's'}.`,
@@ -211,7 +211,7 @@ export default function TimesheetReview() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Timesheets</h1>
         <p className="text-xs text-[var(--muted)] mt-1">
-          Pay period <strong className="text-[var(--text)]">{periodLabel(startIso)}</strong> · {rows.length} worker{rows.length === 1 ? '' : 's'}
+          Pay period <strong className="text-[var(--text)]">{periodLabel(startIso)}</strong> · {rows.length} employee{rows.length === 1 ? '' : 's'}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -250,7 +250,7 @@ export default function TimesheetReview() {
             <div className="space-y-1.5">
               <h2 className="text-sm font-semibold text-[var(--text)]">You don’t have access to these timesheets</h2>
               <p className="text-xs leading-relaxed text-[var(--muted)]">
-                Choose one of your branches, or ask your organisation owner to give you access to this branch.
+                Choose another branch, or ask your Owner for access.
               </p>
             </div>
             <button type="button" onClick={() => load()} className={buttonClass.secondary}>Try again</button>
@@ -270,12 +270,9 @@ export default function TimesheetReview() {
           <div>
             <h2 className="font-bold text-base text-[var(--text)]">
               {counts.waiting > 0
-                ? `${counts.waiting} timesheet${counts.waiting === 1 ? '' : 's'} waiting for approval`
+                ? `${counts.waiting} waiting for approval`
                 : 'Every timesheet in this view is approved'}
             </h2>
-            <p className="text-xs text-[var(--muted)] mt-0.5">
-              {counts.waiting} waiting · {counts.approved} approved · {counts.locked} locked
-            </p>
           </div>
           {approvable.length > 0 && <div className="flex flex-wrap gap-2">
             {chosenIds.length > 0 && (
@@ -307,7 +304,7 @@ export default function TimesheetReview() {
         <div className="pt-3 space-y-3">
           <TimesheetStatusGuide />
           <p className="text-xs text-[var(--muted)]">
-            Hours are entered on the <Link to="/schedule" className="text-[var(--primary-text)] font-semibold hover:underline">Schedule</Link>. This page is for checking each person’s fortnight and approving it.
+            Hours are entered on the <Link to="/schedule" className="text-[var(--primary-text)] font-semibold hover:underline">Schedule</Link>.
           </p>
         </div>
       </details>
@@ -334,8 +331,8 @@ export default function TimesheetReview() {
           <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
           <input
             type="search"
-            aria-label="Search workers"
-            placeholder="Search workers, departments or branches…"
+            aria-label="Search employees"
+            placeholder="Name, department or branch"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-xs text-[var(--text)] outline-none focus:border-[var(--primary)]"
@@ -358,14 +355,14 @@ export default function TimesheetReview() {
       ) : visible.length === 0 ? (
         <EmptyState
           icon={<FileCheck2 className="w-5 h-5" aria-hidden="true" />}
-          title={search.trim() ? `No timesheet matches “${search.trim()}”` : tab === 'waiting' ? 'Nothing is waiting for approval' : 'No timesheets in this view'}
+          title={search.trim() ? `No timesheet matches “${search.trim()}”` : rows.length === 0 ? 'No timesheets yet' : tab === 'waiting' ? 'Nothing is waiting for approval' : 'No timesheets with this status'}
           description={search.trim()
             ? 'Check the spelling, or clear the search.'
-            : tab === 'waiting'
-              ? 'Every timesheet in this pay period is approved. Use the arrows above to check another pay period.'
-              : rows.length === 0
-                ? 'There are no active workers in this branch yet. Add workers, give them shifts on the Schedule, and their timesheets appear here.'
-                : 'No timesheets have this status. “All” shows every timesheet in the pay period.'}
+            : rows.length === 0
+              ? 'Add staff and give them shifts on the Schedule.'
+              : tab === 'waiting'
+                ? 'Every timesheet in this pay period is approved.'
+                : 'Try another status or pay period.'}
           action={tab !== 'all' ? <button type="button" onClick={() => setTab('all')} className={buttonClass.secondary}>Show all</button> : undefined}
         />
       ) : (
@@ -447,12 +444,12 @@ export default function TimesheetReview() {
                       label={`More actions for ${row.full_name}`}
                       items={[
                         { label: row.status === 'Submitted' ? 'Send back to the employee' : 'Reopen', icon: <RotateCcw />, onSelect: () => changeOne(row, 'reopen'), disabled: !canReopen || rowBusy === row.employee_id },
-                        { label: 'Change days on the schedule', onSelect: () => navigate('/schedule'), disabled: !can('rosters.view', row.location_id) },
+                        { label: 'Edit on the schedule', onSelect: () => navigate('/schedule'), disabled: !can('rosters.view', row.location_id) },
                       ]}
                     />
-                    {row.timesheet_locked && (
+                    {row.timesheet_locked && row.status !== 'Locked' && (
                       <span className="text-[11px] text-[var(--muted)] flex items-center gap-1">
-                        <Lock className="w-3 h-3" aria-hidden="true" /> Timesheets locked for this branch
+                        <Lock className="w-3 h-3" aria-hidden="true" /> Branch timesheets locked
                       </span>
                     )}
                   </div>
@@ -471,7 +468,7 @@ export default function TimesheetReview() {
                       <>
                         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                           <PlannedWorkedKey />
-                          {can('rosters.view', row.location_id) && <Link to="/schedule" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Change days on the schedule</Link>}
+                          {can('rosters.view', row.location_id) && <Link to="/schedule" className="text-xs font-semibold text-[var(--primary-text)] hover:underline">Edit on the schedule</Link>}
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-4">
                           {[0, 1].map(week => (
@@ -519,12 +516,12 @@ export default function TimesheetReview() {
           }
         >
           <p className="text-xs text-[var(--muted)] mb-2">
-            Approved timesheets can’t be edited until they are reopened. Each timesheet is checked on its own; any that can’t be approved are listed afterwards.
+            Approved timesheets can’t be changed until reopened. Any that can’t be approved are listed afterwards.
           </p>
           <ul className="text-xs text-[var(--text)] max-h-48 overflow-y-auto space-y-0.5">
             {confirmIds.map(id => {
               const row = rows.find(r => r.employee_id === id);
-              return <li key={id}>{row?.full_name ?? 'Worker'} <span className="text-[var(--muted)]">· {row ? `${formatHours(row.actual_hours)} worked` : ''}</span></li>;
+              return <li key={id}>{row?.full_name ?? 'Employee'} <span className="text-[var(--muted)]">· {row ? `${formatHours(row.actual_hours)} worked` : ''}</span></li>;
             })}
           </ul>
         </Dialog>

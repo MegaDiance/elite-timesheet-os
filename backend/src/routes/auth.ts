@@ -661,7 +661,7 @@ router.post('/forgot-password', throttle, async (req: RateLimitedRequest, res: R
     // Same message regardless of whether the account exists, so this never reveals that — but
     // while email is off, no reset can be emailed to anyone, so that fact alone is safe to state.
     if (!isEmailSendingEnabled()) {
-        return res.json({ success: true, message: 'Password reset by email is currently turned off. Ask your organisation owner or administrator to generate a reset link for you from Settings → Roles & permissions.' });
+        return res.json({ success: true, message: 'Password reset by email is turned off. Ask your Owner or Manager for a reset link.' });
     }
     const generic = { success: true, message: 'If an account exists, a reset link was sent.' };
 

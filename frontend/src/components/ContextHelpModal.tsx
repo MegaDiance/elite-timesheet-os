@@ -16,15 +16,15 @@ interface Faq { q: string; a: string }
 const MANAGER_FAQS = (isOwner: boolean, canEditOrganisation: boolean): Faq[] => [
   {
     q: 'How do I add a shift?',
-    a: 'Open Schedule, find the employee, and click the day. Enter a start and finish, for example 9 and 5p, then Save roster. To record what they actually worked, fill in the Worked part of the same day, or use “Worked the rostered times”.',
+    a: 'On Schedule, click the employee’s day. Enter a start and finish (for example 9 and 5p), then Save roster. To record actual hours, fill in Worked for that day or use “Same as rostered”.',
   },
   {
     q: 'How do I enter a split day or part-day leave?',
-    a: 'Use “Add time” in the day to add another line, and choose its type. For example 9–1 Work, 1–3 Sick leave, 3–5 Work. Lines can’t overlap. If your organisation merges leave with the roster (Settings → Timesheets & leave), adding leave inside a shift splits the shift around it automatically, and the day tells you it did.',
+    a: 'Use “Add time” in the day to add another line and choose its type, for example 9–1 Work, 1–3 Sick leave, 3–5 Work. Lines can’t overlap. If leave merging is on (Settings → Timesheets & leave), leave added inside a shift splits it automatically.',
   },
   {
     q: 'How do breaks work?',
-    a: `Each work line has a break. “Standard” uses your organisation’s rule (${canEditOrganisation ? 'set in Settings' : 'set by the people who manage the organisation’s settings'}): for example 30 minutes once the day reaches 6 hours. The break only comes off work, never leave. To set the same break on many days, use “Apply break to all days” and untick the exceptions.`,
+    a: `Each work line has a break. “Standard” follows the organisation’s break rule${canEditOrganisation ? ' (Settings → Organisation)' : ''}, for example 30 minutes once the day reaches 6 hours. Breaks only come off work, never leave. To set the same break on many days, use “Apply break to all days” and untick the exceptions.`,
   },
   {
     q: 'What do Draft, Approved and Locked mean?',
@@ -32,17 +32,17 @@ const MANAGER_FAQS = (isOwner: boolean, canEditOrganisation: boolean): Faq[] => 
   },
   {
     q: 'Why can’t I change this day?',
-    a: 'Either the timesheet is approved (a manager can Reopen it), or the branch’s roster or timesheets are locked for that pay period. A roster lock still lets you record worked hours. A timesheet lock stops all changes until someone unlocks it with a password.',
+    a: 'The timesheet is approved (a manager can Reopen it), or the roster or timesheets are locked for that pay period. A roster lock still allows worked hours. A timesheet lock stops all changes until it is unlocked.',
   },
   {
-    q: 'Why can’t I see a branch or a worker?',
+    q: 'Why can’t I see a branch or an employee?',
     a: isOwner
-      ? 'You can see every branch. A deactivated branch or worker is hidden from lists; reactivate it on Branches or Workers.'
-      : 'You only see the branches your roles cover. Ask your organisation owner if you need another branch.',
+      ? 'Deactivated branches and employees are hidden from lists. Reactivate them under Settings → Branches or on Staff.'
+      : 'You only see the branches your roles cover. Ask the owner if you need another.',
   },
   {
-    q: 'How do workers sign in?',
-    a: 'Workers can have their own account to see their schedule and ask for leave. Give them access from Workers → Portal access (if you don’t see it, your roles don’t include it), then share your organisation’s sign-in link with them. There is no general sign-in page. Everyone signs in through that link.',
+    q: 'How do employees sign in?',
+    a: 'Give them Portal access on Staff, then share your private link with them. There is no general sign-in page: everyone signs in through that link.',
   },
 ];
 
@@ -76,14 +76,14 @@ export const ContextHelpModal: FC<ContextHelpModalProps> = ({ isOpen, onClose })
   const faqs = isEmployee ? EMPLOYEE_FAQS(Boolean(access?.employee_capabilities?.can_submit_timesheets)) : MANAGER_FAQS(isOwner, can('organisation.edit'));
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Help" description={isEmployee ? 'Your schedule, hours and leave' : 'Short answers to common questions'} maxWidth="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title="Help" maxWidth="lg">
       <div className="space-y-4">
         <div className="p-3.5 rounded-lg bg-[var(--primary-light)] flex items-center justify-between gap-3">
           <div className="flex items-start gap-2.5">
             <Compass className="w-4 h-4 mt-0.5 text-[var(--primary-text)] shrink-0" aria-hidden="true" />
             <div>
-              <p className="text-sm font-semibold text-[var(--text)]">Show me around</p>
-              <p className="text-xs text-[var(--muted)]">A short walkthrough of {isEmployee ? 'your schedule and leave' : 'the roster, shifts, breaks, leave and timesheets'}, on your real screens.</p>
+              <p className="text-sm font-semibold text-[var(--text)]">Take the tour</p>
+              <p className="text-xs text-[var(--muted)]">{isEmployee ? 'Your schedule and leave.' : 'Schedule, shifts, breaks, leave and timesheets.'}</p>
             </div>
           </div>
           <Button variant="primary" size="md" className="shrink-0" onClick={() => { onClose(); startTour(); }}>

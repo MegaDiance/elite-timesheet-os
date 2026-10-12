@@ -84,8 +84,7 @@ export function ProductTour() {
         <div className="grid gap-6 lg:grid-cols-12 lg:items-end lg:gap-16">
           <SectionIntro id="how-title" eyebrow="Product tour" title="How it works" className="lg:col-span-7">
             <p>
-              Instead of a spreadsheet for every branch, each step has its own place. Set up once, then every fortnight follows
-              the same steps, from roster to payroll report.
+              Set up once, then every fortnight follows the same steps, from roster to payroll report.
             </p>
           </SectionIntro>
           <p className="text-sm text-[var(--text)]/70 lg:col-span-5 lg:text-right">
@@ -109,7 +108,7 @@ export function ProductTour() {
           <h3 className="text-xl font-semibold tracking-tight text-[var(--text)] lg:col-span-4">Why use it instead of a spreadsheet</h3>
           <ul className="grid gap-6 text-[15px] leading-relaxed md:grid-cols-3 lg:col-span-8">
             <Point title="One place for every branch">
-              Workers, rosters and timesheets for every branch live in one system, with each Branch Admin limited to their own.
+              Staff, rosters and timesheets for every branch in one system, with each Manager limited to their own branches.
             </Point>
             <Point title="Differences you can see">
               Worked hours sit beside the roster, so a late finish or an afternoon of sick leave shows up before payroll.

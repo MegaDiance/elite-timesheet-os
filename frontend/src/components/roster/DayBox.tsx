@@ -146,7 +146,7 @@ export function PlannedWorkedKey() {
   return (
     <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
       <span className={`pl-1.5 ${PART_STYLE.roster}`}>Rostered = planned</span>
-      <span className={`pl-1.5 font-semibold ${PART_STYLE.timesheet}`}>Worked = what actually happened</span>
+      <span className={`pl-1.5 font-semibold ${PART_STYLE.timesheet}`}>Worked = actual</span>
     </span>
   );
 }

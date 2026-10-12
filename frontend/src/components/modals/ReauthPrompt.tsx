@@ -49,7 +49,7 @@ export function ReauthPrompt() {
     } catch (err: any) {
       setPassword('');
       setError(err?.response?.status === 429
-        ? 'Too many attempts. Please wait a while before trying again.'
+        ? 'Too many attempts. Wait a few minutes and try again.'
         : 'That password isn’t correct.');
     } finally {
       setBusy(false);

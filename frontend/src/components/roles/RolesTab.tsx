@@ -29,18 +29,18 @@ export default function RolesTab({ roles, catalogue, team, canManageUsers, onRet
   const duplicate = async (id: string) => {
     try {
       const res = await api.post(`/roles/${id}/duplicate`);
-      toast.success(res.data?.message || 'Role copied.');
+      toast.success(res.data?.message || 'Role duplicated');
       onChanged();
       setOpenId(res.data.data.id);
     } catch (err) {
-      toast.error(accessError(err, 'The role could not be copied.'));
+      toast.error(accessError(err, 'Couldn’t duplicate role. Try again.'));
     }
   };
 
   const error = roles.error || catalogue.error;
   const loading = roles.loading || catalogue.loading;
 
-  if (error) return <LoadFailed title="Roles could not be loaded" message={error} onRetry={onRetry} />;
+  if (error) return <LoadFailed title="Couldn’t load roles" message={error} onRetry={onRetry} />;
 
   if (loading || !roles.data || !catalogue.data) {
     return (
@@ -65,7 +65,7 @@ export default function RolesTab({ roles, catalogue, team, canManageUsers, onRet
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <p className="text-sm text-[var(--muted)] max-w-2xl">
-          A role is a set of permissions. You give a role to each person, and choose where it applies for them: the entire organisation or chosen branches.
+          Each person’s role applies to the entire organisation or to branches you choose.
         </p>
         {can_manage && (
           <Button variant="primary" size="md" onClick={() => setOpenId('new')} leftIcon={<Plus className="w-4 h-4" />} className="shrink-0 self-start sm:self-auto">
@@ -76,7 +76,7 @@ export default function RolesTab({ roles, catalogue, team, canManageUsers, onRet
 
       {!can_manage && (
         <p className="text-xs text-[var(--muted)] p-3 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
-          You can see the roles below. To create or change roles you need the “Manage roles and permissions” permission.
+          View only. Changing roles needs the “Manage roles and permissions” permission.
         </p>
       )}
 

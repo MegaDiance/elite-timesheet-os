@@ -150,8 +150,8 @@ export default function DayEditor({
       ?? (workedChanged && workedCheck.first ? `Worked: ${workedCheck.first}` : null);
 
   const blockReason = approved
-    ? 'This timesheet is approved. Reopen the timesheet to change it.'
-    : !anyWritable ? 'You can view this day but not change it.'
+    ? 'View only: the timesheet is approved.'
+    : !anyWritable ? 'View only.'
       : problem || (scope === null ? 'No changes yet.' : null);
 
   const saveLabel = rosterChanged && workedChanged ? 'Save roster and worked hours'
@@ -250,8 +250,8 @@ export default function DayEditor({
     if (approved) return null;
     const branch = worker.location_name ?? 'this branch';
     // A lock is the reason shown when there is one; otherwise it is the person's access.
-    if (part === 'roster' && !rosterLocked && !rosterPermitted) return `Your access lets you view the roster for ${branch}, not change it.`;
-    if (part === 'timesheet' && !timesheetLocked && !workedPermitted) return `Your access lets you view worked hours for ${branch}, not change them.`;
+    if (part === 'roster' && !rosterLocked && !rosterPermitted) return `View only: your roles can’t change the roster for ${branch}.`;
+    if (part === 'timesheet' && !timesheetLocked && !workedPermitted) return `View only: your roles can’t change worked hours for ${branch}.`;
     if (part === 'roster' && rosterLocked) return `The roster for ${branch} is locked for this pay period.`;
     if (part === 'timesheet' && timesheetLocked) return `Timesheets for ${branch} are locked for this pay period.`;
     return null;
@@ -290,7 +290,7 @@ export default function DayEditor({
                   className={`${buttonClass.secondary} max-md:h-11`}
                   title={rosterEntries.length === 0 ? 'Nothing is rostered on this day' : 'Copy the rostered times into Worked'}
                 >
-                  <Repeat className="w-3.5 h-3.5" aria-hidden="true" /> Worked the rostered times
+                  <Repeat className="w-3.5 h-3.5" aria-hidden="true" /> Same as rostered
                 </button>
               )}
               <button
@@ -364,7 +364,7 @@ export default function DayEditor({
             <h3 id={`${id}-fresh`} className="text-sm font-bold text-[var(--text)]">
               {freshName}{' '}
               <span className="font-normal text-[var(--muted)]">
-                · {target === 'BOTH' ? 'planned and worked the same' : PART_HINT[part]}
+                · {target === 'BOTH' ? 'same times for both' : PART_HINT[part]}
               </span>
             </h3>
             {partTotal(rosterLines)}
@@ -404,7 +404,7 @@ export default function DayEditor({
           )}
           {confirmDiscard && (
             <div role="alert" className="flex flex-wrap items-center justify-between gap-2 text-sm bg-[var(--warn-light)] border border-[var(--warn)]/30 rounded-lg px-3 py-2">
-              <span className="font-semibold text-[var(--text)]">You have changes that aren’t saved.</span>
+              <span className="font-semibold text-[var(--text)]">Unsaved changes.</span>
               <span className="flex gap-2">
                 <button type="button" onClick={() => setConfirmDiscard(false)} className={`${buttonClass.secondary} max-md:h-11`}>Keep editing</button>
                 <button type="button" onClick={onClose} className={`${buttonClass.danger} max-md:h-11`}>Discard changes</button>
@@ -436,7 +436,7 @@ export default function DayEditor({
       {approved && (
         <p className="mb-3 flex items-start gap-1.5 text-xs text-[var(--warn)] bg-[var(--warn-light)] border border-[var(--warn)]/30 rounded-lg px-3 py-2">
           <Lock className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
-          This timesheet is approved, so this day can’t be changed. Reopen the timesheet to change it.
+          This timesheet is approved. Reopen it to change this day.
         </p>
       )}
 
@@ -481,7 +481,7 @@ export default function DayEditor({
             aria-controls={`${id}-copy`}
             disabled={rosterLocked}
             className={`${buttonClass.quiet} max-md:h-11 -ml-2.5`}
-            title={rosterLocked ? 'The roster is locked for this branch' : 'Copy the rostered times of this day to other days or workers'}
+            title={rosterLocked ? 'The roster is locked for this branch' : 'Copy the rostered times of this day to other days or employees'}
           >
             <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copy this day’s roster to…
             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showCopy ? 'rotate-180' : ''}`} aria-hidden="true" />
@@ -511,7 +511,7 @@ export default function DayEditor({
               {describeBreakRule(rule)} “Standard” on a work line follows this rule; pick a length to set a fixed break for that shift, or “No break”. The break only ever comes off work, never leave.
             </HelpTip>
           </h3>
-          <p className="text-xs text-[var(--muted)]">This day’s break is set on each work line above. To set the same break on several days of {worker.full_name}’s fortnight:</p>
+          <p className="text-xs text-[var(--muted)]">Set the same break on several days of {worker.full_name}’s fortnight:</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setApplyBreakMode('all')} disabled={approved} className={`${buttonClass.secondary} max-md:h-11`} title="Every day is ticked; untick the days that are different">
               Apply break to all days…

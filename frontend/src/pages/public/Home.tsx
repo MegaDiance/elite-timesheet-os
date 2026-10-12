@@ -18,17 +18,17 @@ const FEATURES = [
   {
     icon: CalendarDays,
     title: 'Roster the fortnight',
-    body: 'Plan every worker’s 14 days on one screen. Start from default rosters, copy a day, change what’s different.',
+    body: 'Plan each employee’s fortnight on one screen. Start from default rosters and change only what’s different.',
   },
   {
     icon: ClipboardCheck,
     title: 'Record what was worked',
-    body: 'Actual hours sit next to the roster, breaks are worked out for you, and each timesheet is approved when it’s right.',
+    body: 'Worked hours sit next to the roster, unpaid breaks are worked out for you, and you approve each timesheet.',
   },
   {
     icon: FileSpreadsheet,
     title: 'Hand over a clean report',
-    body: 'Ordinary, weekend, public holiday and leave hours per worker, as CSV or PDF. It prepares the hours; it doesn’t run payroll.',
+    body: 'Ordinary, weekend, public holiday and leave hours per employee, as CSV or PDF. It prepares the hours; it doesn’t run payroll.',
   },
 ];
 
@@ -37,7 +37,7 @@ function Hero() {
     <section aria-labelledby="hero-title" className={`${container} pt-12 pb-16 sm:pt-20 sm:pb-24`}>
       <div className="mx-auto max-w-3xl text-center">
         <div className="flex justify-center">
-          <Eyebrow>For Australian organisations with one branch or many</Eyebrow>
+          <Eyebrow>For Australian organisations</Eyebrow>
         </div>
         <h1
           id="hero-title"
@@ -46,8 +46,7 @@ function Hero() {
           Rosters and timesheets, ready for payroll
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-[var(--text)]/75">
-          Plan the fortnight, record the hours actually worked, approve them, and hand a clear report to whoever runs
-          your payroll.
+          Plan the fortnight, record the hours worked, approve them, and hand a clear report to whoever runs payroll.
         </p>
         <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
           <CtaLink to="/pricing" size="lg">
@@ -87,7 +86,7 @@ function Features() {
           to="/features"
           className="mt-10 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--primary-text)] hover:underline hover:underline-offset-4"
         >
-          See everything it does
+          See all features
           <ArrowRight aria-hidden="true" className="h-4 w-4" />
         </Link>
       </div>
@@ -105,7 +104,7 @@ function FinalCta() {
               Ready to plan your next fortnight?
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text)]/75 sm:text-lg">
-              Sign up with your email and set up your first branch in about ten minutes.
+              Sign up with your email and set up your first branch.
             </p>
           </div>
           <div className="flex shrink-0 flex-col items-start gap-3 lg:items-end">
@@ -113,8 +112,8 @@ function FinalCta() {
               Get started
               <ArrowRight aria-hidden="true" className="h-4 w-4" />
             </CtaLink>
-            <Link to="/recover-login-link" className="text-sm text-[var(--text)]/75 hover:text-[var(--text)] hover:underline hover:underline-offset-4">
-              Already a customer? Find your login link
+            <Link to="/recover-link" className="text-sm text-[var(--text)]/75 hover:text-[var(--text)] hover:underline hover:underline-offset-4">
+              Already a customer? Recover your company link
             </Link>
           </div>
         </div>

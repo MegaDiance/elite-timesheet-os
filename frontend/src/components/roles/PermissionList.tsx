@@ -84,7 +84,7 @@ export default function PermissionList({ groups, selected, onChange, readOnly }:
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className={`text-sm font-medium ${on || !readOnly ? 'text-[var(--text)]' : 'text-[var(--muted)]'}`}>{p.label}</span>
-                          {p.level === 'organisation' && <Badge variant="outline" size="sm" title="Only works when the role is given across the entire organisation">Whole organisation only</Badge>}
+                          {p.level === 'organisation' && <Badge variant="outline" size="sm" title="Only works when the role is given across the entire organisation">Entire organisation only</Badge>}
                         </span>
                         <span className="block text-xs text-[var(--muted)] leading-relaxed mt-0.5">{p.description}</span>
                       </span>

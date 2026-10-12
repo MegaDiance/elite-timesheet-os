@@ -131,7 +131,7 @@ export default function TimeLines({ id, name, lines, onChange, preview, issues, 
                         describedBy={issue ? messageId : undefined}
                         onChange={h => patch(line.key, { hours: h })}
                       />
-                      <span className="text-xs text-[var(--muted)]">hours, no start or finish</span>
+                      <span className="text-xs text-[var(--muted)]">hours (no times)</span>
                     </>
                   ) : (
                     <>

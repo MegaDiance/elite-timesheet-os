@@ -62,7 +62,7 @@ function RoleChip({ tone = 'role', name, scope, full, onChange, onRemove, person
           type="button"
           onClick={onChange}
           aria-label={`Change where ${name} applies for ${person}`}
-          title="Change where this applies"
+          title="Change where it applies"
           className="p-1.5 border-l border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--glass-8)] cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--primary)]"
         >
           <Pencil className="w-3 h-3" aria-hidden="true" />
@@ -158,7 +158,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
     />
   ) : null;
 
-  if (team.error) return <LoadFailed title="The people list could not be loaded" message={team.error} onRetry={onRetry} />;
+  if (team.error) return <LoadFailed title="Couldn’t load people" message={team.error} onRetry={onRetry} />;
   if (team.loading || !data) return <div aria-busy="true" aria-label="Loading people"><TableSkeleton rows={4} /></div>;
 
   const branches = data.branches;
@@ -168,12 +168,12 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
     setBusy(true);
     try {
       const res = await api.delete(`/team/${removingRole.member.user_id}/roles/${removingRole.assignment.id}`);
-      toast.success(res.data?.message || 'Role removed.');
+      toast.success(res.data?.message || 'Role removed');
       setRemovingRole(null);
       onChanged();
     } catch (err) {
       setRemovingRole(null);
-      toast.error(accessError(err, 'The role could not be removed.'));
+      toast.error(accessError(err, 'Couldn’t remove role. Try again.'));
     } finally {
       setBusy(false);
     }
@@ -184,12 +184,12 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
     setBusy(true);
     try {
       const res = await api.delete(`/team/${removingAll.user_id}`);
-      toast.success(res.data?.message || 'Access removed.');
+      toast.success(res.data?.message || 'Access removed');
       setRemovingAll(null);
       onChanged();
     } catch (err) {
       setRemovingAll(null);
-      toast.error(accessError(err, 'Access could not be removed.'));
+      toast.error(accessError(err, 'Couldn’t remove access. Try again.'));
     } finally {
       setBusy(false);
     }
@@ -200,12 +200,12 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
     setBusy(true);
     try {
       const res = await api.delete(`/team/invitations/${revoking.id}`);
-      toast.success(res.data?.message || 'Invitation revoked.');
+      toast.success(res.data?.message || 'Invitation revoked');
       setRevoking(null);
       onChanged();
     } catch (err) {
       setRevoking(null);
-      toast.error(accessError(err, 'The invitation could not be revoked.'));
+      toast.error(accessError(err, 'Couldn’t revoke invitation. Try again.'));
     } finally {
       setBusy(false);
     }
@@ -219,18 +219,18 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
       if (link) {
         onShowLink({
           title: 'New invitation link',
-          description: `Email is turned off. Copy this link and share it with ${invitation.email} yourself.`,
+          description: `Email is off. Share this link with ${invitation.email} yourself.`,
           url: link,
           note: 'It works once and expires in 7 days. The previous link no longer works.',
         });
       } else if (res.data?.success) {
-        toast.success(res.data.message || 'Invitation re-sent.');
+        toast.success(res.data.message || 'Invitation resent');
       } else {
-        toast.error(res.data?.message || 'The email could not be delivered.');
+        toast.error(res.data?.message || 'Email couldn’t be delivered. Try again.');
       }
       onChanged();
     } catch (err) {
-      toast.error(accessError(err, 'The invitation could not be re-sent.'));
+      toast.error(accessError(err, 'Couldn’t resend invitation. Try again.'));
     } finally {
       setResendingId(null);
     }
@@ -242,12 +242,12 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
       const res = await api.post(`/team/${member.user_id}/reset-password-link`);
       onShowLink({
         title: 'Password reset link',
-        description: `Copy this link and share it with ${personName(member)} yourself, so they can choose a new password.`,
+        description: `Share this link with ${personName(member)} so they can set a new password.`,
         url: res.data.data.reset_link,
         note: 'It works once and expires in 1 hour.',
       });
     } catch (err) {
-      toast.error(accessError(err, 'A reset link could not be created.'));
+      toast.error(accessError(err, 'Couldn’t create reset link. Try again.'));
     } finally {
       setResetBusyId(null);
     }
@@ -267,8 +267,8 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
       {member.is_self ? 'You can’t change your own access' : 'The owner’s access is fixed'}
       <HelpTip label={member.is_self ? 'Your own access' : 'The owner’s access'} align="right">
         {member.is_self
-          ? 'You can’t change your own access. Ask the owner or another administrator.'
-          : 'The owner always has full access to the organisation. It can’t be assigned or removed here.'}
+          ? 'Ask the owner or someone who manages access.'
+          : 'The owner always has full access. It can’t be changed here.'}
       </HelpTip>
     </span>
   );
@@ -308,7 +308,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
               size="sm"
               onClick={() => resetLink(member)}
               loading={resetBusyId === member.user_id}
-              title="Create a password reset link to share with them yourself"
+              title="Create a password reset link"
               aria-label={`Create a password reset link for ${personName(member)}`}
               leftIcon={<KeyRound className="w-3.5 h-3.5" />}
             >
@@ -393,7 +393,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
 
       {rows.length === 0 ? (
         data.members.length + data.invitations.length === 0 ? (
-          <EmptyState icon={<Users className="w-5 h-5" />} title="No one has access yet" description="Invite someone and choose what they can do. They get a private link to set up their sign-in." actionLabel="Invite person" onAction={onInvite} />
+          <EmptyState icon={<Users className="w-5 h-5" />} title="No one has access yet" description="Invite someone and choose their role." actionLabel="Invite person" onAction={onInvite} />
         ) : (
           <EmptyState icon={<Search className="w-5 h-5" />} title="No one matches your search" description="Try a different name, email or role." actionLabel="Clear search" onAction={() => setSearch('')} />
         )
@@ -534,7 +534,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
         onClose={() => setRemovingAll(null)}
         onConfirm={removeAll}
         title={`Remove all access for ${removingAll ? personName(removingAll) : 'this person'}?`}
-        message={`They lose every role they hold here (${removingAll?.assignments.map(a => a.role_name).join(', ') ?? ''}). Their account stays, and if they have no other access here they are signed out of this organisation. You can add roles again later.`}
+        message={`They lose every role here (${removingAll?.assignments.map(a => a.role_name).join(', ') ?? ''}). Their account stays. With no other access here, they’re signed out of this organisation. You can add roles again later.`}
         confirmLabel="Remove all access"
         variant="danger"
         loading={busy}
@@ -545,7 +545,7 @@ export default function PeopleTab({ team, roles, catalogue, onRetry, onChanged, 
         onClose={() => setRevoking(null)}
         onConfirm={revoke}
         title="Revoke this invitation?"
-        message={`The link for ${revoking?.email ?? 'this person'} stops working straight away. You can send a new invitation later.`}
+        message={`The link for ${revoking?.email ?? 'this person'} stops working immediately. You can send a new invitation later.`}
         confirmLabel="Revoke invitation"
         variant="danger"
         loading={busy}

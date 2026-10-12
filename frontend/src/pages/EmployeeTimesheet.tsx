@@ -55,7 +55,7 @@ export default function EmployeeTimesheet() {
         setDays(map);
         setReadOnly({ approved: body.approved, submitted: Boolean(body.submitted), timesheet_locked: body.timesheet_locked });
       })
-      .catch(err => setError(apiErrorMessage(err, 'Your timesheet could not be loaded.')))
+      .catch(err => setError(apiErrorMessage(err, 'Couldn’t load your timesheet.')))
       .finally(() => setLoading(false));
   };
 
@@ -93,7 +93,7 @@ export default function EmployeeTimesheet() {
       setEditingDate(null);
       await load();
     } catch (err) {
-      setStatusError(apiErrorMessage(err, action === 'submit' ? 'Your timesheet couldn’t be submitted. Nothing changed.' : 'Your timesheet couldn’t be withdrawn. Nothing changed.'));
+      setStatusError(apiErrorMessage(err, action === 'submit' ? 'Couldn’t submit your timesheet. Try again.' : 'Couldn’t withdraw your timesheet. Try again.'));
     } finally {
       setStatusBusy(false);
     }
@@ -125,7 +125,7 @@ export default function EmployeeTimesheet() {
           <TimesheetStatusBadge status={status} size="md" />
           <div className="text-sm flex-1 min-w-0">
             <p className="text-[var(--text)]">{TIMESHEET_STATE[status].employeeMeaning}</p>
-            {!locked && <p className="text-[var(--muted)] mt-1">Choose “Record hours” on a day to enter when you started and finished. Submit the fortnight when it’s right.</p>}
+            {!locked && <p className="text-[var(--muted)] mt-1">Record hours for each day, then submit the fortnight.</p>}
             {statusError && <p role="alert" className="text-[var(--danger)] mt-1">{statusError}</p>}
             {locked && readOnly.timesheet_locked && !readOnly.approved && (
               <p className="text-[var(--warn)] mt-1 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" aria-hidden="true" /> Timesheets are locked for this pay period.</p>
@@ -153,7 +153,7 @@ export default function EmployeeTimesheet() {
 
       <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)] overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading your timesheet…</div>
+          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading…</div>
         ) : (
           fortnightDays(startDate).map(iso => {
             const day = days.get(iso);
@@ -260,7 +260,7 @@ function DayRow({ dateIso, entries, rostered, breakSettings, mergeLeave, onCance
       await api.post('/portal/timesheet', { record_date: dateIso, timesheet: linesToEntries(lines) });
       onSaved();
     } catch (err) {
-      setServerError(apiErrorMessage(err, 'Could not save this day.'));
+      setServerError(apiErrorMessage(err, 'Couldn’t save this day. Try again.'));
     } finally {
       setSaving(false);
     }

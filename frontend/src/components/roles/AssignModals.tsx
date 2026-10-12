@@ -96,7 +96,7 @@ export function AssignRoleModal({ target, roles, people, catalogue, branches, on
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!userId) { setError('Choose who should get this role.'); return; }
+    if (!userId) { setError('Choose a person.'); return; }
     if (!roleId) { setError('Choose a role.'); return; }
     const problem = scopeProblem(scope, entireOnly);
     if (problem) { setScopeError(problem); return; }
@@ -104,9 +104,9 @@ export function AssignRoleModal({ target, roles, people, catalogue, branches, on
     setBusy(true);
     try {
       const res = await api.post(`/team/${userId}/roles`, { role_id: roleId, scope: scopeBody(scope) });
-      onSaved(res.data?.message || 'Role added.');
+      onSaved(res.data?.message || 'Role added');
     } catch (err) {
-      setError(accessError(err, 'The role could not be added.'));
+      setError(accessError(err, 'Couldn’t add role. Try again.'));
       setBusy(false);
     }
   };
@@ -114,12 +114,12 @@ export function AssignRoleModal({ target, roles, people, catalogue, branches, on
   const title = target.kind === 'person' ? `Add a role for ${personName(target.person)}` : `Add a member to ${target.role.name}`;
 
   return (
-    <Modal isOpen onClose={busy ? () => undefined : onClose} title={title} description="They get the permissions of the role, in the places you choose." maxWidth="md">
+    <Modal isOpen onClose={busy ? () => undefined : onClose} title={title} maxWidth="md">
       <form onSubmit={submit} className="space-y-4" noValidate>
         <FormError message={error} />
         {target.kind === 'person' ? (
           roleOptions.length === 0 ? (
-            <p className="text-sm text-[var(--muted)]">{personName(target.person)} already has every role that can be given. You can change where a role applies from their row.</p>
+            <p className="text-sm text-[var(--muted)]">{personName(target.person)} already has every available role. To change where one applies, use their row.</p>
           ) : (
             <Select id="assign-role" label="Role" value={roleId} onChange={e => chooseRole(e.target.value)} required>
               <option value="">Choose a role</option>
@@ -128,7 +128,7 @@ export function AssignRoleModal({ target, roles, people, catalogue, branches, on
           )
         ) : personOptions.length === 0 ? (
           <div className="space-y-2">
-            <p className="text-sm text-[var(--muted)]">Everyone on the team who can be given this role already has it.</p>
+            <p className="text-sm text-[var(--muted)]">Everyone eligible already has this role.</p>
             {onInviteInstead && <Button type="button" variant="outline" size="sm" onClick={onInviteInstead} leftIcon={<UserPlus className="w-3.5 h-3.5" />}>Invite someone new</Button>}
           </div>
         ) : (
@@ -180,15 +180,15 @@ export function ChangeScopeModal({ personName: who, userId, assignment, role, ca
     setBusy(true);
     try {
       const res = await api.put(`/team/${userId}/roles/${assignment.id}`, { scope: scopeBody(scope) });
-      onSaved(res.data?.message || 'Access updated.');
+      onSaved(res.data?.message || 'Access updated');
     } catch (err) {
-      setError(accessError(err, 'Where the role applies could not be changed.'));
+      setError(accessError(err, 'Couldn’t update where the role applies. Try again.'));
       setBusy(false);
     }
   };
 
   return (
-    <Modal isOpen onClose={busy ? () => undefined : onClose} title={`Where ${assignment.role_name} applies`} description={`For ${who}.`} maxWidth="md">
+    <Modal isOpen onClose={busy ? () => undefined : onClose} title={`Where ${assignment.role_name} applies`} description={`For ${who}`} maxWidth="md">
       <form onSubmit={submit} className="space-y-4" noValidate>
         <FormError message={error} />
         <ScopePicker value={scope} onChange={s => { setScope(s); setScopeError(null); }} branches={branches} entireOnly={entireOnly} mixedNote={mixed} error={scopeError} />
@@ -233,8 +233,8 @@ export function InviteModal({ roles, catalogue, branches, presetRoleId, onClose,
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!email.trim() || !/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address, like name@example.com.'); return; }
-    if (!roleId) { setError('Choose a role for them.'); return; }
+    if (!email.trim() || !/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address.'); return; }
+    if (!roleId) { setError('Choose a role.'); return; }
     const problem = scopeProblem(scope, entireOnly);
     if (problem) { setScopeError(problem); return; }
     setBusy(true);
@@ -247,12 +247,12 @@ export function InviteModal({ roles, catalogue, branches, presetRoleId, onClose,
       });
       onInvited({
         email: email.trim(),
-        message: res.data?.message || `Invitation created for ${email.trim()}.`,
+        message: res.data?.message || `Invitation created for ${email.trim()}`,
         link: res.data?.data?.invite_link ?? null,
         failed: res.data?.data?.delivery_status === 'failed',
       });
     } catch (err) {
-      setError(accessError(err, 'The invitation could not be created.'));
+      setError(accessError(err, 'Couldn’t create invitation. Try again.'));
       setBusy(false);
     }
   };
@@ -262,7 +262,7 @@ export function InviteModal({ roles, catalogue, branches, presetRoleId, onClose,
       isOpen
       onClose={busy ? () => undefined : onClose}
       title="Invite a person"
-      description="They get a private link to accept, valid for 7 days. If email is turned off, you copy the link and share it yourself."
+      description="They get an invitation link, valid for 7 days. If email is off, you share the link yourself."
       maxWidth="md"
     >
       <form onSubmit={submit} className="space-y-4" noValidate>
@@ -309,9 +309,9 @@ export function BulkAssignModal({ people, roles, catalogue, branches, onClose, o
     setBusy(true);
     try {
       const res = await api.post('/team/bulk-assign', { user_ids: people.map(p => p.user_id), role_id: roleId, scope: scopeBody(scope) });
-      onSaved(res.data?.message || 'Role given.');
+      onSaved(res.data?.message || 'Role given');
     } catch (err) {
-      setError(accessError(err, 'The role could not be given. Nobody was changed.'));
+      setError(accessError(err, 'Couldn’t give the role. Nobody was changed.'));
       setBusy(false);
     }
   };

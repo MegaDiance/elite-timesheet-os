@@ -26,7 +26,7 @@ export default function EmployeeHistory() {
     const start = shiftIso(end, -14 * (LOOKBACK_FORTNIGHTS - 1));
     api.get(`/portal/history?start_date=${start}&end_date=${end}`)
       .then(res => { if (!cancelled) setRows((res.data.data as HistoryRow[]).slice().reverse()); })
-      .catch(err => { if (!cancelled) setError(friendlyError(err, 'Your past hours could not be loaded.')); })
+      .catch(err => { if (!cancelled) setError(friendlyError(err, 'Couldn’t load your past hours.')); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -35,16 +35,16 @@ export default function EmployeeHistory() {
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="text-xl font-bold text-[var(--text)]">My past hours</h1>
-        <p className="text-sm text-[var(--muted)] mt-0.5">Your hours for each pay period over the last six months, and whether they’re approved.</p>
+        <p className="text-sm text-[var(--muted)] mt-0.5">Last six months</p>
       </div>
 
       {error && <p role="alert" className="p-4 rounded-xl bg-[var(--danger-light)] border border-[var(--danger)]/30 text-sm text-[var(--danger)]">{error} Reload the page to try again.</p>}
 
       <div className="bg-[var(--panel)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)] overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading your past hours…</div>
+          <div className="p-8 text-center text-sm text-[var(--muted)]">Loading…</div>
         ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[var(--muted)]">No past pay periods yet. They appear here once you’ve worked a full fortnight.</div>
+          <div className="p-8 text-center text-sm text-[var(--muted)]">No past pay periods yet.</div>
         ) : (
           rows.map(row => (
             <div key={row.start_date} className="flex items-center justify-between gap-4 px-4 py-3">

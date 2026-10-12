@@ -4,7 +4,7 @@ import { comparePassword, hashPassword } from '../services/auth';
 import { requireAuth, requireOwner, requirePermission, Permission, AuthRequest, sendError } from '../middleware/auth';
 import { HttpError, badRequest, forbidden, hasPermission, isUuid, notFound, writeAudit } from '../services/policy';
 import { revokeUserSessionsInOrganisation } from '../services/sessionService';
-import { RateLimitedRequest, checkRateLimit, checkSensitivePassword, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
+import { RateLimitedRequest, checkRateLimit, checkSensitivePassword, isStrongPassword, recordFailedAttempt, publicBaseUrl } from '../services/authUtils';
 import { currentPortalLink, issuePortalLink, parseExpiry, resolvePortalToken } from '../services/portalLink';
 
 const router = Router();
@@ -40,7 +40,8 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
                     break_mins_weekday, break_mins_weekend, break_threshold_hours,
                     employees_can_submit_timesheets, automatically_merge_leave_with_roster, leave_requests_require_approval,
                     roster_lock_password_hash IS NOT NULL AS has_roster_lock_password,
-                    timesheet_lock_password_hash IS NOT NULL AS has_timesheet_lock_password
+                    timesheet_lock_password_hash IS NOT NULL AS has_timesheet_lock_password,
+                    recovery_password_set_at
                FROM organisations WHERE id = $1`,
             [ctx.orgId]
         );
@@ -64,7 +65,9 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
                 automatically_merge_leave_with_roster: org.automatically_merge_leave_with_roster,
                 leave_requests_require_approval: org.leave_requests_require_approval,
                 has_roster_lock_password: org.has_roster_lock_password,
-                has_timesheet_lock_password: org.has_timesheet_lock_password
+                has_timesheet_lock_password: org.has_timesheet_lock_password,
+                // Only whether (and when) the Owner set one; never anything derived from it.
+                recovery_password_set_at: ctx.isOwner ? org.recovery_password_set_at : undefined
             }
         });
     } catch (err) {
@@ -128,7 +131,7 @@ router.put('/settings', requireAuth, async (req: AuthRequest, res: Response) => 
             await query(`UPDATE organisations SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
             await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'ORGANISATION_SETTINGS_UPDATED', entityType: 'organisation', entityId: ctx.orgId, details: `Updated: ${updates.map(u => u.split(' ')[0]).join(', ')}` });
         }
-        res.json({ success: true, message: 'Settings saved successfully.' });
+        res.json({ success: true, message: 'Settings saved' });
     } catch (err) {
         sendError(res, err, 'ORGANISATION SETTINGS ERROR');
     }
@@ -151,7 +154,7 @@ router.post('/regenerate-portal-url', requireAuth, requirePermission(Permission.
         res.json({
             success: true,
             data: { portal_slug: link.token, portal_url: `${publicBaseUrl()}${link.path}`, portal_link_expires_at: link.expiresAt },
-            message: 'The sign-in link has been regenerated. The previous link no longer works.'
+            message: 'Private link regenerated. The old link no longer works.'
         });
     } catch (err) {
         sendError(res, err, 'REGENERATE PORTAL URL ERROR');
@@ -175,7 +178,7 @@ router.put('/portal-link', requireAuth, requirePermission(Permission.SECURITY_MA
         res.json({
             success: true,
             data: { portal_link_expires_at: expiresAt ? expiresAt.toISOString() : null },
-            message: expiresAt ? 'The sign-in link now has an expiry date.' : 'The sign-in link no longer expires.'
+            message: expiresAt ? 'Expiry date saved' : 'Expiry date removed'
         });
     } catch (err) {
         sendError(res, err, 'PORTAL LINK EXPIRY ERROR');
@@ -215,9 +218,43 @@ router.put('/lock-passwords', requireAuth, requirePermission(Permission.SECURITY
             await query(`UPDATE organisations SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
             await writeAudit({ orgId: ctx.orgId, actorId: ctx.userId, action: 'LOCK_PASSWORDS_UPDATED', entityType: 'organisation', entityId: ctx.orgId });
         }
-        res.json({ success: true, message: 'Lock passwords updated successfully.' });
+        res.json({ success: true, message: 'Lock passwords saved' });
     } catch (err) {
         sendError(res, err, 'ORGANISATION LOCK PASSWORDS ERROR');
+    }
+});
+
+/**
+ * PUT /api/organisation/recovery-password  { current_password, new_recovery_password: string | null }
+ *
+ * Owner only. With the company name, this password shows the organisation's private link on
+ * /recover-link, so it must be as strong as an account password. null removes it.
+ */
+router.put('/recovery-password', requireAuth, requireOwner, async (req: AuthRequest, res: Response) => {
+    try {
+        const ctx = req.auth!;
+        const { current_password, new_recovery_password } = req.body || {};
+        await requireCurrentPassword(ctx.userId, current_password);
+        if (new_recovery_password !== null) {
+            const strength = isStrongPassword(new_recovery_password);
+            if (!strength.valid) throw badRequest('VALIDATION_FAILED', strength.reason!);
+            if ((new_recovery_password as string).length > 1024) throw badRequest('VALIDATION_FAILED', 'Password is too long.');
+        }
+        const hash = new_recovery_password === null ? null : await hashPassword(new_recovery_password);
+        const result = await query(
+            'UPDATE organisations SET recovery_password_hash = $1, recovery_password_set_at = CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END WHERE id = $2 RETURNING recovery_password_set_at',
+            [hash, ctx.orgId]
+        );
+        await writeAudit({
+            orgId: ctx.orgId, actorId: ctx.userId, action: hash ? 'RECOVERY_PASSWORD_SET' : 'RECOVERY_PASSWORD_REMOVED', entityType: 'organisation', entityId: ctx.orgId,
+        });
+        res.json({
+            success: true,
+            data: { recovery_password_set_at: result.rows[0].recovery_password_set_at },
+            message: hash ? 'Recovery password saved' : 'Recovery password removed',
+        });
+    } catch (err) {
+        sendError(res, err, 'RECOVERY PASSWORD ERROR');
     }
 });
 
@@ -246,7 +283,11 @@ router.post('/transfer-ownership', requireAuth, requireOwner, async (req: AuthRe
         if (target.rows.length === 0) throw notFound('Team member');
 
         await withTransaction(async (tx) => {
-            const moved = await tx('UPDATE organisations SET owner_user_id = $1 WHERE id = $2 AND owner_user_id = $3 RETURNING id', [user_id, ctx.orgId, ctx.userId]);
+            // The outgoing owner chose the recovery password, so it goes with them; the new owner can set their own.
+            const moved = await tx(
+                'UPDATE organisations SET owner_user_id = $1, recovery_password_hash = NULL, recovery_password_set_at = NULL WHERE id = $2 AND owner_user_id = $3 RETURNING id',
+                [user_id, ctx.orgId, ctx.userId]
+            );
             if (moved.rows.length === 0) throw forbidden();
             // The new owner's access now comes from ownership itself, so their assignments are removed.
             await tx('DELETE FROM user_roles WHERE org_id = $1 AND user_id = $2', [ctx.orgId, user_id]);
@@ -269,7 +310,7 @@ router.post('/transfer-ownership', requireAuth, requireOwner, async (req: AuthRe
             orgId: ctx.orgId, actorId: ctx.userId, action: 'OWNERSHIP_TRANSFERRED', entityType: 'organisation', entityId: ctx.orgId,
             targetUserId: user_id, previousValue: ctx.email, newValue: target.rows[0].email
         });
-        res.json({ success: true, message: `${target.rows[0].email} is now the organisation owner.` });
+        res.json({ success: true, message: `${target.rows[0].email} is now the Owner` });
     } catch (err) {
         sendError(res, err, 'OWNERSHIP TRANSFER ERROR');
     }

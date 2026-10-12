@@ -4,7 +4,7 @@ import { Clock, Menu, X } from 'lucide-react';
 import { CtaLink } from '../pages/public/ui';
 
 /**
- * Layout for the public website (/, /features, /pricing).
+ * Layout for the public website (/, /features, /pricing, /security).
  * Purely presentational: it never calls the API or shows account data, even for a signed-in visitor.
  */
 
@@ -12,12 +12,13 @@ const PAGE_TITLES: Record<string, string> = {
   '/': 'SimpleHours · Rosters, timesheets and payroll preparation',
   '/features': 'Features · SimpleHours',
   '/pricing': 'Pricing · SimpleHours',
+  '/security': 'Security · SimpleHours',
 };
 
 const NAV = [
   { label: 'Features', to: '/features' },
   { label: 'Pricing', to: '/pricing' },
-  { label: 'Security', to: '/features#security' },
+  { label: 'Security', to: '/security' },
 ];
 
 const focusRing =
@@ -50,7 +51,11 @@ function usePublicTheme() {
 /** Scrolls to the element named by the URL's #hash whenever it changes, including a cross-page nav (client-side routing doesn't do this on its own). */
 function useHashScroll(pathname: string, hash: string) {
   useEffect(() => {
-    if (!hash) return;
+    // A new page without a #hash starts at the top, like a normal page load.
+    if (!hash) {
+      window.scrollTo(0, 0);
+      return;
+    }
     const id = hash.slice(1);
     let cancelled = false;
     // The target section may not be in the DOM yet on the first paint of a page we've just navigated to,
@@ -136,9 +141,9 @@ export const PublicLayout: React.FC = () => {
                 {item.label}
               </NavLink>
             ))}
-            {/* There is no generic sign-in page: each company signs in through its own link, so this helps people find theirs. */}
-            <Link to="/recover-login-link" className={`ml-2 rounded-md px-3 py-2 text-sm font-medium text-[var(--text)]/75 hover:text-[var(--text)] hover:bg-[var(--glass-4)] ${focusRing}`}>
-              Sign in
+            {/* There is no generic sign-in page: each company signs in through its own link, so this helps owners recover theirs. */}
+            <Link to="/recover-link" className={`ml-2 rounded-md px-3 py-2 text-sm font-medium text-[var(--text)]/75 hover:text-[var(--text)] hover:bg-[var(--glass-4)] ${focusRing}`}>
+              Recover link
             </Link>
             <CtaLink to="/pricing" size="sm">
               Get started
@@ -169,8 +174,8 @@ export const PublicLayout: React.FC = () => {
               ))}
             </ul>
             <div className="mt-3 grid gap-2 border-t border-[var(--border)] pt-4">
-              <CtaLink to="/recover-login-link" variant="secondary" onClick={closeMenu} className="w-full justify-center">
-                Sign in
+              <CtaLink to="/recover-link" variant="secondary" onClick={closeMenu} className="w-full justify-center">
+                Recover link
               </CtaLink>
               <CtaLink to="/pricing" onClick={closeMenu} className="w-full justify-center">
                 Get started
@@ -189,7 +194,7 @@ export const PublicLayout: React.FC = () => {
           <div className="max-w-sm space-y-3">
             <Logo />
             <p className="text-sm leading-relaxed text-[var(--text)]/70">
-              Rosters, timesheets and payroll preparation for Australian organisations with one or more branches.
+              Rosters, timesheets and payroll preparation for Australian organisations.
             </p>
           </div>
           <nav aria-label="Footer">
@@ -197,9 +202,9 @@ export const PublicLayout: React.FC = () => {
               {[
                 { label: 'Features', to: '/features' },
                 { label: 'Pricing', to: '/pricing' },
-                { label: 'Security', to: '/features#security' },
+                { label: 'Security', to: '/security' },
                 { label: 'Get started', to: '/pricing' },
-                { label: 'Find your login link', to: '/recover-login-link' },
+                { label: 'Recover company link', to: '/recover-link' },
               ].map(item => (
                 <li key={item.label}>
                   <Link

@@ -159,7 +159,7 @@ export default function Announcements() {
         toast.success('Reply deleted.');
       }
     } catch (err: any) {
-      toast.error(errorMessage(err, 'It could not be deleted.'));
+      toast.error(errorMessage(err, 'Could not delete. Try again.'));
     } finally {
       setDeleting(false);
       setPendingDelete(null);
@@ -176,7 +176,7 @@ export default function Announcements() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-[var(--text)] tracking-tight">Team chat</h1>
           <p className="text-xs sm:text-sm text-[var(--muted)] mt-1">
-            Notices and discussion for the people who manage your organisation. Workers do not see this page.
+            For managers only. Employees can’t see this page.
           </p>
         </div>
         <Button
@@ -237,7 +237,7 @@ export default function Announcements() {
         {loading && posts.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-[var(--muted)] font-bold text-xs gap-2">
             <div className="w-5 h-5 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
-            <span>Loading messages…</span>
+            <span>Loading…</span>
           </div>
         ) : posts.length === 0 ? (
           <div className="bg-[var(--panel)] rounded-2xl border border-[var(--border)] p-12 text-center text-[var(--muted)]">
@@ -245,7 +245,6 @@ export default function Announcements() {
               <MessageSquare className="w-6 h-6" />
             </div>
             <div className="font-bold text-sm text-[var(--text)]">No messages yet</div>
-            <div className="text-xs mt-1">Messages from the people who manage your organisation will appear here.</div>
           </div>
         ) : (
           posts.map(post => {

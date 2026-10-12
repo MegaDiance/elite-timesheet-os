@@ -15,11 +15,12 @@ const Layout = lazy(() => import('./components/Layout'));
 const ReauthPrompt = named(() => import('./components/modals/ReauthPrompt'), 'ReauthPrompt');
 const Features = named(() => import('./pages/public/Features'), 'Features');
 const Pricing = named(() => import('./pages/public/Pricing'), 'Pricing');
+const SecurityPage = named(() => import('./pages/public/Security'), 'Security');
 const OrgLogin = named(() => import('./pages/auth/OrgLogin'), 'OrgLogin');
 const VerifyLogin = lazy(() => import('./pages/auth/VerifyLogin'));
 const AcceptInvite = lazy(() => import('./pages/auth/AcceptInvite'));
 const SignUp = lazy(() => import('./pages/auth/SignUp'));
-const RecoverLoginLink = lazy(() => import('./pages/auth/RecoverLoginLink'));
+const RecoverCompanyLink = lazy(() => import('./pages/auth/RecoverCompanyLink'));
 const SetupOrganisation = lazy(() => import('./pages/SetupOrganisation'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
@@ -128,13 +129,15 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/features" element={<Features />} />
           <Route path="/pricing" element={<Pricing />} />
+          <Route path="/security" element={<SecurityPage />} />
         </Route>
 
         {/* Sign-in and account set-up */}
         {/* Sign-in only exists at an organisation's own link. /login is deliberately not a sign-in page. */}
         <Route path="/login/:slug" element={<OrgLogin />} />
         <Route path="/login" element={<NotFound offerLinkRecovery />} />
-        <Route path="/recover-login-link" element={<RecoverLoginLink />} />
+        <Route path="/recover-link" element={<RecoverCompanyLink />} />
+        <Route path="/recover-login-link" element={<Navigate to="/recover-link" replace />} />
         <Route path="/verify-login" element={<VerifyLogin />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />

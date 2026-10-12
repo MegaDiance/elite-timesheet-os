@@ -9,11 +9,11 @@ import { CtaLink } from './ui';
 
 const INCLUDED: string[] = [
   'Every branch has its own roster, timesheets and pay-period locks',
-  'The Organisation Owner, and Branch Admins who see only their assigned branches',
-  'Fortnightly rosters: default rosters per worker, copy a day, apply defaults',
-  'Timesheets: worked hours beside rostered hours, part-day leave, the unpaid break worked out automatically',
+  'Roles (Owner, Manager, Branch Manager, Payroll or your own), each limited to chosen branches',
+  'Fortnightly rosters: default rosters per employee, copy a day',
+  'Timesheets: worked beside rostered hours, part-day leave, unpaid breaks worked out for you',
   'Payroll preparation reports, as CSV or PDF',
-  'A private sign-in link, optional two-step verification, automatic sign-out and an audit log',
+  'A private company link, optional two-step verification, automatic sign-out and an audit log',
 ];
 
 interface Plan {
@@ -34,8 +34,8 @@ export const Pricing: React.FC = () => {
       <div className="max-w-3xl">
         <h1 className="text-4xl font-semibold tracking-tight text-[var(--text)] sm:text-5xl">Pricing</h1>
         <p className="mt-4 text-lg leading-relaxed text-[var(--text)]/75">
-          Every plan includes all of SimpleHours — nothing is held back by tier. Choose by the size of your
-          organisation. Signing up only needs an email address; there are no payment details to enter to get started.
+          Every plan includes every feature. Choose by the size of your organisation. Sign up with just an email
+          address — no payment details needed.
         </p>
       </div>
 

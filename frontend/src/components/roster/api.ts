@@ -101,7 +101,7 @@ export async function downloadPayrollCsv(startDate: string, locationId?: string)
 export async function openPayrollPrint(startDate: string, locationId?: string): Promise<void> {
   // Open the window straight away, while the click still counts as a user action, so it isn't blocked.
   const printWindow = window.open('', '_blank');
-  if (!printWindow) throw new Error('Allow pop-ups for SimpleHours to open the printable report.');
+  if (!printWindow) throw new Error('Allow pop-ups to open the printable report.');
   try {
     const res = await api.get('/reports/export/pdf', { params: { start_date: startDate, location_id: locationId || undefined } });
     printWindow.document.open();

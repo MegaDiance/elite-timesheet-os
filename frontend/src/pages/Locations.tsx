@@ -203,8 +203,8 @@ export default function Locations() {
           <h2 className="text-base font-semibold text-[var(--text)]">Branches</h2>
           <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
             {canManage
-              ? 'Each worker belongs to one branch. Give people access to a branch by assigning them a role for it.'
-              : 'These are the branches your roles cover. Adding or changing branches needs more access than your roles include.'}
+              ? 'Each employee belongs to one branch. People get access to a branch through a role.'
+              : 'The branches your roles cover. Your roles don’t include adding or changing branches.'}
           </p>
         </div>
 
@@ -239,7 +239,7 @@ export default function Locations() {
         </Card>
         <Card className="p-4 flex items-center justify-between">
           <div>
-            <div className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Active workers</div>
+            <div className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider">Active employees</div>
             <div className="text-2xl font-bold text-[var(--primary-text)] mt-1">{workerCount}</div>
           </div>
           <div className="w-10 h-10 rounded-xl bg-[var(--primary-light)] text-[var(--primary-text)] flex items-center justify-center">
@@ -284,7 +284,7 @@ export default function Locations() {
       {loading && branches.length === 0 ? (
         <div className="py-16 text-center text-xs text-[var(--muted)] flex items-center justify-center gap-2">
           <div className="w-4 h-4 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
-          <span>Loading branches…</span>
+          <span>Loading…</span>
         </div>
       ) : loadError ? (
         <EmptyState
@@ -358,10 +358,10 @@ export default function Locations() {
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--border)] text-xs">
                 <div className="p-2.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
                   <div className="text-[10px] uppercase font-semibold text-[var(--muted)] flex items-center gap-1">
-                    <Users className="w-3 h-3" /> Workers
+                    <Users className="w-3 h-3" /> Employees
                   </div>
                   <div className="text-xs font-bold text-[var(--text)] mt-0.5">
-                    {branch.active_staff_count || 0} active worker{branch.active_staff_count === 1 ? '' : 's'}
+                    {branch.active_staff_count || 0} active employee{branch.active_staff_count === 1 ? '' : 's'}
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-[var(--panel-subtle)] border border-[var(--border)]">
@@ -397,7 +397,7 @@ export default function Locations() {
                     </div>
                   ) : (
                     <p className="text-[11px] text-[var(--muted)] italic">
-                      No team member has a role for this branch. The organisation owner has access to every branch.
+                      No one has a role for this branch yet. The owner can access every branch.
                     </p>
                   )}
                 </div>
@@ -460,7 +460,7 @@ export default function Locations() {
         onClose={() => setDeactivating(null)}
         onConfirm={handleConfirmDeactivate}
         title={`Deactivate ${deactivating?.name ?? 'branch'}?`}
-        message="People who only have access through this branch lose it straight away. Its workers, rosters, timesheets and audit history are kept, and you can reactivate it at any time."
+        message="People who only have access through this branch lose it straight away. Its employees, rosters, timesheets and audit history are kept, and you can reactivate it at any time."
         confirmLabel="Deactivate branch"
         variant="danger"
         loading={Boolean(deactivating) && togglingId === deactivating?.id}

@@ -10,8 +10,8 @@ export type ImportField = 'full_name' | 'branch' | 'department' | 'email' | 'pho
 
 export const IMPORT_FIELDS: ReadonlyArray<{ key: ImportField; label: string; required?: boolean; hint: string }> = [
   { key: 'full_name', label: 'Full name', required: true, hint: 'e.g. Alex Smith' },
-  { key: 'branch', label: 'Branch', hint: 'The branch name, as it appears in SimpleHours' },
-  { key: 'employee_code', label: 'Employee ID', hint: 'Your own staff number (optional)' },
+  { key: 'branch', label: 'Branch', hint: 'Must match an existing branch name' },
+  { key: 'employee_code', label: 'Employee ID', hint: 'Optional' },
   { key: 'email', label: 'Email', hint: 'Optional' },
   { key: 'phone', label: 'Phone', hint: 'Optional' },
   { key: 'department', label: 'Department', hint: 'Optional' },

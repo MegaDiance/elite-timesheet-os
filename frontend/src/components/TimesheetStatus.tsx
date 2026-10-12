@@ -12,25 +12,25 @@ export const TIMESHEET_STATE: Record<TimesheetState, { label: string; variant: '
   Draft: {
     label: 'Draft',
     variant: 'outline',
-    meaning: 'Hours can still be added or changed. A manager approves the timesheet once the pay period’s hours are right.',
+    meaning: 'Hours can still change. Approve it once the pay period’s hours are right.',
     employeeMeaning: 'Your hours can still be changed. Your manager approves them at the end of the pay period.',
   },
   Submitted: {
     label: 'Submitted',
     variant: 'warning',
-    meaning: 'The employee has handed in their hours (when employees enter their own). Approve it, or send it back if something needs changing.',
-    employeeMeaning: 'You’ve handed in your hours. Your manager will approve them, or send them back if something needs changing.',
+    meaning: 'The employee has submitted their own hours. Approve it, or send it back if something needs changing.',
+    employeeMeaning: 'You’ve submitted your hours. Your manager will approve them or send them back.',
   },
   Approved: {
     label: 'Approved',
     variant: 'success',
-    meaning: 'A manager has checked and approved these hours. They can’t be changed unless a manager reopens the timesheet.',
+    meaning: 'Checked and approved. The hours can’t change unless the timesheet is reopened.',
     employeeMeaning: 'Your manager has approved these hours. If something is wrong, ask your manager to reopen it.',
   },
   Locked: {
     label: 'Locked',
     variant: 'info',
-    meaning: 'Approved and closed for payroll. Nobody can change, reopen or re-approve it while the branch’s timesheets are locked.',
+    meaning: 'Approved and closed for payroll. It can’t be changed or reopened while the branch’s timesheets are locked.',
     employeeMeaning: 'These hours are approved and closed for payroll. They can no longer be changed.',
   },
 };

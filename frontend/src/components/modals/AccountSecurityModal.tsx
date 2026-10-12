@@ -103,13 +103,13 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
     try {
       const res = await api.post('/auth/security/revoke-session', { session_id: sessionId });
       if (res.data?.success) {
-        setSuccessNotice('That device has been signed out.');
+        setSuccessNotice('Device signed out.');
         await fetchSecurityActivity();
       } else {
-        setError(res.data?.error?.message || 'That session could not be signed out.');
+        setError(res.data?.error?.message || 'That device could not be signed out.');
       }
     } catch (err: any) {
-      setError(friendlyError(err, 'That session could not be signed out.'));
+      setError(friendlyError(err, 'That device could not be signed out.'));
     } finally {
       setRevokingId(null);
     }
@@ -122,7 +122,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
     try {
       const res = await api.post('/auth/security/revoke-other-sessions');
       if (res.data?.success) {
-        setSuccessNotice('All your other devices have been signed out.');
+        setSuccessNotice('Other devices signed out.');
         await fetchSecurityActivity();
       } else {
         setError(res.data?.error?.message || 'Your other devices could not be signed out.');
@@ -162,7 +162,6 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
       isOpen={isOpen}
       onClose={onClose}
       title="Sign-in activity"
-      description="Where your account is signed in, and its recent sign-ins."
       maxWidth="2xl"
     >
       <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
@@ -183,7 +182,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         {loading && !data ? (
           <div className="py-12 flex flex-col items-center justify-center gap-3 text-[var(--muted)]">
             <RefreshCw className="w-6 h-6 animate-spin text-indigo-500" />
-            <p className="text-xs">Loading your sign-in activity…</p>
+            <p className="text-xs">Loading…</p>
           </div>
         ) : (
           <>
@@ -219,14 +218,9 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
             {/* Active Sessions List */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">
-                    Signed-in devices ({data?.active_sessions.length || 0})
-                  </h4>
-                  <p className="text-[11px] text-[var(--muted)]">
-                    Devices where your account is signed in right now.
-                  </p>
-                </div>
+                <h4 className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">
+                  Signed-in devices ({data?.active_sessions.length || 0})
+                </h4>
                 {otherSessionsCount > 0 && (
                   <Button
                     variant="ghost"
@@ -304,14 +298,9 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
             {/* Recent Login Activity History */}
             <div className="space-y-3 pt-2">
               <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">
-                    Recent sign-ins
-                  </h4>
-                  <p className="text-[11px] text-[var(--muted)]">
-                    The latest sign-in attempts on your account.
-                  </p>
-                </div>
+                <h4 className="text-xs font-bold text-[var(--text)] uppercase tracking-wider">
+                  Recent sign-ins
+                </h4>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -378,7 +367,7 @@ export const AccountSecurityModal: React.FC<AccountSecurityModalProps> = ({ isOp
         <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between text-[11px] text-[var(--muted)]">
           <div className="flex items-center gap-1.5">
             <Globe className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Locations are approximate, based on network address.</span>
+            <span>Locations are approximate.</span>
           </div>
           <Button variant="secondary" size="sm" onClick={onClose}>
             Close

@@ -121,7 +121,7 @@ export default function Roster() {
     ]);
     if (seq !== loadSeq.current) return;
     const failed = [w, r].find((x): x is PromiseRejectedResult => x.status === 'rejected');
-    setLoadError(failed ? apiErrorMessage(failed.reason, 'The roster could not be loaded.') : null);
+    setLoadError(failed ? apiErrorMessage(failed.reason, 'The schedule could not be loaded.') : null);
     const partial = [l, t].find((x): x is PromiseRejectedResult => x.status === 'rejected');
     setPartialError(partial ? `Lock and approval status could not be loaded: ${apiErrorMessage(partial.reason, 'please refresh.')}` : null);
     setWorkers(w.status === 'fulfilled' ? w.value.data?.data ?? [] : []);
@@ -175,7 +175,7 @@ export default function Roster() {
   const timesheetByWorker = useMemo(() => new Map(timesheets.map(t => [t.employee_id, t])), [timesheets]);
   const workerById = useMemo(() => new Map(workers.map(w => [w.id, w])), [workers]);
   const dayOf = (workerId: string, dateIso: string): DayContent => recordByCell.get(cellKey(workerId, dateIso)) ?? EMPTY_DAY;
-  const nameOf = (id: string) => workerById.get(id)?.full_name ?? 'Worker';
+  const nameOf = (id: string) => workerById.get(id)?.full_name ?? 'Employee';
   const branchNameOf = (id: string) => branches.find(b => b.id === id)?.name ?? workers.find(w => w.location_id === id)?.location_name ?? 'this branch';
   const statusOf = (workerId: string): TimesheetStatus => timesheetByWorker.get(workerId)?.status ?? 'Draft';
 
@@ -215,7 +215,7 @@ export default function Roster() {
   const selectedBranchLock = branchId ? lockByBranch.get(branchId) : undefined;
   const approvable = timesheets.filter(t => t.status === 'Draft' && !t.timesheet_locked);
   const filterName = branchId ? branchNameOf(branchId) : branches.length === 1 ? branches[0].name : null;
-  const scopeText = filterName ? `all workers in ${filterName}` : 'all workers in all your branches';
+  const scopeText = filterName ? `all employees in ${filterName}` : 'all employees in all your branches';
   const mobileDay = mobileDayChoice && days.includes(mobileDayChoice) ? mobileDayChoice : days.includes(today) ? today : days[0];
 
   const changePeriod = (iso: string) => {
@@ -336,7 +336,7 @@ export default function Roster() {
         employee_id: worker?.id,
       });
       const count = Number(res.data?.data?.workers ?? 0);
-      const who = worker ? worker.full_name : `${count} worker${count === 1 ? '' : 's'}`;
+      const who = worker ? worker.full_name : `${count} employee${count === 1 ? '' : 's'}`;
       const nothingToDo = worker && count === 0;
       const skipped: Array<{ employee_id: string; date: string; reason: string }> = mode === 'roster' ? res.data?.data?.skipped ?? [] : [];
       if (nothingToDo) {
@@ -761,26 +761,26 @@ export default function Roster() {
       </div>
     );
   } else if (loading && workers.length === 0) {
-    content = <p className="p-10 text-center text-sm text-[var(--muted)] rounded-xl border border-[var(--border)] bg-[var(--panel)]">Loading the roster…</p>;
+    content = <p className="p-10 text-center text-sm text-[var(--muted)] rounded-xl border border-[var(--border)] bg-[var(--panel)]">Loading the schedule…</p>;
   } else if (workers.length > 0 && shownWorkers.length === 0) {
     content = (
       <div className="p-10 text-center space-y-3 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-        <p className="text-sm font-semibold text-[var(--text)]">No worker matches “{search.trim()}”.</p>
+        <p className="text-sm font-semibold text-[var(--text)]">No employee matches “{search.trim()}”.</p>
         <p className="text-sm text-[var(--muted)]">Check the spelling, or look in another branch.</p>
-        <button type="button" onClick={() => setSearch('')} className={buttonClass.secondary}>Show all workers</button>
+        <button type="button" onClick={() => setSearch('')} className={buttonClass.secondary}>Show all employees</button>
       </div>
     );
   } else if (workers.length === 0) {
     content = (
       <div className="p-10 text-center space-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-        <p className="text-sm font-semibold text-[var(--text)]">No workers in {filterName ?? 'your branches'} yet.</p>
+        <p className="text-sm font-semibold text-[var(--text)]">No employees in {filterName ?? 'your branches'} yet.</p>
         {can('employees.create') ? (
           <>
-            <p className="text-sm text-[var(--muted)]">The roster has one row per worker. Add your first worker, then come back to give them shifts.</p>
+            <p className="text-sm text-[var(--muted)]">Add staff, then give them shifts here.</p>
             <Link to="/staff" className={`${buttonClass.primary} inline-flex`}>Add an employee</Link>
           </>
         ) : (
-          <p className="text-sm text-[var(--muted)]">The roster has one row per worker. It will show them once someone adds them.</p>
+          <p className="text-sm text-[var(--muted)]">Employees appear here once they’re added to Staff.</p>
         )}
       </div>
     );
@@ -824,7 +824,7 @@ export default function Roster() {
             onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             aria-pressed={selectMode}
             className={`${tool} ${selectMode ? '!bg-[var(--primary-light)] !text-[var(--primary-text)] !border-[var(--primary)]/40' : ''}`}
-            title="Select days to copy the roster from the day before (tip: shift-click a day)"
+            title="Select days to copy the roster from the day before. Tip: shift-click a day."
           >
             <MousePointerClick className="w-3.5 h-3.5" aria-hidden="true" /> Copy days…
           </button>}
@@ -849,16 +849,16 @@ export default function Roster() {
           {lockButton('roster')}
           {lockButton('timesheet')}
           <HelpTip label="Lock">
-            A lock stops changes for this branch and pay period. A roster lock still lets you record worked hours; a timesheet lock stops every timesheet change. Unlocking needs a password.
+            A lock stops changes for this branch and pay period. A roster lock still allows worked hours to be recorded; a timesheet lock stops every timesheet change. Locking and unlocking need a password.
           </HelpTip>
         </>
       ))}
       {canExport && toolGroup('Export', (
         <>
-          <button type="button" onClick={exportCsv} className={tool} title="Download the payroll CSV for this pay period and branch filter">
+          <button type="button" onClick={exportCsv} className={tool} title="Download the payroll CSV for this pay period">
             <Download className="w-3.5 h-3.5" aria-hidden="true" /> CSV
           </button>
-          <button type="button" onClick={printReport} className={tool} title="Open a printable report (save it as a PDF from the print dialog)">
+          <button type="button" onClick={printReport} className={tool} title="Open a printable report. Save it as a PDF from the print dialog.">
             <Printer className="w-3.5 h-3.5" aria-hidden="true" /> PDF
           </button>
         </>
@@ -884,7 +884,6 @@ export default function Roster() {
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-[var(--text)] leading-tight">Schedule</h1>
-            <p className="text-xs text-[var(--muted)] mt-0.5">Plan shifts and record the hours people worked.</p>
           </div>
           <div className="flex flex-wrap items-end gap-3" data-tour="roster-controls">
             <div>
@@ -929,7 +928,7 @@ export default function Roster() {
             </div>
 
             <div>
-              {stepLabel(3, 'Find a worker', 'roster-search')}
+              {stepLabel(3, 'Find an employee', 'roster-search')}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
                 <input
@@ -958,7 +957,7 @@ export default function Roster() {
                 {canCopyDays && <span className="text-[var(--muted)] hidden lg:inline"> Shift-click to select several days.</span>}
               </>
             ) : (
-              <><strong className="font-semibold">Click a day</strong> to see its shifts and hours. Your access is view only.</>
+              <><strong className="font-semibold">Click a day</strong> to see its shifts and hours. You have view-only access.</>
             )}
           </p>
           <PlannedWorkedKey />
@@ -1076,7 +1075,7 @@ export default function Roster() {
           }
         >
           <p className="text-xs text-[var(--muted)] mb-2">
-            Approved timesheets can’t be changed until they are reopened. Each one is checked on its own; any that can’t be approved are listed afterwards.
+            Approved timesheets can’t be changed until reopened. Any that can’t be approved are listed afterwards.
           </p>
           <ul className="text-xs text-[var(--text)] max-h-48 overflow-y-auto space-y-0.5">
             {approvable.map(t => (

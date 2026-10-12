@@ -100,7 +100,7 @@ export default function EmployeeSchedule() {
         if (cancelled) return;
         setDays(new Map((res.data.data as ScheduleDay[]).map(d => [d.record_date, d])));
       })
-      .catch(err => { if (!cancelled) setError(friendlyError(err, 'Your schedule could not be loaded.')); })
+      .catch(err => { if (!cancelled) setError(friendlyError(err, 'Couldn’t load your schedule.')); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [rangeStart, rangeEnd]);
@@ -168,7 +168,7 @@ export default function EmployeeSchedule() {
               {next.roster.filter(e => e.type === 'WORK').map(e => entryWhen(e)).join(' and ')}
             </p>
           ) : (
-            <p className="text-[var(--muted)]">No more shifts in the next four weeks yet. Your manager adds them to the roster.</p>
+            <p className="text-[var(--muted)]">No shifts in the next four weeks.</p>
           )}
         </div>
       </section>
@@ -212,7 +212,7 @@ export default function EmployeeSchedule() {
             <button type="button" onClick={load} className={navButton}><RotateCcw className="w-4 h-4 mr-1.5" aria-hidden="true" /> Try again</button>
           </div>
         ) : loading ? (
-          <p className="p-8 text-center text-sm text-[var(--muted)] rounded-xl border border-[var(--border)]">Loading your schedule…</p>
+          <p className="p-8 text-center text-sm text-[var(--muted)] rounded-xl border border-[var(--border)]">Loading…</p>
         ) : view === 'month' ? (
           <div className="rounded-xl border border-[var(--border)] overflow-hidden">
             <div className="grid grid-cols-7 text-center text-xs font-semibold text-[var(--muted)] border-b border-[var(--border)]" aria-hidden="true">

@@ -15,7 +15,7 @@ import {
  * The login link only chooses which organisation's sign-in page to show; it grants nothing by
  * itself. The password is the secret. So the link can be given back to whoever proves the
  * account's email and password — exactly what signing in through the link would need anyway —
- * without making anything weaker. Two ways:
+ * without making anything weaker. Three ways:
  *
  *   1. Email + password, answered on screen: the current link of every organisation the account
  *      can sign in to. Works while email is off. Nothing is replaced, so bookmarks keep working.
@@ -23,8 +23,10 @@ import {
  *      fresh one (the old one already doesn't work, so nobody loses a working bookmark).
  *   2. Email only, answered by email (only while email is on): the same links, sent to that
  *      address if it belongs to an account. The response never says whether it does.
+ *   3. Company name + company recovery password (what /recover-link asks for): the Owner sets the
+ *      recovery password in Settings → Security. Answered on screen, like 1.
  *
- * Neither creates a session. Failures look the same whatever was wrong, a password comparison
+ * None creates a session. Failures look the same whatever was wrong, a password comparison
  * always runs (against a dummy hash when there is no such account), and every rate-limit key is
  * built only from what was submitted.
  */
@@ -133,28 +135,37 @@ async function linksFor(userId: string, opts: { replaceDeadLinks: boolean; clien
     const organisations = await listAccessibleOrganisations(userId);
     const found: Array<FoundLink & { orgId: string }> = [];
     for (const org of organisations) {
-        // Read before the link itself, so a replacement made in between is never mistaken for the dead link.
-        const seenHash = (await query('SELECT portal_slug_hash FROM organisations WHERE id = $1', [org.id])).rows[0]?.portal_slug_hash ?? null;
-        let link = await currentPortalLink(org.id);
-        let replaced = false;
-        if ((!link || link.expired) && opts.replaceDeadLinks) {
-            const fresh = await replaceOwnersDeadLink(org.id, userId, seenHash);
-            if (fresh) {
-                replaced = true;
-                await writeAudit({
-                    orgId: org.id, actorId: userId, action: 'LOGIN_LINK_ROTATED', entityType: 'organisation', entityId: org.id,
-                    details: 'Private login link replaced while looking it up (the previous one had stopped working), no expiry', ip: opts.client.ip,
-                });
-            }
-            // Either the new link, or the one a concurrent lookup issued first.
-            link = await currentPortalLink(org.id);
-        }
-        const works = Boolean(link && !link.expired);
-        found.push({
-            orgId: org.id, organisationName: org.name, loginPath: works ? link!.path : null, expiresAt: works ? link!.expiresAt : null, replaced,
-        });
+        found.push(await linkFor(org, { replaceAsOwner: opts.replaceDeadLinks ? userId : null, actorId: userId, client: opts.client }));
     }
     return found;
+}
+
+/**
+ * The working link of one organisation. With `replaceAsOwner`, a dead link (expired or can't be
+ * shown) is replaced, but only while that user still owns the organisation.
+ */
+async function linkFor(
+    org: { id: string; name: string },
+    opts: { replaceAsOwner: string | null; actorId: string | null; client: ClientInfo },
+): Promise<FoundLink & { orgId: string }> {
+    // Read before the link itself, so a replacement made in between is never mistaken for the dead link.
+    const seenHash = (await query('SELECT portal_slug_hash FROM organisations WHERE id = $1', [org.id])).rows[0]?.portal_slug_hash ?? null;
+    let link = await currentPortalLink(org.id);
+    let replaced = false;
+    if ((!link || link.expired) && opts.replaceAsOwner) {
+        const fresh = await replaceOwnersDeadLink(org.id, opts.replaceAsOwner, seenHash);
+        if (fresh) {
+            replaced = true;
+            await writeAudit({
+                orgId: org.id, actorId: opts.actorId, action: 'LOGIN_LINK_ROTATED', entityType: 'organisation', entityId: org.id,
+                details: 'Private link replaced while looking it up (the previous one had stopped working), no expiry', ip: opts.client.ip,
+            });
+        }
+        // Either the new link, or the one a concurrent lookup issued first.
+        link = await currentPortalLink(org.id);
+    }
+    const works = Boolean(link && !link.expired);
+    return { orgId: org.id, organisationName: org.name, loginPath: works ? link!.path : null, expiresAt: works ? link!.expiresAt : null, replaced };
 }
 
 /**
@@ -223,7 +234,7 @@ export async function findLoginLinks(input: { email?: unknown; password?: unknow
     for (const link of links) {
         await writeAudit({
             orgId: link.orgId, actorId: user.id, action: 'LOGIN_LINK_LOOKUP', entityType: 'organisation', entityId: link.orgId,
-            details: `Looked up the login link with email and password from ${describeClient(client)}`, ip: client.ip,
+            details: `Looked up the private link with email and password from ${describeClient(client)}`, ip: client.ip,
         });
     }
     if (links.some(l => l.replaced)) await notifyOwnerOfReplacement(user.email, links.filter(l => l.replaced), client);
@@ -306,4 +317,83 @@ export async function emailLoginLinks(input: { email?: unknown }, client: Client
     const result = await sendTransactionalEmail({ to: user.email, subject: template.subject, html: template.html, text: template.text });
     if (!result.success) console.warn('[LOGIN LINK EMAIL] not delivered:', result.error);
     return { kind: 'accepted' };
+}
+
+// ---------------------------------------------------------------------------
+// 3. Company name + company recovery password, answered on screen
+// ---------------------------------------------------------------------------
+
+const COMPANY_FAILURES_BEFORE_LOCK = 5;
+const NAME_MAX_LENGTH = 120;
+/** Names aren't unique across owners. Each same-named organisation with a recovery password is checked, up to this many. */
+const MAX_SAME_NAME = 5;
+
+/** Company names match the way they are typed, ignoring case and surrounding spaces. */
+export function normaliseCompanyName(raw: string): string {
+    return raw.trim().toLowerCase();
+}
+
+/**
+ * { company_name, password } → the current link of the organisation(s) with that name whose
+ * recovery password (organisations.recovery_password_hash, set by the Owner) matches.
+ *
+ * The same rules as the email + password lookup: no session, the same answer for a wrong name, a
+ * wrong password, a company without a recovery password or malformed input, a password comparison
+ * always runs, and the limits count per address and per company name. Proving the recovery
+ * password is proving what only the Owner chose, so a dead link is replaced as the Owner.
+ */
+export async function findCompanyLink(input: { company_name?: unknown; password?: unknown }, client: ClientInfo): Promise<LookupOutcome> {
+    const { company_name: rawName, password } = input;
+    const ip = client.ip || '127.0.0.1';
+    const ipKey = `recover:ip:${ipLimitKey(ip)}`;
+    const name = typeof rawName === 'string' ? normaliseCompanyName(rawName) : '';
+
+    if (!name || name.length > NAME_MAX_LENGTH || typeof password !== 'string' || !password || password.length > PASSWORD_MAX_LENGTH) {
+        if (isLocked(ipKey)) return { kind: 'rate-limited' };
+        await comparePasswordUniform('x', null);
+        recordFailure(ipKey, IP_FAILURES_BEFORE_LOCK);
+        return { kind: 'unverified' };
+    }
+
+    const companyKey = `recover:company:${sha256Hex(name)}`;
+    if (isLocked(ipKey) || isLocked(companyKey)) return { kind: 'rate-limited' };
+    // Held while the passwords are checked, so attempts sent at the same moment can't all slip past the limit.
+    const release = tryReserveAttempt(companyKey, COMPANY_FAILURES_BEFORE_LOCK);
+    if (!release) return { kind: 'rate-limited' };
+    const matched: Array<{ id: string; name: string; owner_user_id: string }> = [];
+    try {
+        const candidates = (await query(
+            `SELECT id, name, owner_user_id, recovery_password_hash FROM organisations
+              WHERE is_active = true AND recovery_password_hash IS NOT NULL AND LOWER(BTRIM(name)) = $1
+              ORDER BY created_at, id LIMIT ${MAX_SAME_NAME}`,
+            [name]
+        )).rows;
+        // Always compare, so the time taken does not say whether the company exists.
+        if (candidates.length === 0) await comparePasswordUniform(password, null);
+        for (const org of candidates) {
+            if (await comparePasswordUniform(password, org.recovery_password_hash)) matched.push(org);
+        }
+        if (matched.length === 0) {
+            recordFailure(ipKey, IP_FAILURES_BEFORE_LOCK);
+            recordFailure(companyKey, COMPANY_FAILURES_BEFORE_LOCK);
+            recordFailedAttempt(companyKey);
+            return { kind: 'unverified' };
+        }
+    } finally {
+        release();
+    }
+
+    buckets.delete(companyKey);
+    clearRateLimit(companyKey);
+
+    const links: Array<FoundLink & { orgId: string }> = [];
+    for (const org of matched) {
+        const link = await linkFor(org, { replaceAsOwner: org.owner_user_id, actorId: null, client });
+        links.push(link);
+        await writeAudit({
+            orgId: org.id, actorId: null, action: 'LOGIN_LINK_LOOKUP', entityType: 'organisation', entityId: org.id,
+            details: `Looked up the private link with the company recovery password from ${describeClient(client)}`, ip: client.ip,
+        });
+    }
+    return { kind: 'found', links: links.map(({ orgId: _orgId, ...l }) => ({ ...l, loginUrl: l.loginPath ? `${publicBaseUrl()}${l.loginPath}` : null })) };
 }

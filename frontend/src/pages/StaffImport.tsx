@@ -45,8 +45,8 @@ export default function StaffImport() {
   const readFile = async (file: File) => {
     setError(null);
     const kind = fileKind(file.name);
-    if (!kind) { setError('Choose a CSV or Excel (.xlsx) file. Older .xls files need to be saved as .xlsx first.'); return; }
-    if (file.size > MAX_FILE_BYTES) { setError('That file is larger than 10 MB. Split it into smaller files.'); return; }
+    if (!kind) { setError('Choose a CSV or .xlsx file. Save older .xls files as .xlsx first.'); return; }
+    if (file.size > MAX_FILE_BYTES) { setError('File is over 10 MB. Split it into smaller files.'); return; }
     setBusy(true);
     try {
       let table: unknown[][];
@@ -57,8 +57,8 @@ export default function StaffImport() {
         table = await readSheet(file) as unknown[][];
       }
       const { headers: h, rows } = splitHeader(table);
-      if (rows.length === 0) { setError('That file has no rows under its header row.'); return; }
-      if (rows.length > MAX_IMPORT_ROWS) { setError(`That file has ${rows.length} rows. Import ${MAX_IMPORT_ROWS} people or fewer at a time.`); return; }
+      if (rows.length === 0) { setError('No rows found under the header row.'); return; }
+      if (rows.length > MAX_IMPORT_ROWS) { setError(`File has ${rows.length} rows. Import up to ${MAX_IMPORT_ROWS} at a time.`); return; }
       setFileName(file.name);
       setHeaders(h);
       setRawRows(rows);
@@ -66,7 +66,7 @@ export default function StaffImport() {
       setChecked(null);
       setStep('map');
     } catch {
-      setError('That file couldn’t be read. Check it opens in your spreadsheet program, then try again.');
+      setError('Couldn’t read that file. Check it opens in your spreadsheet app.');
     } finally {
       setBusy(false);
       if (fileInput.current) fileInput.current.value = '';
@@ -77,7 +77,7 @@ export default function StaffImport() {
   const onDrop = (e: DragEvent) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) void readFile(f); };
 
   const check = async () => {
-    if (mapping.full_name === undefined) { setError('Choose which column has each person’s full name.'); return; }
+    if (mapping.full_name === undefined) { setError('Choose the Full name column.'); return; }
     setError(null);
     setBusy(true);
     const rows = mapRows(rawRows, mapping);
@@ -87,7 +87,7 @@ export default function StaffImport() {
       setChecked(res.data.data.rows);
       setStep('review');
     } catch (err) {
-      setError(friendlyError(err, 'The file couldn’t be checked. Nothing was imported.'));
+      setError(friendlyError(err, 'Couldn’t check the file. Nothing was imported.'));
     } finally {
       setBusy(false);
     }
@@ -112,7 +112,7 @@ export default function StaffImport() {
         setChecked(err.response.data.data.rows);
         setError(err.response.data.error?.message ?? 'Some rows have problems. Nothing was imported.');
       } else {
-        setError(friendlyError(err, 'The import didn’t go through. Nothing was imported.'));
+        setError(friendlyError(err, 'Import failed. Nothing was imported.'));
       }
     } finally {
       setBusy(false);
@@ -125,7 +125,7 @@ export default function StaffImport() {
       const job = (await api.get(`/staff-import/jobs/${jobId}`)).data.data;
       setProgress({ done: job.done_rows, total: job.total_rows });
       if (job.status === 'done') { setImported(job.total_rows); setStep('done'); return; }
-      if (job.status === 'failed') { setError(job.error || 'The import failed. Nothing was imported.'); setStep('review'); return; }
+      if (job.status === 'failed') { setError(job.error || 'Import failed. Nothing was imported.'); setStep('review'); return; }
     }
   };
 
@@ -177,8 +177,8 @@ export default function StaffImport() {
             className={`flex flex-col items-center justify-center gap-3 p-10 rounded-lg border-2 border-dashed text-center cursor-pointer ${dragging ? 'border-[var(--primary)] bg-[var(--primary-light)]' : 'border-[var(--border)] hover:border-[var(--border-hover)]'}`}
           >
             <Upload className="w-6 h-6 text-[var(--muted)]" aria-hidden="true" />
-            <span className="text-sm font-medium text-[var(--text)]">{busy ? 'Reading your file…' : 'Choose a spreadsheet, or drop it here'}</span>
-            <span className="text-xs text-[var(--muted)]">CSV or Excel (.xlsx), up to {MAX_IMPORT_ROWS.toLocaleString()} people. The first row should be column names.</span>
+            <span className="text-sm font-medium text-[var(--text)]">{busy ? 'Reading file…' : 'Choose a spreadsheet or drop it here'}</span>
+            <span className="text-xs text-[var(--muted)]">CSV or Excel (.xlsx), up to {MAX_IMPORT_ROWS.toLocaleString()} people, column names in the first row</span>
             <input ref={fileInput} type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={onPick} className="sr-only" disabled={busy} />
           </label>
           <a
@@ -195,7 +195,7 @@ export default function StaffImport() {
         <section className="space-y-4">
           <p className="text-sm text-[var(--muted)]">
             <FileSpreadsheet className="inline w-4 h-4 mr-1 -mt-0.5" aria-hidden="true" />
-            <span className="text-[var(--text)] font-medium">{fileName}</span> · {rawRows.length} {rawRows.length === 1 ? 'person' : 'people'}. Tell us which column holds what.
+            <span className="text-[var(--text)] font-medium">{fileName}</span> · {rawRows.length} {rawRows.length === 1 ? 'person' : 'people'}
           </p>
           <div className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-md">
             {IMPORT_FIELDS.map(field => (
@@ -239,7 +239,7 @@ export default function StaffImport() {
           {problems.length > 0 ? (
             <>
               <p className="text-sm text-[var(--muted)]">
-                Nothing is imported until every row is right. Fix these rows in your spreadsheet, then upload it again.
+                Nothing is imported until every row is fixed. Fix these in your spreadsheet and upload it again.
               </p>
               <div className="overflow-x-auto border border-[var(--border)] rounded-md">
                 <table className="w-full text-sm">
@@ -298,7 +298,7 @@ export default function StaffImport() {
                   <div className="h-2 rounded-full bg-[var(--panel-subtle)] overflow-hidden">
                     <div className="h-full bg-[var(--primary)] transition-[width]" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
                   </div>
-                  <p className="text-sm text-[var(--muted)]">Importing… {progress.done} of {progress.total}. You can leave this page; the import carries on.</p>
+                  <p className="text-sm text-[var(--muted)]">Importing… {progress.done} of {progress.total}. You can leave this page; the import continues.</p>
                 </div>
               ) : (
                 <div className="flex flex-wrap justify-between gap-2">
@@ -317,7 +317,7 @@ export default function StaffImport() {
         <section className="space-y-4 text-center py-8" role="status">
           <CheckCircle2 className="w-8 h-8 mx-auto text-[var(--success)]" aria-hidden="true" />
           <p className="text-lg font-semibold text-[var(--text)]">{imported} {imported === 1 ? 'person' : 'people'} imported</p>
-          <p className="text-sm text-[var(--muted)]">They’re on the Staff list now. Give them shifts on the Schedule, or invite them to the employee portal.</p>
+          <p className="text-sm text-[var(--muted)]">Add their shifts on the Schedule, or set up portal access from Staff.</p>
           <div className="flex justify-center gap-2">
             <Button variant="primary" size="md" onClick={() => navigate('/staff')}>Go to Staff</Button>
             <Button variant="ghost" size="md" onClick={() => { setChecked(null); setStep('upload'); }}>Import another file</Button>

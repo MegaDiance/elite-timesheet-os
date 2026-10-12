@@ -15,17 +15,17 @@ import { resolvePortalToken } from './portalLink';
  */
 export const PAGE_PATHS: readonly string[] = [
     // Public website
-    '/', '/features', '/pricing',
+    '/', '/features', '/pricing', '/security',
     // Account set-up flows that arrive by emailed / shared link
     '/verify-login', '/forgot-password', '/reset-password', '/signup', '/setup-organisation',
     '/accept-invite', '/accept-employee-invite',
-    // Finding a lost company login link (creates no session; needs the account's password, or emails the account)
-    '/recover-login-link',
+    // Recovering a lost company link (creates no session; needs the company recovery password, or emails the account)
+    '/recover-link',
     // Signed-in application (the API authorises every request; these only need to load the app)
     '/app', '/timesheets', '/schedule', '/leave', '/staff', '/staff/import', '/reports', '/announcements',
     '/settings', '/settings/branches', '/settings/roles', '/settings/audit',
     // Old addresses that now redirect (bookmarks and emails keep working)
-    '/dashboard', '/roster', '/leave-requests', '/workers', '/branches', '/audit',
+    '/dashboard', '/roster', '/leave-requests', '/workers', '/branches', '/audit', '/recover-login-link',
     '/my/schedule', '/my/timesheet', '/my/history', '/my/leave',
 ];
 

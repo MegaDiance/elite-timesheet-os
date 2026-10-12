@@ -41,7 +41,7 @@ export default function DeleteRoleModal({ role, otherRoles, busy, onCancel, onCo
               <input type="radio" name="members" className="mt-1" checked={choice === 'move'} onChange={() => setChoice('move')} disabled={otherRoles.length === 0} />
               <span className="flex-1 min-w-0 space-y-2">
                 <span className="block text-sm font-medium text-[var(--text)]">Give them another role instead</span>
-                <span className="block text-xs text-[var(--muted)]">It applies where this role applied for each person.</span>
+                <span className="block text-xs text-[var(--muted)]">It applies in the same places as this role did.</span>
                 {choice === 'move' && otherRoles.length > 0 && (
                   <Select
                     aria-label="Role to move them to"

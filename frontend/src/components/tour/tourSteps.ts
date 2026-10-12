@@ -16,7 +16,7 @@ export interface TourStep {
   route?: string;
   /** The step finishes itself when the app sends this signal. "Next" stays available as "Skip". */
   waitFor?: TourSignal;
-  /** Instruction shown while waiting, e.g. "Click any day in a worker’s row". */
+  /** Instruction shown while waiting, e.g. "Click any day in an employee’s row". */
   doThis?: string;
   /** Shown instead of `body` when the target isn't on the page (e.g. no workers yet). */
   fallback?: string;
@@ -40,7 +40,7 @@ export const MANAGER_TOUR: TourStep[] = [
     title: 'Your workspace',
     target: 'workspace',
     body: [
-      'This shows the organisation you’re signed in to, the branch you’re working in, and your role.',
+      'Your organisation, the branch you’re working in, and your role.',
       'You only see the branches your roles cover. Use “Switch” to change branch.',
     ],
   },
@@ -52,7 +52,7 @@ export const MANAGER_TOUR: TourStep[] = [
     target: 'roster-controls',
     body: [
       'Pick the branch, then the fortnight with the arrows or the date button. “Today” jumps back to the current pay period.',
-      'Type a name in “Find a worker” to go straight to them.',
+      'Search by name to go straight to someone.',
     ],
   },
   {
@@ -62,9 +62,9 @@ export const MANAGER_TOUR: TourStep[] = [
     route: '/schedule',
     target: 'roster-cell',
     waitFor: 'day-editor-opened',
-    doThis: 'Click any day in a worker’s row.',
-    body: ['Each row is a worker and each box is a day. Clicking a day opens it so you can add or change hours.'],
-    fallback: 'There are no workers in this branch yet. Once a worker is added, their row appears here, one box per day.',
+    doThis: 'Click any day in an employee’s row.',
+    body: ['Each row is an employee and each box is a day. Click a day to add or change hours.'],
+    fallback: 'No employees in this branch yet. Once one is added, their row appears here, one box per day.',
   },
   {
     id: 'enter-times',
@@ -74,8 +74,8 @@ export const MANAGER_TOUR: TourStep[] = [
     waitFor: 'shift-times-entered',
     doThis: 'Type 9 in the first box and 5p in the second.',
     body: [
-      'Start → Finish. Quick typing works: “9” becomes 9:00 AM, “5p” or “17” becomes 5:00 PM.',
-      'SimpleHours works out the hours for you as you type.',
+      'Start → Finish. “9” becomes 9:00 AM; “5p” or “17” becomes 5:00 PM.',
+      'Hours are worked out as you type.',
     ],
     fallback: 'Open a day on the roster, then enter a start and finish time, for example 9:00 AM → 5:00 PM.',
   },
@@ -86,7 +86,7 @@ export const MANAGER_TOUR: TourStep[] = [
     target: 'break-controls',
     body: [
       'Each shift has a break. “Standard” follows your organisation’s rule, for example 30 minutes once a day is 6 hours or longer.',
-      '“Apply break to all days” ticks every day of the fortnight for you. Untick the days that are different, the exceptions, then apply.',
+      '“Apply break to all days” ticks every day of the fortnight. Untick the exceptions, then apply.',
     ],
   },
   {
@@ -97,8 +97,8 @@ export const MANAGER_TOUR: TourStep[] = [
     waitFor: 'leave-line-added',
     doThis: 'Click “Add time”, then change its type to Sick leave or Annual leave.',
     body: [
-      'Leave is just another line on the day, with its own type: Sick, Annual, Time in lieu, Leave without pay or Other.',
-      'A whole day of leave can be entered as hours only, without times.',
+      'Leave is another line on the day, with its own type: Sick, Annual, Time in lieu, Leave without pay or Other.',
+      'A full day of leave can be entered as hours only.',
     ],
   },
   {
@@ -107,8 +107,8 @@ export const MANAGER_TOUR: TourStep[] = [
     title: 'Split days',
     target: 'save-day',
     body: [
-      'One day can hold several lines. SimpleHours adds up work and leave separately, and the break only ever comes off work.',
-      'Save to keep your changes, or Cancel to leave the day exactly as it was. The box on the roster then shows what changed.',
+      'A day can hold several lines. Work and leave are added up separately, and the break only comes off work.',
+      'Save keeps your changes; Cancel leaves the day as it was.',
     ],
     example: [
       { time: '9:00 AM → 1:00 PM', kind: 'Work', tone: 'work' },
@@ -130,8 +130,8 @@ export const MANAGER_TOUR: TourStep[] = [
     title: 'You’re ready',
     target: 'daily-nav',
     body: [
-      'Your daily work lives here. A number appears when something is waiting for you to approve.',
-      'You can take this tour again any time from Help.',
+      'Your daily work lives here. A number shows when something needs your approval.',
+      'Take this tour again any time from Help.',
     ],
   },
 ];
@@ -139,9 +139,9 @@ export const MANAGER_TOUR: TourStep[] = [
 export const EMPLOYEE_TOUR: TourStep[] = [
   {
     id: 'workspace',
-    title: 'Welcome',
+    title: 'Your workspace',
     target: 'workspace',
-    body: ['This shows your workplace and branch. Everything here is about your own shifts and hours.'],
+    body: ['Your workplace and branch. Everything here is about your own shifts and hours.'],
   },
   {
     id: 'schedule',
@@ -158,13 +158,13 @@ export const EMPLOYEE_TOUR: TourStep[] = [
     title: 'Asking for leave',
     route: '/my/leave',
     target: 'leave-form',
-    body: ['Choose the type of leave and the dates, then send it. You’ll see here when it’s approved.'],
+    body: ['Choose the leave type and dates, then send it. Its status shows here.'],
   },
   {
     id: 'finish',
     title: 'You’re ready',
     target: 'daily-nav',
-    body: ['Everything you need is in this menu. You can take this tour again any time from Help.'],
+    body: ['Everything you need is in this menu. Take this tour again any time from Help.'],
   },
 ];
 

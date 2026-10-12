@@ -46,7 +46,7 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
               Are you still there?
             </h3>
             <p id="session-timeout-desc" className="text-xs text-[var(--muted)] mt-1.5 leading-relaxed">
-              You haven't used SimpleHours for 10 minutes. To protect your organisation's data, you'll be signed out in:
+              You've been inactive for 10 minutes. You'll be signed out in:
             </p>
           </div>
 
@@ -56,10 +56,6 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
               {formattedTime}
             </span>
           </div>
-
-          <p className="text-[11px] text-[var(--muted)]">
-            Select <strong className="text-[var(--text)]">Stay signed in</strong> to keep working.
-          </p>
 
           <div className="pt-2 flex flex-col sm:flex-row gap-2.5 justify-center">
             <Button

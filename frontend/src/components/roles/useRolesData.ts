@@ -29,7 +29,7 @@ export function useRolesData(wantRoles: boolean, wantTeam: boolean) {
       const res = await api.get('/roles');
       setRoles({ data: res.data.data, loading: false, error: null });
     } catch (err) {
-      setRoles(prev => ({ data: quiet ? prev.data : null, loading: false, error: accessError(err, 'Roles could not be loaded.', 'You don’t have permission to see this. Ask the owner if you need access.') }));
+      setRoles(prev => ({ data: quiet ? prev.data : null, loading: false, error: accessError(err, 'Try again in a moment.', 'You don’t have access. Ask the owner if you need it.') }));
     }
   }, [wantRoles]);
 
@@ -39,7 +39,7 @@ export function useRolesData(wantRoles: boolean, wantTeam: boolean) {
       const res = await api.get('/roles/permissions');
       setCatalogue({ data: res.data.data, loading: false, error: null });
     } catch (err) {
-      setCatalogue({ data: null, loading: false, error: accessError(err, 'The list of permissions could not be loaded.', 'You don’t have permission to see this. Ask the owner if you need access.') });
+      setCatalogue({ data: null, loading: false, error: accessError(err, 'Couldn’t load permissions. Try again in a moment.', 'You don’t have access. Ask the owner if you need it.') });
     }
   }, [wantRoles]);
 
@@ -49,7 +49,7 @@ export function useRolesData(wantRoles: boolean, wantTeam: boolean) {
       const res = await api.get('/team');
       setTeam({ data: res.data.data, loading: false, error: null });
     } catch (err) {
-      setTeam(prev => ({ data: quiet ? prev.data : null, loading: false, error: accessError(err, 'The people list could not be loaded.', 'You don’t have permission to see this. Ask the owner if you need access.') }));
+      setTeam(prev => ({ data: quiet ? prev.data : null, loading: false, error: accessError(err, 'Try again in a moment.', 'You don’t have access. Ask the owner if you need it.') }));
     }
   }, [wantTeam]);
 

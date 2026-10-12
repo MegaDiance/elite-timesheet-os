@@ -195,9 +195,6 @@ export default function Reports() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Reports</h1>
-          <p className="text-xs text-[var(--muted)] mt-1">
-            Payroll hours for a pay period: worked hours by category, leave, approval status and exports.
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -322,10 +319,10 @@ export default function Reports() {
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
               <input
                 type="search"
-                aria-label="Search workers"
+                aria-label="Search employees"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search workers…"
+                placeholder="Search employees…"
                 className="bg-[var(--input-bg)] text-xs text-[var(--text)] pl-8 pr-3 py-1.5 rounded-md border border-[var(--border)] outline-none focus:border-[var(--primary)] w-48 sm:w-56"
               />
             </div>
@@ -346,16 +343,16 @@ export default function Reports() {
         {loading ? (
           <div className="p-12 text-center bg-[var(--panel)] border border-[var(--border)] rounded-lg">
             <RefreshCw className="w-6 h-6 animate-spin text-[var(--primary-text)] mx-auto mb-2" aria-hidden="true" />
-            <p className="text-xs text-[var(--muted)]">Adding up the pay period…</p>
+            <p className="text-xs text-[var(--muted)]">Loading the report…</p>
           </div>
         ) : !report || filtered.length === 0 ? (
           <EmptyState
             icon={tab === 'exceptions' ? <CheckCircle2 className="w-5 h-5 text-[var(--success)]" aria-hidden="true" /> : <Users className="w-5 h-5" aria-hidden="true" />}
-            title={tab === 'exceptions' ? 'No exceptions' : 'No workers to show'}
+            title={tab === 'exceptions' ? 'No exceptions' : 'No employees to show'}
             description={
               tab === 'exceptions'
                 ? 'Every timesheet shown is approved, matches the contract and has no unplanned hours.'
-                : 'No workers match these filters for this pay period.'
+                : 'No employees match these filters for this pay period.'
             }
           />
         ) : (
@@ -364,7 +361,7 @@ export default function Reports() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Worker</TableHead>
+                    <TableHead>Employee</TableHead>
                     {showBranch && <TableHead>Branch</TableHead>}
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Contract</TableHead>
@@ -406,14 +403,14 @@ export default function Reports() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Worker</TableHead>
+                    <TableHead>Employee</TableHead>
                     {showBranch && <TableHead>Branch</TableHead>}
                     <TableHead className="text-right">Ordinary</TableHead>
                     <TableHead className="text-right">Saturday</TableHead>
                     <TableHead className="text-right">Sunday</TableHead>
                     <TableHead className="text-right">Public holiday</TableHead>
-                    <TableHead className="text-right">Annual Leave</TableHead>
-                    <TableHead className="text-right">Sick Leave</TableHead>
+                    <TableHead className="text-right">Annual leave</TableHead>
+                    <TableHead className="text-right">Sick leave</TableHead>
                     <TableHead className="text-right">TIL</TableHead>
                     <TableHead className="text-right">LWIP</TableHead>
                     <TableHead className="text-right">Other</TableHead>
@@ -453,13 +450,13 @@ export default function Reports() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Worker</TableHead>
+                    <TableHead>Employee</TableHead>
                     {showBranch && <TableHead>Branch</TableHead>}
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Rostered</TableHead>
                     <TableHead className="text-right">Worked</TableHead>
                     <TableHead className="text-right">Variance</TableHead>
-                    <TableHead>Why it’s listed</TableHead>
+                    <TableHead>Reason</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

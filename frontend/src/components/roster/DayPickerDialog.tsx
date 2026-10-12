@@ -17,11 +17,11 @@ interface DayPickerDialogProps {
 const TEXT: Record<BulkFillMode, { title: string; body: string }> = {
   roster: {
     title: 'Apply default rosters',
-    body: 'Each worker’s default roster (set on the Staff page) replaces the Normal Work rostered on the chosen days; days their default leaves empty are left alone. Workers without a default roster get 9:00 am – 5:00 pm. Leave is never replaced: shifts are fitted around part-day leave, and whole days of leave are kept as they are. Worked hours and notes are kept. Branches with a locked roster and approved timesheets are skipped.',
+    body: 'Replaces rostered Normal Work on the chosen days with each employee’s default roster (set on Staff). Days with no default shift are left alone; employees without a default roster get 9:00 am – 5:00 pm. Leave, worked hours and notes are kept, and shifts are fitted around part-day leave. Locked rosters and approved timesheets are skipped.',
   },
   log: {
     title: 'Copy roster to worked hours',
-    body: 'Records the whole rostered day, leave included, as worked on the chosen days. Days that already have any worked time are left as they are, so recorded hours are never changed. The roster itself is not changed. Branches with locked timesheets and approved timesheets are skipped.',
+    body: 'Records each rostered day, leave included, as worked. Days that already have worked time are left as they are, and the roster isn’t changed. Locked and approved timesheets are skipped.',
   },
 };
 

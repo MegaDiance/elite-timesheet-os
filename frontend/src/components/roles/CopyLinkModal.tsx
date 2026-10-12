@@ -29,9 +29,9 @@ function LinkBody({ link, onClose }: { link: LinkToShare; onClose: () => void })
     try {
       await navigator.clipboard.writeText(link.url);
       setCopied(true);
-      toast.success('Link copied.');
+      toast.success('Link copied');
     } catch {
-      toast.error('The link could not be copied automatically. Select it and copy it yourself.');
+      toast.error('Couldn’t copy. Select the link and copy it yourself.');
     }
   };
 
@@ -53,7 +53,7 @@ function LinkBody({ link, onClose }: { link: LinkToShare; onClose: () => void })
             </div>
           </div>
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            {link.note} This is the only time it is shown. If it is lost, create a new one.
+            {link.note} It’s only shown once. If it’s lost, create a new one.
           </p>
           <div className="flex items-center justify-end pt-4 border-t border-[var(--border)]">
             <Button type="button" variant="secondary" size="sm" onClick={onClose}>Done</Button>

@@ -22,12 +22,12 @@ interface LockDialogProps {
 const FLAG_TEXT: Record<LockFlag, { name: string; lockEffect: string; passwordHint: string }> = {
   roster: {
     name: 'Roster',
-    lockEffect: 'Rostered times for this branch and pay period can’t change while the roster is locked. Worked hours can still be recorded.',
+    lockEffect: 'While locked, rostered times for this branch and pay period can’t change. Worked hours can still be recorded.',
     passwordHint: 'Your own password, or the organisation’s roster lock password.',
   },
   timesheet: {
     name: 'Timesheets',
-    lockEffect: 'Worked hours for this branch and pay period can’t change, and timesheets can’t be approved or reopened, while timesheets are locked.',
+    lockEffect: 'While locked, worked hours for this branch and pay period can’t change, and timesheets can’t be approved or reopened.',
     passwordHint: 'Your own password, or the organisation’s timesheet lock password.',
   },
 };

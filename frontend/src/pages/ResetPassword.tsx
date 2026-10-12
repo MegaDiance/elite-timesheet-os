@@ -24,7 +24,7 @@ export default function ResetPassword() {
   // Set when the password changed but the server could not tell which organisation to return to.
   const [doneWithoutPortal, setDoneWithoutPortal] = useState(false);
   const backTo = portalLoginPath();
-  const backLabel = backTo === '/' ? 'Back to the home page' : 'Back to sign in';
+  const backLabel = backTo === '/' ? 'Back to home page' : 'Back to sign in';
 
   // Validate token on mount
   useEffect(() => {
@@ -56,12 +56,12 @@ export default function ResetPassword() {
     setError('');
 
     if (password.length < 8) {
-      setError('Password must be at least 8 characters long.');
+      setError('Use at least 8 characters.');
       return;
     }
 
     if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
-      setError('Password must contain both letters and numbers.');
+      setError('Use both letters and numbers.');
       return;
     }
 
@@ -101,9 +101,6 @@ export default function ResetPassword() {
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">
             Choose a new password
           </h1>
-          <p className="text-xs text-[var(--muted)]">
-            Set a new password for your SimpleHours account
-          </p>
         </div>
 
         <Card className="p-6 sm:p-8 space-y-5">
@@ -117,9 +114,9 @@ export default function ResetPassword() {
               <div className="w-12 h-12 rounded-full bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center mx-auto">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
-              <h2 className="text-lg font-bold text-[var(--text)]">Your password has been changed</h2>
+              <h2 className="text-lg font-bold text-[var(--text)]">Password changed</h2>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
-                Sign in with your new password using your organisation’s sign-in link.
+                Sign in with your new password using your company link.
               </p>
             </div>
           ) : !tokenValid ? (
@@ -129,7 +126,7 @@ export default function ResetPassword() {
               </div>
               <h2 className="text-lg font-bold text-[var(--text)]">This reset link can't be used</h2>
               <p className="text-xs text-[var(--muted)] leading-relaxed">
-                It may have expired or already been used. Reset links work once and expire after 1 hour.
+                It has expired or was already used. Reset links work once and expire after 1 hour.
               </p>
               <div className="pt-2 space-y-2">
                 <Link to="/forgot-password" className="block">
@@ -178,7 +175,7 @@ export default function ResetPassword() {
                   required
                   className="w-full px-3.5 py-2 bg-[var(--input-bg)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] focus:outline-none focus:border-[var(--primary)]"
                 />
-                <p className="text-[11px] text-[var(--muted)] mt-1">Must contain both letters and numbers</p>
+                <p className="text-[11px] text-[var(--muted)] mt-1">Must contain letters and numbers</p>
               </div>
 
               <div>
@@ -187,7 +184,6 @@ export default function ResetPassword() {
                   type={showPassword ? 'text' : 'password'} 
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter new password"
                   required
                   className="w-full px-3.5 py-2 bg-[var(--input-bg)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] focus:outline-none focus:border-[var(--primary)]"
                 />
